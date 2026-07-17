@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     # Inhouse apps
     "plane.analytics",
     "plane.app",
+    "plane.arribada",
     "plane.space",
     "plane.bgtasks",
     "plane.db",

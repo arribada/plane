@@ -1,0 +1,94 @@
+# Copyright (c) 2026-present Arribada Initiative and contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Builds the Arribada variant images and pushes them to ghcr.io.
+# Runs here rather than on the droplet on purpose: the web build peaks at 2-4 GB
+# and the droplet has ~3.8 GB free next to a live Postgres — the OOM killer would
+# take out production, not the build.
+name: Arribada Build
+
+on:
+  push:
+    branches: ["arribada/main"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (e.g. v1.3.1-arribada.2)"
+        type: string
+        default: "v1.3.1-arribada.1"
+      build_web:
+        description: "Also build the web image (slow: ~30-40 min)"
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: arribada
+  # `+` is valid semver build metadata but ILLEGAL in a Docker tag — never use it.
+  TAG: ${{ inputs.tag || 'v1.3.1-arribada.1' }}
+
+jobs:
+  backend:
+    name: backend (api/worker/beat/migrator)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard against model/migration drift
+        run: |
+          # Catches a model edited without makemigrations — the failure mode that
+          # only shows up when the migrator runs against production.
+          pip install --quiet -r apps/api/requirements/production.txt 2>/dev/null || \
+            pip install --quiet -r apps/api/requirements.txt
+          cd apps/api
+          DJANGO_SETTINGS_MODULE=plane.settings.production \
+          SECRET_KEY=ci DATABASE_URL=postgresql://u:p@127.0.0.1:5432/d \
+          REDIS_URL=redis://127.0.0.1:6379/ AMQP_URL=amqp://guest:guest@127.0.0.1:5672/ \
+            python manage.py makemigrations --check --dry-run
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./apps/api
+          file: ./apps/api/Dockerfile.api
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-backend:${{ env.TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  web:
+    name: web (plane-frontend)
+    # Only on demand: a 30-40 min build has no business running on every push.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_web }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # No build args on purpose: upstream's CI passes none either, so VITE_* stay
+      # empty and the SPA calls the API same-origin. Passing one would diverge.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/web/Dockerfile.web
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

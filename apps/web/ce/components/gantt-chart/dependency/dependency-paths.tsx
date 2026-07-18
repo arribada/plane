@@ -75,7 +75,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   const blockIds = store.blockIds ?? [];
   if (!blockIds.length || !edges.length) return null;
 
-  const indexById = new Map(blockIds.map((id, i) => [id, i]));
+  const indexById = new Map<string, number>(blockIds.map((id, i): [string, number] => [id, i]));
   const active = store.activeBlockId;
 
   const paths = edges

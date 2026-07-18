@@ -45,8 +45,10 @@ export interface IBaseTimelineStore {
   isDragging: boolean;
   isDependencyEnabled: boolean;
   blockIds: string[] | undefined;
+  linkingSourceId: string | null;
   //
   setBlockIds: (ids: string[]) => void;
+  setLinkingSource: (id: string | null) => void;
   getBlockById: (blockId: string) => IGanttBlock;
   // computed functions
   getIsCurrentDependencyDragging: (blockId: string) => boolean;
@@ -80,6 +82,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   currentViewData: ChartDataType | undefined = undefined;
   activeBlockId: string | null = null;
   renderView: any = [];
+  // click-to-link: the block whose dependency handle was clicked first
+  linkingSourceId: string | null = null;
 
   rootStore: RootStore;
 
@@ -95,6 +99,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       currentViewData: observable,
       activeBlockId: observable.ref,
       renderView: observable,
+      linkingSourceId: observable.ref,
       // actions
       setIsDragging: action,
       setBlockIds: action.bound,
@@ -103,6 +108,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       updateCurrentViewData: action.bound,
       updateActiveBlockId: action.bound,
       updateRenderView: action.bound,
+      setLinkingSource: action.bound,
     });
 
     this.initGantt();
@@ -158,6 +164,14 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
    */
   updateActiveBlockId = (blockId: string | null) => {
     this.activeBlockId = blockId;
+  };
+
+  /**
+   * @description set (or clear) the click-to-link source block
+   * @param {string | null} id
+   */
+  setLinkingSource = (id: string | null) => {
+    this.linkingSourceId = id;
   };
 
   /**

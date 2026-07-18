@@ -142,6 +142,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
             enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed}
             enableAddBlock={isAllowed}
             enableSelection={isBulkOperationsEnabled && isAllowed}
+            enableDependency={isAllowed}
             quickAdd={quickAdd}
             loadMoreBlocks={loadMoreIssues}
             canLoadMoreBlocks={nextPageResults}

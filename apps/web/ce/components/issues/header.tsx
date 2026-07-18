@@ -37,6 +37,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "./section-switcher";
 
 export const IssuesHeader = observer(function IssuesHeader() {
   // router
@@ -82,6 +83,7 @@ export const IssuesHeader = observer(function IssuesHeader() {
               isLast
             />
           </Breadcrumbs>
+          <ProjectSectionSwitcher current="issues" />
           {issuesCount && issuesCount > 0 ? (
             <Tooltip
               isMobile={isMobile}

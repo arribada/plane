@@ -50,7 +50,10 @@ export interface IPortfolioStore {
   setDisplayedProjectIds: (ids: string[]) => void;
   setColorBy: (value: TPortfolioColorBy) => void;
   setSortBy: (value: TPortfolioSortBy) => void;
+  moveProject: (dragId: string, dropId: string) => void;
 }
+
+const ORDER_KEY = "arribada.portfolio.manualOrder";
 
 export class PortfolioStore implements IPortfolioStore {
   projectMap: Record<string, TPortfolioProject> = {};
@@ -86,7 +89,25 @@ export class PortfolioStore implements IPortfolioStore {
       setDisplayedProjectIds: action,
       setColorBy: action,
       setSortBy: action,
+      moveProject: action,
     });
+  }
+
+  private persistOrder() {
+    try {
+      window.localStorage.setItem(ORDER_KEY, JSON.stringify(this.displayedProjectIds));
+    } catch {
+      // localStorage unavailable — manual order just won't persist across reloads
+    }
+  }
+
+  private loadOrder(): string[] | null {
+    try {
+      const raw = window.localStorage.getItem(ORDER_KEY);
+      return raw ? (JSON.parse(raw) as string[]) : null;
+    } catch {
+      return null;
+    }
   }
 
   get allProjects(): TPortfolioProject[] {
@@ -102,6 +123,8 @@ export class PortfolioStore implements IPortfolioStore {
   }
 
   get sortedProjectIds(): string[] {
+    // manual = the drag order the user set (displayedProjectIds order, untouched)
+    if (this.sortBy === "manual") return [...this.displayedProjectIds];
     const ids = [...this.displayedProjectIds];
     const p = (id: string) => this.projectMap[id];
     const cmpDate = (a: string | null, b: string | null) => {
@@ -205,7 +228,18 @@ export class PortfolioStore implements IPortfolioStore {
         this.projectMap = {};
         for (const project of projects) set(this.projectMap, [project.id], project);
         // default selection: every non-archived project, in API order
-        this.displayedProjectIds = projects.filter((p) => !p.archived).map((p) => p.id);
+        const active = projects.filter((p) => !p.archived).map((p) => p.id);
+        // re-apply a saved manual drag order if one exists (dropping stale ids)
+        const saved = this.loadOrder();
+        if (saved) {
+          const set2 = new Set(active);
+          const ordered = saved.filter((id) => set2.has(id));
+          for (const id of active) if (!ordered.includes(id)) ordered.push(id);
+          this.displayedProjectIds = ordered;
+          this.sortBy = "manual";
+        } else {
+          this.displayedProjectIds = active;
+        }
       });
     } finally {
       runInAction(() => {
@@ -246,4 +280,17 @@ export class PortfolioStore implements IPortfolioStore {
   setSortBy = (value: TPortfolioSortBy): void => {
     this.sortBy = value;
   };
-}
+
+  // Drag reorder: drop `dragId` at the position of `dropId`, switch to manual sort.
+  moveProject = (dragId: string, dropId: string): void => {
+    if (dragId === dropId) return;
+    const ids = [...this.displayedProjectIds];
+    const from = ids.indexOf(dragId);
+    const to = ids.indexOf(dropId);
+    if (from === -1 || to === -1) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, dragId);
+    this.displayedProjectIds = ids;
+    this.sortBy = "manual";
+    this.persistOrder();
+  };

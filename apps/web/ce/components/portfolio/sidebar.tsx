@@ -6,12 +6,15 @@
 
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, GripVertical } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { projectColor } from "./colors";
+
+// transient drag source id — plain module var, DnD is a same-frame gesture
+let dragId: string | null = null;
 
 type RowProps = { blockId: string };
 
@@ -27,9 +30,21 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: R
     <div
       className="group flex w-full items-center gap-1.5 pr-4 hover:bg-layer-transparent-hover"
       style={{ height: `${BLOCK_HEIGHT}px` }}
+      draggable={isProject}
+      onDragStart={() => {
+        if (isProject) dragId = blockId;
+      }}
+      onDragOver={(e) => {
+        if (isProject && dragId && dragId !== blockId) e.preventDefault();
+      }}
+      onDrop={() => {
+        if (isProject && dragId) portfolio.moveProject(dragId, blockId);
+        dragId = null;
+      }}
     >
       {isProject ? (
         <>
+          <GripVertical className="size-3.5 flex-shrink-0 cursor-grab text-tertiary opacity-0 group-hover:opacity-100" />
           <button
             type="button"
             className="flex size-5 flex-shrink-0 items-center justify-center rounded text-secondary hover:bg-layer-1"

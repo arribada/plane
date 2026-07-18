@@ -23,6 +23,7 @@ const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
   { value: "target_date", label: "Target date" },
   { value: "name", label: "Name" },
   { value: "undated", label: "Undated first" },
+  { value: "manual", label: "Manual (drag)" },
 ];
 
 export const PortfolioToolbar = observer(function PortfolioToolbar() {

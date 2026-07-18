@@ -42,7 +42,7 @@ export type TProjectSchedule = {
 };
 
 export type TPortfolioColorBy = "project" | "priority";
-export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated";
+export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated" | "manual";
 
 // A raw dependency edge between two issues. relation_type is kept as a plain
 // string on purpose — extending the global TIssueRelationTypes union would force

@@ -125,11 +125,26 @@ jobs:
 
       # No build args on purpose: upstream's CI passes none either, so VITE_* stay
       # empty and the SPA calls the API same-origin. Passing one would diverge.
+      # Build with load (image in the runner) so we can BOTH push to ghcr and
+      # export a tarball artifact — the artifact is how the droplet gets the image
+      # without a read:packages token (repo scope can download artifacts).
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: ./apps/web/Dockerfile.web
-          push: true
+          load: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Export image as artifact
+        run: docker save ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }} | gzip > frontend-image.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plane-frontend-image
+          path: frontend-image.tgz
+          retention-days: 5
+
+      - name: Push to ghcr (for anyone with read:packages)
+        run: docker push ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }}

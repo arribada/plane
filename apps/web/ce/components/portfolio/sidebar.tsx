@@ -10,6 +10,7 @@ import { ChevronDown, ChevronRight, AlertTriangle, GripVertical } from "lucide-r
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { projectColor } from "./colors";
 
@@ -20,6 +21,7 @@ type RowProps = { blockId: string };
 
 const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: RowProps) {
   const { workspaceSlug } = useParams();
+  const router = useAppRouter();
   const portfolio = usePortfolio();
   const isProject = portfolio.isProjectRow(blockId);
   const project = portfolio.getProject(blockId);
@@ -56,7 +58,14 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: R
             className="size-2.5 flex-shrink-0 rounded-sm"
             style={{ backgroundColor: projectColor(blockId) }}
           />
-          <span className="flex-grow truncate text-13 font-medium text-primary">{project?.name}</span>
+          <button
+            type="button"
+            onClick={() => router.push(`/${workspaceSlug}/projects/${blockId}/issues/`)}
+            title="Open project"
+            className="flex-grow truncate text-left text-13 font-medium text-primary hover:text-accent hover:underline"
+          >
+            {project?.name}
+          </button>
           <span className="flex-shrink-0 text-11 text-secondary">{project?.item_count ?? 0}</span>
           {!!project?.undated_item_count && (
             <Tooltip tooltipContent={`${project.undated_item_count} work item(s) with no dates`}>

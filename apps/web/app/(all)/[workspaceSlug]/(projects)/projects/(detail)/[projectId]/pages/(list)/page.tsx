@@ -26,6 +26,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
 // plane web hooks
 import { EPageStoreType } from "@/plane-web/hooks/store";
+import { AffineWikiPanel } from "@/plane-web/components/pages/affine-wiki-panel";
 import type { Route } from "./+types/page";
 
 const getPageType = (pageType?: string | null): TPageNavigationTabs => {
@@ -75,6 +76,9 @@ function ProjectPagesPage({ params }: Route.ComponentProps) {
   return (
     <>
       <PageHead title={pageTitle} />
+      <div className="px-4 pt-3 md:px-6">
+        <AffineWikiPanel />
+      </div>
       <PagesListView
         pageType={pageType}
         projectId={projectId}

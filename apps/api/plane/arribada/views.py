@@ -10,7 +10,7 @@ from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, IssueRelation, Project
 
-from .models import IssueBaseline, ProjectSchedule
+from .models import IssueBaseline, ProjectAffineDoc, ProjectSchedule
 from .scheduling import cascade, critical_path
 from .serializers import ProjectScheduleSerializer
 
@@ -281,6 +281,41 @@ class ProjectCriticalPathEndpoint(BaseAPIView):
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         issues, relations = _project_graph(project_id, slug)
         return Response({"issue_ids": sorted(critical_path(issues, relations))}, status=status.HTTP_200_OK)
+
+
+class ProjectAffineDocEndpoint(BaseAPIView):
+    """Read or set the AFFiNE wiki doc a project links to (private deep link)."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        mapping = ProjectAffineDoc.objects.filter(project_id=project_id).first()
+        if not mapping:
+            return Response({"doc_id": None, "workspace_id": None, "title": None}, status=status.HTTP_200_OK)
+        return Response(
+            {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def put(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        doc_id = (request.data.get("doc_id") or "").strip() or None
+        title = (request.data.get("title") or "").strip() or None
+        # accept a full AFFiNE url or a bare doc id
+        if doc_id and "/" in doc_id:
+            doc_id = doc_id.rstrip("/").split("/")[-1]
+        mapping, _ = ProjectAffineDoc.objects.get_or_create(project_id=project_id)
+        mapping.doc_id = doc_id
+        if title is not None:
+            mapping.title = title
+        mapping.save()
+        return Response(
+            {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectScheduleEndpoint(BaseAPIView):

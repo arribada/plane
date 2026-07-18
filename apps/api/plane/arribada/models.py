@@ -65,3 +65,30 @@ class IssueBaseline(models.Model):
 
     def __str__(self):
         return f"baseline {self.issue_id} [{self.start_date} → {self.target_date}]"
+
+
+class ProjectAffineDoc(models.Model):
+    """Maps a Plane project to a doc in the self-hosted AFFiNE wiki (docs.arribada.org).
+
+    The project's Pages section shows a private deep link to this doc — opened in a
+    new tab where the user's own AFFiNE session applies, so nothing is published.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.OneToOneField(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_affine_doc"
+    )
+    workspace_id = models.CharField(max_length=64, default="5b320010-0d8d-4ccc-b4f6-dbe339c42b4e")
+    doc_id = models.CharField(max_length=64, null=True, blank=True)
+    title = models.CharField(max_length=512, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_project_affine_doc"
+        verbose_name = "Project AFFiNE doc"
+        verbose_name_plural = "Project AFFiNE docs"
+
+    def __str__(self):
+        return f"{self.project_id} -> affine {self.doc_id}"

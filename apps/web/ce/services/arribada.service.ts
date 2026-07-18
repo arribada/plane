@@ -98,6 +98,30 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Which AFFiNE wiki doc a project links to (private deep link, not embedded).
+  async getAffineDoc(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ doc_id: string | null; workspace_id: string | null; title: string | null }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async setAffineDoc(
+    workspaceSlug: string,
+    projectId: string,
+    data: { doc_id: string; title?: string }
+  ): Promise<{ doc_id: string | null; workspace_id: string | null; title: string | null }> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

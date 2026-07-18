@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Flag, FolderKanban } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Flag, FolderKanban, Wand2 } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -33,6 +33,9 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const [capturing, setCapturing] = useState(false);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
 
+  const [reflowing, setReflowing] = useState(false);
+  const [reflowResult, setReflowResult] = useState<number | null>(null);
+
   const captureBaselines = async () => {
     if (!workspaceSlug || capturing) return;
     setCapturing(true);
@@ -41,6 +44,21 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       setCapturedAt(new Date().toLocaleTimeString());
     } finally {
       setCapturing(false);
+    }
+  };
+
+  const reflow = async () => {
+    if (!workspaceSlug || reflowing) return;
+    setReflowing(true);
+    try {
+      const results = await Promise.all(
+        portfolio.displayedProjectIds.map((id) => service.autoSchedule(workspaceSlug.toString(), id))
+      );
+      const total = results.reduce((sum, r) => sum + (r?.rescheduled ?? 0), 0);
+      setReflowResult(total);
+      await portfolio.fetchPortfolio(workspaceSlug.toString());
+    } finally {
+      setReflowing(false);
     }
   };
 
@@ -134,6 +152,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           ))}
         </select>
       </label>
+
+      {/* reflow: cascade dates along dependencies across displayed projects */}
+      <button
+        type="button"
+        onClick={reflow}
+        disabled={reflowing}
+        title="Push any task that starts before its dependencies allow, preserving durations (respect links)"
+        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1 disabled:opacity-50"
+      >
+        <Wand2 className="size-3.5 text-secondary" />
+        {reflowing ? "Reflowing…" : reflowResult !== null ? `Reflowed ${reflowResult}` : "Reflow schedule"}
+      </button>
 
       {/* capture baseline across displayed projects */}
       <button

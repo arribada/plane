@@ -80,6 +80,24 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Forward-cascade the project's dates along dependencies (respect links). Writes.
+  async autoSchedule(workspaceSlug: string, projectId: string): Promise<{ rescheduled: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/auto-schedule/`, {})
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Issue ids on the project's critical (longest-duration) dependency chain.
+  async getCriticalPath(workspaceSlug: string, projectId: string): Promise<{ issue_ids: string[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/critical-path/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

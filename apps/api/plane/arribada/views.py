@@ -11,12 +11,35 @@ from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, IssueRelation, Project
 
 from .models import IssueBaseline, ProjectSchedule
+from .scheduling import cascade, critical_path
 from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 
 # Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
-GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by"]
+GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
+
+
+def _project_graph(project_id, slug):
+    """(issues-by-id dict of dates, list of relation dicts) for a project."""
+    issues = {
+        str(i["id"]): {"start": i["start_date"], "target": i["target_date"]}
+        for i in Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
+            "id", "start_date", "target_date"
+        )
+    }
+    relations = list(
+        IssueRelation.objects.filter(
+            project_id=project_id,
+            workspace__slug=slug,
+            relation_type__in=GANTT_RELATION_TYPES,
+            deleted_at__isnull=True,
+        ).values("issue_id", "related_issue_id", "relation_type")
+    )
+    for r in relations:
+        r["issue_id"] = str(r["issue_id"])
+        r["related_issue_id"] = str(r["related_issue_id"])
+    return issues, relations
 
 
 def _visible_projects(request, slug):
@@ -223,6 +246,41 @@ class ProjectBaselineEndpoint(BaseAPIView):
             )
             captured += 1
         return Response({"captured": captured}, status=status.HTTP_200_OK)
+
+
+class ProjectAutoScheduleEndpoint(BaseAPIView):
+    """Forward-cascade a project's dates along its dependencies (respect links).
+
+    User-triggered, not automatic: pushes any successor that would start before
+    its predecessor allows, preserving durations, and writes the moved dates back.
+    Returns the list of rescheduled issues so the UI can report the count.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        issues, relations = _project_graph(project_id, slug)
+        changed = cascade(issues, relations)
+        moved = []
+        for iid, dates in changed.items():
+            # .update() bypasses per-issue activity/webhooks — intentional for a bulk reflow
+            Issue.objects.filter(id=iid).update(start_date=dates["start"], target_date=dates["target"])
+            moved.append(
+                {"issue_id": iid, "start_date": dates["start"], "target_date": dates["target"]}
+            )
+        return Response({"rescheduled": len(moved), "issues": moved}, status=status.HTTP_200_OK)
+
+
+class ProjectCriticalPathEndpoint(BaseAPIView):
+    """The issue ids on the project's critical (longest-duration) dependency chain."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        issues, relations = _project_graph(project_id, slug)
+        return Response({"issue_ids": sorted(critical_path(issues, relations))}, status=status.HTTP_200_OK)
 
 
 class ProjectScheduleEndpoint(BaseAPIView):

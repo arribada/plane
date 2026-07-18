@@ -52,17 +52,28 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   const store = useTimeLineChartStore();
   const service = useMemo(() => new ArribadaService(), []);
   const [edges, setEdges] = useState<TIssueRelationEdge[]>([]);
+  const [critical, setCritical] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
     if (workspaceSlug && projectId) {
+      const ws = workspaceSlug.toString();
+      const pid = projectId.toString();
       service
-        .getProjectRelations(workspaceSlug.toString(), projectId.toString())
+        .getProjectRelations(ws, pid)
         .then((rows) => {
           if (!cancelled) setEdges(rows || []);
         })
         .catch(() => {
           if (!cancelled) setEdges([]);
+        });
+      service
+        .getCriticalPath(ws, pid)
+        .then((res) => {
+          if (!cancelled) setCritical(new Set(res?.issue_ids || []));
+        })
+        .catch(() => {
+          if (!cancelled) setCritical(new Set());
         });
     }
     return () => {
@@ -96,6 +107,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         color: COLOR[rel.relation_type] ?? "#94a3b8",
         from,
         to,
+        isCritical: critical.has(from) && critical.has(to),
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -133,13 +145,14 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         const related = active && (p.from === active || p.to === active);
         const dimmed = active && !related;
         const markerType = Object.keys(COLOR).find((t) => COLOR[t] === p.color) ?? "finish_before";
+        const stroke = p.isCritical ? "#dc2626" : p.color;
         return (
           <path
             key={p.key}
             d={p.d}
             fill="none"
-            stroke={p.color}
-            strokeWidth={related ? 2 : 1.5}
+            stroke={stroke}
+            strokeWidth={p.isCritical ? 2.5 : related ? 2 : 1.5}
             markerEnd={`url(#arw-${markerType})`}
             opacity={dimmed ? 0.15 : 0.9}
             style={{ pointerEvents: "stroke", transition: "opacity .12s" }}

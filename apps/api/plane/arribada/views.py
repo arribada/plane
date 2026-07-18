@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+from collections import defaultdict
 from datetime import timedelta
 
 from django.db.models import Count, Max, Min, Q, Sum

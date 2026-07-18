@@ -15,7 +15,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatusUpdate } from "@/plane-web/types/arribada";
-import { projectColor, projectHealth } from "./colors";
+import { baselineDrift, projectColor, projectHealth } from "./colors";
 import { ProjectStatusModal, STATUS_META } from "./project-status-modal";
 
 // transient drag source id — plain module var, DnD is a same-frame gesture
@@ -122,6 +122,25 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
               </span>
             </Tooltip>
           )}
+          {project &&
+            (() => {
+              const drift = baselineDrift(project);
+              if (drift === null) return null;
+              const slipped = drift > 0;
+              return (
+                <Tooltip tooltipContent={`${slipped ? "Slipped" : "Ahead"} ${Math.abs(drift)}d vs baseline`}>
+                  <span
+                    className={cn(
+                      "flex-shrink-0 rounded px-1 text-11 font-medium",
+                      slipped ? "bg-red-500/15 text-red-600" : "bg-emerald-500/15 text-emerald-600"
+                    )}
+                  >
+                    {slipped ? "+" : "−"}
+                    {Math.abs(drift)}d
+                  </span>
+                </Tooltip>
+              );
+            })()}
           <span className="flex-shrink-0 text-11 text-secondary">{project?.item_count ?? 0}</span>
           {!!project?.undated_item_count && (
             <Tooltip tooltipContent={`${project.undated_item_count} work item(s) with no dates`}>

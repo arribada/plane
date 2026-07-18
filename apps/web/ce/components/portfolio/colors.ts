@@ -41,6 +41,19 @@ export const projectHealth = (p: {
   return { color: "#16a34a", label: "On track" };
 };
 
+// Drift in days of the current derived target vs the frozen baseline target.
+// Positive = the project's end has slipped past its baseline; negative = ahead.
+export const baselineDrift = (p: {
+  derived_target_date: string | null;
+  baseline_target_date: string | null;
+}): number | null => {
+  if (!p.baseline_target_date || !p.derived_target_date) return null;
+  const base = new Date(p.baseline_target_date + "T00:00:00").getTime();
+  const cur = new Date(p.derived_target_date + "T00:00:00").getTime();
+  const days = Math.round((cur - base) / 86400000);
+  return days === 0 ? null : days;
+};
+
 // Pick black/white text for contrast against a bar color. Handles hex and hsl.
 export const readableTextColor = (color: string): string => {
   let r = 0;

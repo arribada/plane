@@ -21,6 +21,7 @@ export type TPortfolioProject = {
   scheduled_item_count: number;
   undated_item_count: number;
   completed_item_count: number;
+  baseline_target_date: string | null;
 };
 
 // A person assigned to a work item, shown as an avatar on the timeline.

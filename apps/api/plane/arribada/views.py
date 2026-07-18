@@ -91,6 +91,15 @@ class PortfolioEndpoint(BaseAPIView):
             for s in ProjectSchedule.objects.filter(project_id__in=project_ids)
         }
 
+        # Baseline roll-up: the latest committed target across a project's issues, so
+        # the UI can show drift (current derived target vs the frozen baseline).
+        baselines = {
+            b["issue__project_id"]: b["bmax"]
+            for b in IssueBaseline.objects.filter(issue__project_id__in=project_ids)
+            .values("issue__project_id")
+            .annotate(bmax=Max("target_date"))
+        }
+
         dated = Q(start_date__isnull=False) | Q(target_date__isnull=False)
         rollup = {
             r["project_id"]: r
@@ -130,6 +139,7 @@ class PortfolioEndpoint(BaseAPIView):
                     "scheduled_item_count": with_dates,
                     "undated_item_count": total - with_dates,
                     "completed_item_count": r.get("completed_count", 0),
+                    "baseline_target_date": baselines.get(p["id"]),
                 }
             )
         return Response(payload, status=status.HTTP_200_OK)

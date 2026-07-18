@@ -59,10 +59,18 @@ def _topo_order(node_ids, edges):
     return order, in_cycle
 
 
+def _next_working_day(d):
+    """Advance a date to the next Mon–Fri (weekday() 5=Sat, 6=Sun)."""
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
 def cascade(issues, relations):
     """Forward pass. issues: {id: {"start": date|None, "target": date|None}}.
     Returns {id: {"start": date, "target": date}} for issues whose dates MOVED.
-    Only pushes later, never earlier; preserves each issue's duration."""
+    Only pushes later, never earlier; preserves each issue's duration. Weekend-aware:
+    a successor never starts on a Sat/Sun (a Friday finish pushes it to Monday)."""
     dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
     edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
     order, _cycles = _topo_order(list(dated.keys()), edges)
@@ -77,12 +85,12 @@ def cascade(issues, relations):
         constraints = []
         for p, kind in preds[node]:
             if kind == "FS":
-                constraints.append(cur[p]["target"] + timedelta(days=1))
+                constraints.append(_next_working_day(cur[p]["target"] + timedelta(days=1)))
             else:  # SS
-                constraints.append(cur[p]["start"])
+                constraints.append(_next_working_day(cur[p]["start"]))
         if not constraints:
             continue
-        earliest = max(constraints)
+        earliest = _next_working_day(max(constraints))
         if earliest > cur[node]["start"]:
             duration = cur[node]["target"] - cur[node]["start"]
             cur[node]["start"] = earliest

@@ -114,13 +114,14 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     ghosts.push({ x: x1, y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2 - 5, w: Math.max(x2 - x1, 3) });
   }
 
-  // milestones: zero-duration items (start === target) drawn as diamonds
-  const milestones: { x: number; y: number }[] = [];
+  // milestones: zero-duration items (start === target) drawn as named diamonds
+  const milestones: { x: number; y: number; name: string }[] = [];
   for (let i = 0; i < blockIds.length; i++) {
     const block = store.getBlockById(blockIds[i]);
     if (!block?.position || !block.start_date || !block.target_date) continue;
     if (block.start_date !== block.target_date) continue;
-    milestones.push({ x: block.position.marginLeft, y: i * BLOCK_HEIGHT + BLOCK_HEIGHT / 2 });
+    const name = (block as { name?: string })?.name ?? (block as { data?: { name?: string } })?.data?.name ?? "";
+    milestones.push({ x: block.position.marginLeft, y: i * BLOCK_HEIGHT + BLOCK_HEIGHT / 2, name });
   }
 
   return (
@@ -153,13 +154,19 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
         <line x1={todayX} y1={0} x2={todayX} y2={height} stroke="#ef4444" strokeWidth={1} opacity={0.7} />
       )}
       {milestones.map((m, i) => (
-        <path
-          key={`ms-${i}`}
-          d={`M ${m.x} ${m.y - DIAMOND} L ${m.x + DIAMOND} ${m.y} L ${m.x} ${m.y + DIAMOND} L ${m.x - DIAMOND} ${m.y} Z`}
-          fill="#f59e0b"
-          stroke="#b45309"
-          strokeWidth={1}
-        />
+        <g key={`ms-${i}`}>
+          <path
+            d={`M ${m.x} ${m.y - DIAMOND} L ${m.x + DIAMOND} ${m.y} L ${m.x} ${m.y + DIAMOND} L ${m.x - DIAMOND} ${m.y} Z`}
+            fill="#f59e0b"
+            stroke="#b45309"
+            strokeWidth={1}
+          />
+          {m.name && (
+            <text x={m.x + DIAMOND + 4} y={m.y + 3} fontSize={10} className="fill-secondary" style={{ fontWeight: 500 }}>
+              {m.name.length > 28 ? m.name.slice(0, 28) + "…" : m.name}
+            </text>
+          )}
+        </g>
       ))}
     </svg>
   );

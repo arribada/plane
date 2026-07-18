@@ -107,6 +107,21 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
               )}
             </button>
           </Tooltip>
+          {project && project.item_count > 0 && (
+            <Tooltip tooltipContent={`${project.completed_item_count ?? 0}/${project.item_count} done`}>
+              <span className="flex flex-shrink-0 items-center gap-1">
+                <span className="h-1 w-8 overflow-hidden rounded-full bg-layer-2">
+                  <span
+                    className="block h-full rounded-full bg-emerald-500"
+                    style={{ width: `${Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100)}%` }}
+                  />
+                </span>
+                <span className="w-7 text-right text-11 text-secondary">
+                  {Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100)}%
+                </span>
+              </span>
+            </Tooltip>
+          )}
           <span className="flex-shrink-0 text-11 text-secondary">{project?.item_count ?? 0}</span>
           {!!project?.undated_item_count && (
             <Tooltip tooltipContent={`${project.undated_item_count} work item(s) with no dates`}>

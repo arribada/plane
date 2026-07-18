@@ -7,9 +7,34 @@
 import { observer } from "mobx-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import type { TItemAssignee } from "@/plane-web/types/arribada";
 import { PRIORITY_COLOR, projectColor, readableTextColor } from "./colors";
 
 type Props = { blockId: string };
+
+// Small assignee avatars at the end of an item bar (Asana/Instagantt style).
+const ItemAvatars = ({ assignees }: { assignees: TItemAssignee[] }) => {
+  if (!assignees?.length) return null;
+  const shown = assignees.slice(0, 3);
+  return (
+    <span className="ml-auto flex flex-shrink-0 items-center -space-x-1 pl-1">
+      {shown.map((a) => (
+        <span
+          key={a.id}
+          title={a.name}
+          className="flex size-3.5 items-center justify-center overflow-hidden rounded-full border border-white/70 bg-neutral-600 text-[8px] font-semibold leading-none text-white"
+        >
+          {a.avatar ? <img src={a.avatar} alt="" className="size-full object-cover" /> : a.name.charAt(0).toUpperCase()}
+        </span>
+      ))}
+      {assignees.length > 3 && (
+        <span className="flex size-3.5 items-center justify-center rounded-full border border-white/70 bg-neutral-700 text-[7px] font-semibold text-white">
+          +{assignees.length - 3}
+        </span>
+      )}
+    </span>
+  );
+};
 
 // The bar drawn inside a gantt slot. Projects get a bold summary bar; a project
 // bar whose dates are only DERIVED from its tasks (no plan entered) is drawn
@@ -33,10 +58,14 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
   const label = isProject ? project?.name : item?.name;
   const textColor = readableTextColor(color);
 
+  // % complete for the project summary bar (drawn as a bottom progress line).
+  const pct =
+    isProject && project?.item_count ? Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100) : 0;
+
   return (
     <div className="flex h-full w-full items-center">
       <div
-        className={cn("relative flex w-full items-center overflow-hidden rounded px-2", {
+        className={cn("relative flex w-full items-center gap-1 overflow-hidden rounded px-2", {
           "h-[26px] font-medium shadow-sm": isProject,
           "h-[18px]": !isProject,
         })}
@@ -49,9 +78,17 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
             : { backgroundColor: color }
         }
       >
-        <span className="truncate text-13 leading-none" style={{ color: isDerived ? undefined : textColor }}>
+        <span className="relative z-10 truncate text-13 leading-none" style={{ color: isDerived ? undefined : textColor }}>
           {label}
         </span>
+        {!isProject && item?.assignees && <ItemAvatars assignees={item.assignees} />}
+        {isProject && project?.item_count ? (
+          <span
+            className="absolute bottom-0 left-0 h-[3px] rounded-full bg-white/75"
+            style={{ width: `${pct}%` }}
+            title={`${pct}% complete`}
+          />
+        ) : null}
       </div>
     </div>
   );

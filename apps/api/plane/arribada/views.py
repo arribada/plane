@@ -103,6 +103,7 @@ class PortfolioEndpoint(BaseAPIView):
                 derived_target_date=Max("target_date"),
                 item_count=Count("id"),
                 dated_count=Count("id", filter=dated),
+                completed_count=Count("id", filter=Q(state__group="completed")),
             )
         }
 
@@ -128,6 +129,7 @@ class PortfolioEndpoint(BaseAPIView):
                     "item_count": total,
                     "scheduled_item_count": with_dates,
                     "undated_item_count": total - with_dates,
+                    "completed_item_count": r.get("completed_count", 0),
                 }
             )
         return Response(payload, status=status.HTTP_200_OK)
@@ -154,21 +156,37 @@ class PortfolioItemsEndpoint(BaseAPIView):
         if only_undated:
             items = items.filter(start_date__isnull=True, target_date__isnull=True)
 
-        return Response(
-            list(
-                items.order_by("start_date", "sequence_id").values(
-                    "id",
-                    "name",
-                    "sequence_id",
-                    "start_date",
-                    "target_date",
-                    "state_id",
-                    "parent_id",
-                    "priority",
-                )[:500]
-            ),
-            status=status.HTTP_200_OK,
+        item_list = list(
+            items.order_by("start_date", "sequence_id").values(
+                "id",
+                "name",
+                "sequence_id",
+                "start_date",
+                "target_date",
+                "state_id",
+                "parent_id",
+                "priority",
+            )[:500]
         )
+
+        # Attach assignees (id + name + avatar) so the timeline can show who owns each bar.
+        assignees = defaultdict(list)
+        for a in (
+            IssueAssignee.objects.filter(issue_id__in=[i["id"] for i in item_list])
+            .select_related("assignee")
+        ):
+            u = a.assignee
+            assignees[a.issue_id].append(
+                {
+                    "id": str(u.id),
+                    "name": u.display_name or u.first_name or u.email,
+                    "avatar": getattr(u, "avatar_url", None) or u.avatar or None,
+                }
+            )
+        for i in item_list:
+            i["assignees"] = assignees.get(i["id"], [])
+
+        return Response(item_list, status=status.HTTP_200_OK)
 
 
 class ProjectRelationsEndpoint(BaseAPIView):

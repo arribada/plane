@@ -20,7 +20,11 @@ export type TPortfolioProject = {
   item_count: number;
   scheduled_item_count: number;
   undated_item_count: number;
+  completed_item_count: number;
 };
+
+// A person assigned to a work item, shown as an avatar on the timeline.
+export type TItemAssignee = { id: string; name: string; avatar: string | null };
 
 // A work item of a project, loaded lazily when its project row is expanded.
 export type TPortfolioItem = {
@@ -32,6 +36,7 @@ export type TPortfolioItem = {
   state_id: string | null;
   parent_id: string | null;
   priority: "urgent" | "high" | "medium" | "low" | "none";
+  assignees: TItemAssignee[];
 };
 
 // One of the requesting user's open assigned work items (Home 'My tasks' widget).

@@ -1,0 +1,132 @@
+/**
+ * Copyright (c) 2026-present Arribada Initiative and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+
+import { useState } from "react";
+import { observer } from "mobx-react";
+import { AlertTriangle, Check, ChevronDown, FolderKanban } from "lucide-react";
+import { cn } from "@plane/utils";
+import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
+
+const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
+  { value: "project", label: "Project" },
+  { value: "priority", label: "Priority" },
+];
+
+const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
+  { value: "start_date", label: "Start date" },
+  { value: "target_date", label: "Target date" },
+  { value: "name", label: "Name" },
+  { value: "undated", label: "Undated first" },
+];
+
+export const PortfolioToolbar = observer(function PortfolioToolbar() {
+  const portfolio = usePortfolio();
+  const [projectsOpen, setProjectsOpen] = useState(false);
+
+  const allProjects = portfolio.allProjects.filter((p) => !p.archived);
+  const selected = new Set(portfolio.displayedProjectIds);
+
+  const toggleProject = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    portfolio.setDisplayedProjectIds(allProjects.filter((p) => next.has(p.id)).map((p) => p.id));
+  };
+
+  return (
+    <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-subtle px-4 py-2 text-13">
+      {/* project selector */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setProjectsOpen((v) => !v)}
+          className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
+        >
+          <FolderKanban className="size-3.5 text-secondary" />
+          Projects ({selected.size}/{allProjects.length})
+          <ChevronDown className="size-3.5 text-secondary" />
+        </button>
+        {projectsOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setProjectsOpen(false)} />
+            <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+              <div className="flex items-center justify-between px-2 py-1 text-11 text-secondary">
+                <button type="button" className="hover:text-primary" onClick={() => portfolio.setDisplayedProjectIds(allProjects.map((p) => p.id))}>
+                  Select all
+                </button>
+                <button type="button" className="hover:text-primary" onClick={() => portfolio.setDisplayedProjectIds([])}>
+                  Clear
+                </button>
+              </div>
+              {allProjects.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => toggleProject(p.id)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-layer-2"
+                >
+                  <span
+                    className={cn("flex size-4 items-center justify-center rounded border", {
+                      "border-primary bg-primary text-white": selected.has(p.id),
+                      "border-subtle": !selected.has(p.id),
+                    })}
+                  >
+                    {selected.has(p.id) && <Check className="size-3" />}
+                  </span>
+                  <span className="flex-grow truncate">{p.name}</span>
+                  {!!p.undated_item_count && <span className="text-11 text-amber-600">⚠{p.undated_item_count}</span>}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* color by */}
+      <label className="flex items-center gap-1.5 text-secondary">
+        Color
+        <select
+          className="rounded border border-subtle bg-layer-1 px-1.5 py-1 text-primary"
+          value={portfolio.colorBy}
+          onChange={(e) => portfolio.setColorBy(e.target.value as TPortfolioColorBy)}
+        >
+          {COLOR_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {/* sort by */}
+      <label className="flex items-center gap-1.5 text-secondary">
+        Sort
+        <select
+          className="rounded border border-subtle bg-layer-1 px-1.5 py-1 text-primary"
+          value={portfolio.sortBy}
+          onChange={(e) => portfolio.setSortBy(e.target.value as TPortfolioSortBy)}
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex-grow" />
+
+      {/* undated indicator */}
+      {portfolio.totalUndatedCount > 0 && (
+        <span className="flex items-center gap-1 rounded bg-amber-500/15 px-2 py-1 text-amber-600">
+          <AlertTriangle className="size-3.5" />
+          {portfolio.totalUndatedCount} work items without dates
+        </span>
+      )}
+    </div>
+  );
+});

@@ -144,6 +144,7 @@ export default {
   your_work: "Your work",
   drafts: "Drafts",
   projects: "Projects",
+  portfolio: "Portfolio",
   views: "Views",
   workspace: "Workspace",
   archives: "Archives",

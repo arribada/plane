@@ -312,6 +312,7 @@ export default {
   your_work: "Votre travail",
   drafts: "Brouillons",
   projects: "Projets",
+  portfolio: "Portefeuille",
   views: "Vues",
   workspace: "Espace de travail",
   archives: "Archives",

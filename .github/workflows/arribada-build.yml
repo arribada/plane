@@ -28,6 +28,22 @@ env:
   TAG: ${{ inputs.tag || 'v1.3.1-arribada.1' }}
 
 jobs:
+  typecheck:
+    name: typecheck (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: tsc --noEmit (web + its workspace deps)
+        run: pnpm turbo run check:types --filter=web
+
   backend:
     name: backend (api/worker/beat/migrator)
     runs-on: ubuntu-latest
@@ -93,6 +109,7 @@ jobs:
     name: web (plane-frontend)
     # Only on demand: a 30-40 min build has no business running on every push.
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_web }}
+    needs: typecheck
     runs-on: ubuntu-latest
     permissions:
       contents: read

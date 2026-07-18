@@ -33,9 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No version here: the repo pins pnpm via package.json "packageManager",
+      # and passing version too makes action-setup error on the conflict.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.32.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22

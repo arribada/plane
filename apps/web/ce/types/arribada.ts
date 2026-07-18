@@ -43,3 +43,12 @@ export type TProjectSchedule = {
 
 export type TPortfolioColorBy = "project" | "priority";
 export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated";
+
+// A raw dependency edge between two issues. relation_type is kept as a plain
+// string on purpose — extending the global TIssueRelationTypes union would force
+// every Record<TIssueRelationTypes,…> in the codebase to grow, so we don't.
+export type TIssueRelationEdge = {
+  issue_id: string;
+  related_issue_id: string;
+  relation_type: string;
+};

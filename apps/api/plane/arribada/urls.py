@@ -4,7 +4,12 @@
 
 from django.urls import path
 
-from .views import PortfolioEndpoint, PortfolioItemsEndpoint, ProjectScheduleEndpoint
+from .views import (
+    PortfolioEndpoint,
+    PortfolioItemsEndpoint,
+    ProjectRelationsEndpoint,
+    ProjectScheduleEndpoint,
+)
 
 urlpatterns = [
     path(
@@ -21,5 +26,10 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/schedule/",
         ProjectScheduleEndpoint.as_view(),
         name="arribada-project-schedule",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/relations/",
+        ProjectRelationsEndpoint.as_view(),
+        name="arribada-project-relations",
     ),
 ]

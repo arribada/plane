@@ -6,7 +6,12 @@
 
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
-import type { TPortfolioItem, TPortfolioProject, TProjectSchedule } from "@/plane-web/types/arribada";
+import type {
+  TIssueRelationEdge,
+  TPortfolioItem,
+  TPortfolioProject,
+  TProjectSchedule,
+} from "@/plane-web/types/arribada";
 
 // Talks to the fork-only /api/arribada/ endpoints (plane.arribada Django app).
 // Same origin + session cookie: no auth wiring beyond what APIService already does.
@@ -29,6 +34,16 @@ export class ArribadaService extends APIService {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/items/`, {
       params: { undated: undatedOnly },
     })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // All planning relations (finish_before/start_before/blocked_by) of a project's
+  // issues, in one call — so the gantt can draw dependency arrows without N fetches.
+  async getProjectRelations(workspaceSlug: string, projectId: string): Promise<TIssueRelationEdge[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/relations/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

@@ -8,12 +8,15 @@ from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Issue, Project
+from plane.db.models import Issue, IssueRelation, Project
 
 from .models import ProjectSchedule
 from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
+
+# Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
+GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by"]
 
 
 def _visible_projects(request, slug):
@@ -127,6 +130,26 @@ class PortfolioItemsEndpoint(BaseAPIView):
             ),
             status=status.HTTP_200_OK,
         )
+
+
+class ProjectRelationsEndpoint(BaseAPIView):
+    """Every sequencing dependency between a project's issues, in one call.
+
+    Plane's per-issue relation endpoint would be one request per bar; the gantt
+    needs them all at once to draw arrows, so this returns the whole project set.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        edges = IssueRelation.objects.filter(
+            project_id=project_id,
+            workspace__slug=slug,
+            relation_type__in=GANTT_RELATION_TYPES,
+            deleted_at__isnull=True,
+        ).values("issue_id", "related_issue_id", "relation_type")
+        return Response(list(edges), status=status.HTTP_200_OK)
 
 
 class ProjectScheduleEndpoint(BaseAPIView):

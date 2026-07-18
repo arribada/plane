@@ -22,6 +22,25 @@ export const projectColor = (id: string): string => {
   return `hsl(${hue}, 58%, 52%)`;
 };
 
+// Project health from its planned vs derived dates: red = drifting or past due,
+// amber = due within a week, green = on track, gray = no dates to judge.
+export const projectHealth = (p: {
+  target_date: string | null;
+  derived_target_date: string | null;
+}): { color: string; label: string } | null => {
+  const planned = p.target_date;
+  const derived = p.derived_target_date;
+  if (!planned && !derived) return null; // nothing to judge
+  const today = new Date().toISOString().slice(0, 10);
+  const end = derived ?? planned!;
+  if (planned && derived && derived > planned) return { color: "#dc2626", label: "Drifting past the plan" };
+  if (end < today) return { color: "#dc2626", label: "Past due" };
+  const soon = new Date();
+  soon.setDate(soon.getDate() + 7);
+  if (end <= soon.toISOString().slice(0, 10)) return { color: "#f59e0b", label: "Due within a week" };
+  return { color: "#16a34a", label: "On track" };
+};
+
 // Pick black/white text for contrast against a bar color. Handles hex and hsl.
 export const readableTextColor = (color: string): string => {
   let r = 0;

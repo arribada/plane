@@ -12,7 +12,7 @@ import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
-import { projectColor } from "./colors";
+import { projectColor, projectHealth } from "./colors";
 
 // transient drag source id — plain module var, DnD is a same-frame gesture
 let dragId: string | null = null;
@@ -58,6 +58,15 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: R
             className="size-2.5 flex-shrink-0 rounded-sm"
             style={{ backgroundColor: projectColor(blockId) }}
           />
+          {project &&
+            (() => {
+              const h = projectHealth(project);
+              return h ? (
+                <Tooltip tooltipContent={h.label}>
+                  <span className="size-2 flex-shrink-0 rounded-full" style={{ backgroundColor: h.color }} />
+                </Tooltip>
+              ) : null;
+            })()}
           <button
             type="button"
             onClick={() => router.push(`/${workspaceSlug}/projects/${blockId}/issues/`)}

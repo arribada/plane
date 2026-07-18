@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { BarChart2, Briefcase, FileText, Home, Inbox, Layers, PenSquare, Settings } from "lucide-react";
+import { BarChart2, Briefcase, FileText, GanttChartSquare, Home, Inbox, Layers, PenSquare, Settings, Users } from "lucide-react";
 // plane imports
 import { EUserPermissionsLevel } from "@plane/constants";
 import { ArchiveIcon, UserActivityIcon, LayersIcon, ContrastIcon, DiceIcon, Intake } from "@plane/propel/icons";
@@ -30,6 +30,8 @@ export type TPowerKNavigationCommandKeys =
   | "nav_created_workspace_work_items"
   | "nav_subscribed_workspace_work_items"
   | "nav_workspace_analytics"
+  | "nav_portfolio"
+  | "nav_workload"
   | "nav_workspace_drafts"
   | "nav_workspace_archives"
   | "open_workspace_setting"
@@ -222,6 +224,30 @@ export const usePowerKNavigationCommandsRecord = (): Record<TPowerKNavigationCom
       icon: BarChart2,
       keySequence: "ga",
       action: (ctx) => handlePowerKNavigate(ctx, [ctx.params.workspaceSlug?.toString(), "analytics", "overview"]),
+      isEnabled: (ctx) => baseWorkspaceConditions(ctx) && hasWorkspaceMemberLevelPermissions(ctx),
+      isVisible: (ctx) => baseWorkspaceConditions(ctx) && hasWorkspaceMemberLevelPermissions(ctx),
+      closeOnSelect: true,
+    },
+    nav_portfolio: {
+      id: "nav_portfolio",
+      type: "action",
+      group: "navigation",
+      i18n_title: "power_k.navigation_actions.nav_portfolio",
+      icon: GanttChartSquare,
+      keySequence: "gp",
+      action: (ctx) => handlePowerKNavigate(ctx, [ctx.params.workspaceSlug?.toString(), "portfolio"]),
+      isEnabled: (ctx) => baseWorkspaceConditions(ctx),
+      isVisible: (ctx) => baseWorkspaceConditions(ctx),
+      closeOnSelect: true,
+    },
+    nav_workload: {
+      id: "nav_workload",
+      type: "action",
+      group: "navigation",
+      i18n_title: "power_k.navigation_actions.nav_workload",
+      icon: Users,
+      keySequence: "gw",
+      action: (ctx) => handlePowerKNavigate(ctx, [ctx.params.workspaceSlug?.toString(), "workload"]),
       isEnabled: (ctx) => baseWorkspaceConditions(ctx) && hasWorkspaceMemberLevelPermissions(ctx),
       isVisible: (ctx) => baseWorkspaceConditions(ctx) && hasWorkspaceMemberLevelPermissions(ctx),
       closeOnSelect: true,

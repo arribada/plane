@@ -12,6 +12,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { AlertTriangle, CalendarClock, Loader2 } from "lucide-react";
 import { cn } from "@plane/utils";
+import { useAppRouter } from "@/hooks/use-app-router";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type Row = {
@@ -27,6 +28,7 @@ type Row = {
 
 export const WorkloadRoot = observer(function WorkloadRoot() {
   const { workspaceSlug } = useParams();
+  const router = useAppRouter();
   const service = useMemo(() => new ArribadaService(), []);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +81,11 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
         {rows.map((r) => (
           <div
             key={r.user_id}
-            className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 last:border-b-0 hover:bg-layer-transparent-hover"
+            role="button"
+            tabIndex={0}
+            onClick={() => router.push(`/${workspaceSlug}/profile/${r.user_id}/assigned`)}
+            title={`Open ${r.name}'s assigned work items`}
+            className="grid cursor-pointer grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 last:border-b-0 hover:bg-layer-transparent-hover"
           >
             <div className="min-w-0">
               <div className="flex items-center gap-2">

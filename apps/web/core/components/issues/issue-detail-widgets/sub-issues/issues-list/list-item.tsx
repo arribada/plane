@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { Link as Loader } from "lucide-react";
+import { Link as Loader, Check } from "lucide-react";
 import { useTranslation } from "@plane/i18n";
 import { LinkIcon, EditIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "@plane/propel/icons";
 // plane imports
@@ -20,6 +20,7 @@ import { WithDisplayPropertiesHOC } from "@/components/issues/issue-layouts/prop
 // hooks
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useProject } from "@/hooks/store/use-project";
+import { useProjectState } from "@/hooks/store/use-project-state";
 import useIssuePeekOverviewRedirection from "@/hooks/use-issue-peek-overview-redirection";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
@@ -73,6 +74,7 @@ export const SubIssuesListItem = observer(function SubIssuesListItem(props: Prop
   const { fetchSubIssues } = useSubIssueOperations(EIssueServiceType.ISSUES);
   const { toggleCreateIssueModal, toggleDeleteIssueModal } = useIssueDetail(issueServiceType);
   const project = useProject();
+  const { getProjectStates } = useProjectState();
   const { handleRedirection } = useIssuePeekOverviewRedirection();
   const { isMobile } = usePlatformOS();
   const issue = getIssueById(issueId);
@@ -94,6 +96,29 @@ export const SubIssuesListItem = observer(function SubIssuesListItem(props: Prop
 
   // check if current issue is the root issue
   const isCurrentIssueRoot = issueId === rootIssueId;
+
+  // one-click "done" checkbox for the sub-issue
+  const projectStates = (issue.project_id ? getProjectStates(issue.project_id) : []) ?? [];
+  const isDone = projectStates.find((s) => s.id === issue.state_id)?.group === "completed";
+  const completedState = projectStates.find((s) => s.group === "completed");
+  const revertState =
+    projectStates.find((s) => s.default) ??
+    projectStates.find((s) => s.group !== "completed" && s.group !== "cancelled");
+  const toggleDone = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = isDone ? revertState : completedState;
+    if (canEdit && target && issue.project_id) {
+      subIssueOperations.updateSubIssue(
+        workspaceSlug,
+        issue.project_id,
+        parentIssueId,
+        issueId,
+        { state_id: target.id },
+        issue
+      );
+    }
+  };
 
   const workItemLink = generateWorkItemLink({
     workspaceSlug,
@@ -149,6 +174,20 @@ export const SubIssuesListItem = observer(function SubIssuesListItem(props: Prop
                 </>
               )}
             </div>
+
+            {canEdit && completedState && (
+              <button
+                type="button"
+                onClick={toggleDone}
+                title={isDone ? "Mark not done" : "Mark done"}
+                className={cn(
+                  "mr-2 flex size-4 flex-shrink-0 items-center justify-center rounded border transition-colors",
+                  isDone ? "border-green-600 bg-green-600 text-white" : "border-subtle hover:border-secondary"
+                )}
+              >
+                {isDone && <Check className="size-3" strokeWidth={3} />}
+              </button>
+            )}
 
             <div className="flex w-full cursor-pointer items-center gap-3 truncate">
               <WithDisplayPropertiesHOC displayProperties={displayProperties || {}} displayPropertyKey="key">

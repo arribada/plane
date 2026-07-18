@@ -77,6 +77,10 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.exporter_expired_task.delete_old_s3_link",
         "schedule": crontab(hour=3, minute=45),  # UTC 03:45
     },
+    "arribada-due-date-reminders": {
+        "task": "plane.arribada.reminder_task.due_date_reminder",
+        "schedule": crontab(hour=6, minute=0),  # UTC 06:00 daily
+    },
 }
 
 

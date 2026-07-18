@@ -29,6 +29,7 @@ import { useDebouncedDuplicateIssues } from "@/plane-web/hooks/use-debounced-dup
 import { WorkItemVersionService } from "@/services/issue";
 // local imports
 import { IssueDetailWidgets } from "../issue-detail-widgets";
+import { BlockedByBanner } from "@/plane-web/components/issues/blocked-banner";
 import { NameDescriptionUpdateStatus } from "../issue-update-status";
 import { PeekOverviewProperties } from "../peek-overview/properties";
 import { IssueTitleInput } from "../title-input";
@@ -102,6 +103,8 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
             issueOperations={issueOperations}
           />
         )}
+
+        <BlockedByBanner issueId={issueId} />
 
         <div className="mb-2.5 flex items-center justify-between gap-4">
           <IssueTypeSwitcher issueId={issueId} disabled={isArchived || !isEditable} />

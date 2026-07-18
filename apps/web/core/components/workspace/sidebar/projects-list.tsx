@@ -4,12 +4,12 @@
  * See the LICENSE file for details.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import { autoScrollForElements } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/element";
 import { observer } from "mobx-react";
 import { useParams, usePathname } from "next/navigation";
-import { Ellipsis } from "lucide-react";
+import { Ellipsis, ArrowDownWideNarrow } from "lucide-react";
 import { Disclosure, Transition } from "@headlessui/react";
 // plane imports
 import { EUserPermissions, EUserPermissionsLevel, PROJECT_TRACKER_ELEMENTS } from "@plane/constants";
@@ -59,10 +59,37 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
     EUserPermissionsLevel.WORKSPACE
   );
 
+  // Auto-sort by activity (most recently updated first). Off = manual sort_order.
+  const [autoSort, setAutoSort] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("arribada.sidebar.autoSort") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const toggleAutoSort = () => {
+    setAutoSort((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("arribada.sidebar.autoSort", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+  const orderedJoined = useMemo(() => {
+    if (!autoSort) return joinedProjects;
+    return [...joinedProjects].sort(
+      (a, b) =>
+        (getPartialProjectById(b)?.updated_at?.getTime() ?? 0) - (getPartialProjectById(a)?.updated_at?.getTime() ?? 0)
+    );
+  }, [autoSort, joinedProjects, getPartialProjectById]);
+
   // Compute limited projects for main sidebar
   const displayedProjects = projectPreferences.showLimitedProjects
-    ? joinedProjects.slice(0, projectPreferences.limitedProjectsCount)
-    : joinedProjects;
+    ? orderedJoined.slice(0, projectPreferences.limitedProjectsCount)
+    : orderedJoined;
 
   // Check if there are more projects to show
   const hasMoreProjects =
@@ -186,6 +213,19 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
                 <span className="text-13 font-semibold">{t("projects")}</span>
               </Disclosure.Button>
               <div className="flex items-center gap-1">
+                <Tooltip
+                  tooltipHeading={autoSort ? "Auto-sorted by activity — click for manual order" : "Sort by activity"}
+                  tooltipContent=""
+                >
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    icon={ArrowDownWideNarrow}
+                    onClick={toggleAutoSort}
+                    className={cn("text-placeholder", { "text-accent group-hover:text-accent": autoSort })}
+                    aria-label="Toggle auto-sort by activity"
+                  />
+                </Tooltip>
                 {isAuthorizedUser && (
                   <Tooltip tooltipHeading={t("create_project")} tooltipContent="">
                     <IconButton

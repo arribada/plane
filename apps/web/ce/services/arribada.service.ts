@@ -182,6 +182,20 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Program-level critical path + cross-project dependency edges across visible projects.
+  async getWorkspaceCriticalPath(
+    workspaceSlug: string
+  ): Promise<{
+    issue_ids: string[];
+    edges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/critical-path/`)
+      .then((response) => response?.data ?? { issue_ids: [], edges: [] })
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   // Latest status update per project across the workspace (portfolio pills).
   async getWorkspaceStatuses(workspaceSlug: string): Promise<Record<string, TProjectStatusUpdate>> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/project-statuses/`)

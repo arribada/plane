@@ -59,6 +59,7 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
   const isDerived = isProject && !project?.start_date && !project?.target_date;
   const label = isProject ? project?.name : item?.name;
   const textColor = readableTextColor(color);
+  const isCritical = !isProject && portfolio.isCriticalIssue(blockId);
 
   // % complete for the project summary bar (drawn as a bottom progress line).
   const pct =
@@ -70,6 +71,7 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
         className={cn("relative flex w-full items-center gap-1 overflow-hidden rounded px-2", {
           "h-[26px] font-medium shadow-sm": isProject,
           "h-[18px]": !isProject,
+          "ring-2 ring-red-500 ring-offset-1": isCritical,
         })}
         style={
           isDerived

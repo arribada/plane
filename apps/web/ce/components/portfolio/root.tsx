@@ -11,6 +11,7 @@ import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { GanttChartRoot } from "@/components/gantt-chart";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
+import { useUser } from "@/hooks/store/user";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { PortfolioBar } from "./bar";
 import { PortfolioSidebar } from "./sidebar";
@@ -22,12 +23,17 @@ import { PortfolioToolbar } from "./toolbar";
 export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   const { workspaceSlug } = useParams();
   const portfolio = usePortfolio();
+  const { data: currentUser } = useUser();
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.PROJECT);
 
   useEffect(() => {
     initGantt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    portfolio.setMeUserId(currentUser?.id ?? null);
+  }, [currentUser?.id, portfolio]);
 
   useEffect(() => {
     if (workspaceSlug) portfolio.fetchPortfolio(workspaceSlug.toString());

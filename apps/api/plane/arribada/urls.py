@@ -10,6 +10,7 @@ from .views import (
     ProjectStatusEndpoint,
     ProjectTemplateCloneEndpoint,
     WorkloadEndpoint,
+    WorkspaceCriticalPathEndpoint,
     WorkspaceProjectStatusesEndpoint,
     PortfolioEndpoint,
     PortfolioItemsEndpoint,
@@ -85,6 +86,11 @@ urlpatterns = [
         "workspaces/<str:slug>/project-statuses/",
         WorkspaceProjectStatusesEndpoint.as_view(),
         name="arribada-project-statuses",
+    ),
+    path(
+        "workspaces/<str:slug>/critical-path/",
+        WorkspaceCriticalPathEndpoint.as_view(),
+        name="arribada-workspace-critical-path",
     ),
     path(
         "workspaces/<str:slug>/adopt-issues/",

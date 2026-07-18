@@ -27,7 +27,7 @@ from .models import (
     ProjectSchedule,
     ProjectStatusUpdate,
 )
-from .scheduling import cascade, critical_path
+from .scheduling import build_edges, cascade, critical_path
 from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
@@ -325,6 +325,52 @@ class ProjectCriticalPathEndpoint(BaseAPIView):
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         issues, relations = _project_graph(project_id, slug)
         return Response({"issue_ids": sorted(critical_path(issues, relations))}, status=status.HTTP_200_OK)
+
+
+class WorkspaceCriticalPathEndpoint(BaseAPIView):
+    """Program-level critical path + all sequencing edges across the caller's visible
+    projects, INCLUDING cross-project dependencies (edges are found by issue
+    membership, not project, so an A->B link across two projects is captured)."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        visible = _visible_projects(request, slug)
+        rows = list(
+            Issue.issue_objects.filter(project__in=visible).values("id", "start_date", "target_date", "project_id")
+        )
+        issues = {str(r["id"]): {"start": r["start_date"], "target": r["target_date"]} for r in rows}
+        proj_of = {str(r["id"]): str(r["project_id"]) for r in rows}
+        dated = {i for i, v in issues.items() if v["start"] and v["target"]}
+        issue_ids = set(issues.keys())
+
+        rels = (
+            IssueRelation.objects.filter(relation_type__in=GANTT_RELATION_TYPES, deleted_at__isnull=True)
+            .filter(Q(issue_id__in=issue_ids) | Q(related_issue_id__in=issue_ids))
+            .values("issue_id", "related_issue_id", "relation_type")
+        )
+        relations = [
+            {"issue_id": str(r["issue_id"]), "related_issue_id": str(r["related_issue_id"]), "relation_type": r["relation_type"]}
+            for r in rels
+        ]
+        critical = critical_path(issues, relations)
+
+        # Normalize to predecessor -> successor edges (build_edges applies the relation
+        # direction), keep only edges between two dated (bar-drawable) issues, and flag
+        # cross-project + critical (both endpoints on the critical path).
+        edges = []
+        for pred, succ, kind in build_edges(relations):
+            if pred in dated and succ in dated:
+                edges.append(
+                    {
+                        "from": pred,
+                        "to": succ,
+                        "kind": kind,
+                        "cross_project": proj_of.get(pred) != proj_of.get(succ),
+                        "critical": pred in critical and succ in critical,
+                    }
+                )
+
+        return Response({"issue_ids": sorted(critical), "edges": edges}, status=status.HTTP_200_OK)
 
 
 class ProjectAffineDocEndpoint(BaseAPIView):

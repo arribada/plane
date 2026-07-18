@@ -55,6 +55,15 @@ export interface IPortfolioStore {
   moveProject: (dragId: string, dropId: string) => void;
   setGroupByFolder: (value: boolean) => void;
   toggleFolderCollapse: (headerId: string) => void;
+  hasActiveFilters: boolean;
+  togglePriorityFilter: (priority: string) => void;
+  setAssignedToMeOnly: (value: boolean) => void;
+  setMeUserId: (id: string | null) => void;
+  clearFilters: () => void;
+  showCriticalPath: boolean;
+  isCriticalIssue: (id: string) => boolean;
+  setShowCriticalPath: (workspaceSlug: string, value: boolean) => void;
+  fetchCriticalPath: (workspaceSlug: string) => Promise<void>;
 }
 
 const ORDER_KEY = "arribada.portfolio.manualOrder";
@@ -75,6 +84,14 @@ export class PortfolioStore implements IPortfolioStore {
   folders: TFolder[] = [];
   groupByFolder = false;
   collapsedFolderIds: Set<string> = new Set();
+  // item-level filters (apply to loaded task rows)
+  priorityFilter: Set<string> = new Set();
+  assignedToMeOnly = false;
+  meUserId: string | null = null;
+  // cross-project critical path
+  showCriticalPath = false;
+  criticalIssueIds: Set<string> = new Set();
+  crossEdges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[] = [];
 
   service: ArribadaService;
 
@@ -93,11 +110,18 @@ export class PortfolioStore implements IPortfolioStore {
       folders: observable,
       groupByFolder: observable.ref,
       collapsedFolderIds: observable,
+      priorityFilter: observable,
+      assignedToMeOnly: observable.ref,
+      meUserId: observable.ref,
+      showCriticalPath: observable.ref,
+      criticalIssueIds: observable,
+      crossEdges: observable,
       allProjects: computed,
       sortedProjectIds: computed,
       folderGroups: computed,
       ganttBlockIds: computed,
       totalUndatedCount: computed,
+      hasActiveFilters: computed,
       fetchPortfolio: action,
       toggleProjectExpansion: action,
       setDisplayedProjectIds: action,
@@ -106,6 +130,12 @@ export class PortfolioStore implements IPortfolioStore {
       moveProject: action,
       setGroupByFolder: action,
       toggleFolderCollapse: action,
+      togglePriorityFilter: action,
+      setAssignedToMeOnly: action,
+      setMeUserId: action,
+      clearFilters: action,
+      setShowCriticalPath: action,
+      fetchCriticalPath: action,
     });
   }
 
@@ -168,9 +198,19 @@ export class PortfolioStore implements IPortfolioStore {
     return ids;
   }
 
+  get hasActiveFilters(): boolean {
+    return this.priorityFilter.size > 0 || this.assignedToMeOnly;
+  }
+
+  private itemMatchesFilters(it: TPortfolioItem): boolean {
+    if (this.priorityFilter.size > 0 && !this.priorityFilter.has(it.priority)) return false;
+    if (this.assignedToMeOnly && this.meUserId && !(it.assignees ?? []).some((a) => a.id === this.meUserId)) return false;
+    return true;
+  }
+
   private sortedItemIds(projectId: string): string[] {
     const ids = Object.values(this.itemMap)
-      .filter((it) => this.itemProjectId[it.id] === projectId)
+      .filter((it) => this.itemProjectId[it.id] === projectId && this.itemMatchesFilters(it))
       .sort((a, b) => {
         if (a.start_date && b.start_date) return a.start_date.localeCompare(b.start_date);
         if (a.start_date) return -1;
@@ -350,6 +390,47 @@ export class PortfolioStore implements IPortfolioStore {
     if (next.has(headerId)) next.delete(headerId);
     else next.add(headerId);
     this.collapsedFolderIds = next;
+  };
+
+  togglePriorityFilter = (priority: string): void => {
+    const next = new Set(this.priorityFilter);
+    if (next.has(priority)) next.delete(priority);
+    else next.add(priority);
+    this.priorityFilter = next;
+  };
+
+  setAssignedToMeOnly = (value: boolean): void => {
+    this.assignedToMeOnly = value;
+  };
+
+  setMeUserId = (id: string | null): void => {
+    this.meUserId = id;
+  };
+
+  clearFilters = (): void => {
+    this.priorityFilter = new Set();
+    this.assignedToMeOnly = false;
+  };
+
+  isCriticalIssue = computedFn((id: string): boolean => this.showCriticalPath && this.criticalIssueIds.has(id));
+
+  setShowCriticalPath = (workspaceSlug: string, value: boolean): void => {
+    this.showCriticalPath = value;
+    if (value && this.criticalIssueIds.size === 0 && this.crossEdges.length === 0) {
+      void this.fetchCriticalPath(workspaceSlug);
+    }
+  };
+
+  fetchCriticalPath = async (workspaceSlug: string): Promise<void> => {
+    try {
+      const r = await this.service.getWorkspaceCriticalPath(workspaceSlug);
+      runInAction(() => {
+        this.criticalIssueIds = new Set(r.issue_ids);
+        this.crossEdges = r.edges ?? [];
+      });
+    } catch {
+      // leave prior state; the toggle just won't highlight anything
+    }
   };
 
   // Drag reorder: drop `dragId` at the position of `dropId`, switch to manual sort.

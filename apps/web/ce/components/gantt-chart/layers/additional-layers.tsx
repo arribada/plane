@@ -15,6 +15,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type Props = {
@@ -29,6 +30,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const { itemsContainerWidth, blockCount } = props;
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
+  const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
@@ -114,6 +116,37 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     ghosts.push({ x: x1, y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2 - 5, w: Math.max(x2 - x1, 3) });
   }
 
+  // cross-project dependency arrows (portfolio "critical path" mode). Drawn only
+  // between two currently-positioned bars; critical edges in red, cross-project in
+  // purple dashed, in-project in grey. predecessor end -> successor start.
+  const arrows: { path: string; hx: number; hy: number; color: string; width: number; dash?: string }[] = [];
+  if (portfolio.showCriticalPath && portfolio.crossEdges.length) {
+    const idx = new Map<string, number>();
+    blockIds.forEach((id, i) => idx.set(id, i));
+    for (const e of portfolio.crossEdges) {
+      const ia = idx.get(e.from);
+      const ib = idx.get(e.to);
+      if (ia === undefined || ib === undefined) continue;
+      const ba = store.getBlockById(e.from);
+      const bb = store.getBlockById(e.to);
+      if (!ba?.position || !bb?.position) continue;
+      const x1 = ba.position.marginLeft + (ba.position.width ?? 0);
+      const x2 = bb.position.marginLeft;
+      const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+      const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+      const midx = Math.max(x1, x2) + 10;
+      const color = e.critical ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
+      arrows.push({
+        path: `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`,
+        hx: x2,
+        hy: y2,
+        color,
+        width: e.critical ? 2 : 1.25,
+        dash: e.cross_project && !e.critical ? "4 2" : undefined,
+      });
+    }
+  }
+
   // milestones: zero-duration items (start === target) drawn as named diamonds
   const milestones: { x: number; y: number; name: string }[] = [];
   for (let i = 0; i < blockIds.length; i++) {
@@ -153,6 +186,12 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       {typeof todayX === "number" && (
         <line x1={todayX} y1={0} x2={todayX} y2={height} stroke="#ef4444" strokeWidth={1} opacity={0.7} />
       )}
+      {arrows.map((a, i) => (
+        <g key={`dep-${i}`}>
+          <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} opacity={0.85} />
+          <path d={`M ${a.hx} ${a.hy} l -5 -3 l 0 6 z`} fill={a.color} />
+        </g>
+      ))}
       {milestones.map((m, i) => (
         <g key={`ms-${i}`}>
           <path

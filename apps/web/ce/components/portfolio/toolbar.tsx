@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, Flag, Folder, FolderKanban, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Download, Filter, Flag, Folder, FolderKanban, Route, Wand2 } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -40,6 +40,14 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const [reflowResult, setReflowResult] = useState<number | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const PRIORITIES: { value: string; label: string }[] = [
+    { value: "urgent", label: "Urgent" },
+    { value: "high", label: "High" },
+    { value: "medium", label: "Medium" },
+    { value: "low", label: "Low" },
+    { value: "none", label: "None" },
+  ];
 
   const exportTimeline = async (format: "png" | "svg") => {
     setExportOpen(false);
@@ -177,6 +185,92 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           ))}
         </select>
       </label>
+
+      {/* filter task bars by priority / assigned-to-me (affects expanded projects) */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setFilterOpen((v) => !v)}
+          title="Filter task bars (applies to expanded projects)"
+          className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
+            "border-accent-strong bg-accent-primary/10 text-accent-primary": portfolio.hasActiveFilters,
+            "border-subtle hover:bg-layer-1": !portfolio.hasActiveFilters,
+          })}
+        >
+          <Filter className="size-3.5" />
+          Filter
+          {portfolio.hasActiveFilters && (
+            <span className="rounded-full bg-accent-primary px-1 text-10 text-white">
+              {portfolio.priorityFilter.size + (portfolio.assignedToMeOnly ? 1 : 0)}
+            </span>
+          )}
+        </button>
+        {filterOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setFilterOpen(false)} />
+            <div className="absolute left-0 top-full z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5 shadow-lg">
+              <div className="px-1.5 py-1 text-11 font-medium uppercase tracking-wide text-secondary">Priority</div>
+              {PRIORITIES.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => portfolio.togglePriorityFilter(p.value)}
+                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                >
+                  <span
+                    className={cn("flex size-4 items-center justify-center rounded border", {
+                      "border-accent-strong bg-accent-primary text-white": portfolio.priorityFilter.has(p.value),
+                      "border-subtle": !portfolio.priorityFilter.has(p.value),
+                    })}
+                  >
+                    {portfolio.priorityFilter.has(p.value) && <Check className="size-3" />}
+                  </span>
+                  {p.label}
+                </button>
+              ))}
+              <div className="my-1 h-px bg-layer-2" />
+              <button
+                type="button"
+                onClick={() => portfolio.setAssignedToMeOnly(!portfolio.assignedToMeOnly)}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+              >
+                <span
+                  className={cn("flex size-4 items-center justify-center rounded border", {
+                    "border-accent-strong bg-accent-primary text-white": portfolio.assignedToMeOnly,
+                    "border-subtle": !portfolio.assignedToMeOnly,
+                  })}
+                >
+                  {portfolio.assignedToMeOnly && <Check className="size-3" />}
+                </span>
+                Assigned to me
+              </button>
+              {portfolio.hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={() => portfolio.clearFilters()}
+                  className="mt-1 w-full rounded px-1.5 py-1 text-left text-12 text-red-600 hover:bg-red-500/10"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* highlight the cross-project critical path + draw dependency arrows */}
+      <button
+        type="button"
+        onClick={() => workspaceSlug && portfolio.setShowCriticalPath(workspaceSlug.toString(), !portfolio.showCriticalPath)}
+        title="Highlight the program critical path and cross-project dependency arrows"
+        className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
+          "border-red-500 bg-red-500/10 text-red-600": portfolio.showCriticalPath,
+          "border-subtle hover:bg-layer-1": !portfolio.showCriticalPath,
+        })}
+      >
+        <Route className="size-3.5" />
+        Critical path
+      </button>
 
       {/* group projects into folder swimlanes */}
       <button

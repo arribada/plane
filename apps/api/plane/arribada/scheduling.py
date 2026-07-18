@@ -109,6 +109,10 @@ def critical_path(issues, relations):
     prev = {n: None for n in order}
     for n in order:
         for m in adj[n]:
+            # m may be inside a cycle (dropped from the topo order); skip those edges
+            # rather than KeyError on best[m].
+            if m not in best:
+                continue
             if best[n] + dur[m] > best[m]:
                 best[m] = best[n] + dur[m]
                 prev[m] = n

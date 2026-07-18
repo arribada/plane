@@ -79,14 +79,14 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
     }
   };
 
-  const field = "w-full rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-primary";
+  const field = "w-full rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-accent-strong";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={busy ? undefined : onClose} />
       <div className="relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-15 font-semibold text-primary">
+          <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Copy className="size-4 text-secondary" />
             New project from template
           </h3>
@@ -146,7 +146,7 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
             type="button"
             onClick={submit}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-13 font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded bg-accent-primary px-3 py-1.5 text-13 font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {busy && <Loader2 className="size-3.5 animate-spin" />}
             {busy ? "Cloning…" : "Create project"}

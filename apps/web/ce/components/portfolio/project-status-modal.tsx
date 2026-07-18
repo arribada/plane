@@ -68,7 +68,7 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
       <div className="absolute inset-0 bg-black/40" onClick={posting ? undefined : onClose} />
       <div className="relative z-10 flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-subtle bg-layer-1 shadow-2xl">
         <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
-          <h3 className="text-15 font-semibold text-primary">Status · {projectName ?? "Project"}</h3>
+          <h3 className="text-16 font-semibold text-primary">Status · {projectName ?? "Project"}</h3>
           <button type="button" onClick={onClose} className="text-secondary hover:text-primary">
             <X className="size-4" />
           </button>
@@ -98,14 +98,14 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
             onChange={(e) => setMessage(e.target.value)}
             placeholder="What changed? (optional)"
             rows={2}
-            className="w-full resize-none rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-primary"
+            className="w-full resize-none rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-accent-strong"
           />
           <div className="mt-2 flex justify-end">
             <button
               type="button"
               onClick={post}
               disabled={posting}
-              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-13 font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded bg-accent-primary px-3 py-1.5 text-13 font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {posting && <Loader2 className="size-3.5 animate-spin" />}
               Post update

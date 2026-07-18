@@ -89,7 +89,7 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-md border border-subtle bg-subtle">
+      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-md border border-subtle bg-layer-2">
         {WEEKDAYS.map((w) => (
           <div key={w} className="bg-layer-1 px-1 py-1 text-center text-[10px] font-medium uppercase tracking-wide text-secondary/70">
             {w}
@@ -102,9 +102,9 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
           const isToday = iso === todayISO;
           return (
             <div key={iso} className={cn("min-h-[64px] bg-layer-1 p-1", !inMonth && "opacity-40")}>
-              <div className={cn("mb-0.5 text-right text-[11px]", isToday ? "font-semibold text-accent" : "text-secondary/70")}>
+              <div className={cn("mb-0.5 text-right text-[11px]", isToday ? "font-semibold text-accent-primary" : "text-secondary/70")}>
                 {isToday ? (
-                  <span className="inline-flex size-4 items-center justify-center rounded-full bg-accent text-white">{d.getDate()}</span>
+                  <span className="inline-flex size-4 items-center justify-center rounded-full bg-accent-primary text-white">{d.getDate()}</span>
                 ) : (
                   d.getDate()
                 )}

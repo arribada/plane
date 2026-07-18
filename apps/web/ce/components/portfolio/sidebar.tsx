@@ -35,26 +35,37 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
   const project = portfolio.getProject(blockId);
   const item = portfolio.getItem(blockId);
   const isExpanded = portfolio.expandedProjectIds.has(blockId);
+  // Only drag in manual mode: under a date/name sort the visible order differs from
+  // displayedProjectIds, so a drop would reshuffle into an order the user never saw.
+  const canDrag = isProject && portfolio.sortBy === "manual";
 
   return (
     <div
       className="group flex w-full items-center gap-1.5 pr-4 hover:bg-layer-transparent-hover"
       style={{ height: `${BLOCK_HEIGHT}px` }}
-      draggable={isProject}
+      draggable={canDrag}
       onDragStart={() => {
-        if (isProject) dragId = blockId;
+        if (canDrag) dragId = blockId;
       }}
       onDragOver={(e) => {
-        if (isProject && dragId && dragId !== blockId) e.preventDefault();
+        if (canDrag && dragId && dragId !== blockId) e.preventDefault();
       }}
       onDrop={() => {
-        if (isProject && dragId) portfolio.moveProject(dragId, blockId);
+        if (canDrag && dragId) portfolio.moveProject(dragId, blockId);
+        dragId = null;
+      }}
+      onDragEnd={() => {
         dragId = null;
       }}
     >
       {isProject ? (
         <>
-          <GripVertical className="size-3.5 flex-shrink-0 cursor-grab text-tertiary opacity-0 group-hover:opacity-100" />
+          <GripVertical
+            className={cn(
+              "size-3.5 flex-shrink-0 cursor-grab text-tertiary opacity-0",
+              canDrag && "group-hover:opacity-100"
+            )}
+          />
           <button
             type="button"
             className="flex size-5 flex-shrink-0 items-center justify-center rounded text-secondary hover:bg-layer-1"
@@ -79,7 +90,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
             type="button"
             onClick={() => router.push(`/${workspaceSlug}/projects/${blockId}/issues/`)}
             title="Open project"
-            className="flex-grow truncate text-left text-13 font-medium text-primary hover:text-accent hover:underline"
+            className="flex-grow truncate text-left text-13 font-medium text-primary hover:text-accent-primary hover:underline"
           >
             {project?.name}
           </button>

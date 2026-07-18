@@ -5,6 +5,7 @@
 from collections import defaultdict
 from datetime import date, timedelta
 
+from django.db import transaction
 from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework import status
@@ -357,6 +358,8 @@ class ProjectStatusEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         updates = ProjectStatusUpdate.objects.filter(
             project_id=project_id, project__workspace__slug=slug
         ).select_related("created_by")[:30]
@@ -367,7 +370,7 @@ class ProjectStatusEndpoint(BaseAPIView):
         st = (request.data.get("status") or ProjectStatusUpdate.ON_TRACK).strip()
         if st not in {c[0] for c in ProjectStatusUpdate.STATUS_CHOICES}:
             return Response({"error": "invalid status"}, status=status.HTTP_400_BAD_REQUEST)
-        project = Project.objects.filter(workspace__slug=slug, pk=project_id).first()
+        project = _visible_projects(request, slug).filter(pk=project_id).first()
         if not project:
             return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         update = ProjectStatusUpdate.objects.create(
@@ -386,7 +389,7 @@ class WorkspaceProjectStatusesEndpoint(BaseAPIView):
     def get(self, request, slug):
         latest = {}
         for u in (
-            ProjectStatusUpdate.objects.filter(project__workspace__slug=slug)
+            ProjectStatusUpdate.objects.filter(project__in=_visible_projects(request, slug))
             .order_by("project_id", "-created_at")
             .select_related("created_by")
         ):
@@ -412,92 +415,98 @@ class ProjectTemplateCloneEndpoint(BaseAPIView):
         if not name or not identifier:
             return Response({"error": "name and identifier are required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        workspace = Workspace.objects.get(slug=slug)
-        template = Project.objects.filter(workspace=workspace, pk=project_id).first()
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if not workspace:
+            return Response({"error": "workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Scope the template to projects the caller is a member of (no Secret-project exfil).
+        template = _visible_projects(request, slug).filter(pk=project_id).first()
         if not template:
             return Response({"error": "template project not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # 1) Create the new project through the same serializer the create endpoint uses
-        #    (handles name/identifier validation + the ProjectIdentifier row).
+        # Validate name/identifier before opening the transaction.
         serializer = ProjectSerializer(data={"name": name, "identifier": identifier}, context={"workspace_id": workspace.id})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        serializer.save()
-        new_project = Project.objects.get(pk=serializer.data["id"])
-        ProjectMember.objects.get_or_create(
-            project=new_project, member=request.user, defaults={"role": ROLE.ADMIN.value}
-        )
 
-        # 2) Copy the template's states so state mapping is 1:1 (keeps custom workflows).
-        state_map = {}
-        for st in State.objects.filter(project=template):
-            state_map[st.id] = State.objects.create(
-                name=st.name,
-                color=st.color,
-                group=st.group,
-                sequence=st.sequence,
-                project=new_project,
-                workspace=workspace,
-                default=st.default,
-                created_by=request.user,
+        # The whole clone runs in one transaction: a mid-way failure rolls back cleanly
+        # instead of leaving an orphaned partial project (with a now-taken identifier).
+        with transaction.atomic():
+            serializer.save()
+            new_project = Project.objects.get(pk=serializer.data["id"])
+            ProjectMember.objects.get_or_create(
+                project=new_project, member=request.user, defaults={"role": ROLE.ADMIN.value}
             )
 
-        # 3) Work out the date shift: earliest template start (or target) -> kickoff.
-        tmpl_issues = list(
-            Issue.issue_objects.filter(project=template, deleted_at__isnull=True).order_by("sort_order", "created_at")
-        )
-        shift_days = None
-        if kickoff:
-            starts = [i.start_date for i in tmpl_issues if i.start_date]
-            targets = [i.target_date for i in tmpl_issues if i.target_date]
-            anchor = min(starts) if starts else (min(targets) if targets else None)
-            if anchor:
-                try:
-                    parts = [int(x) for x in str(kickoff)[:10].split("-")]
-                    shift_days = (date(parts[0], parts[1], parts[2]) - anchor).days
-                except (ValueError, TypeError, IndexError):
-                    shift_days = None
+            # Copy the template's states so state mapping is 1:1 (keeps custom workflows).
+            state_map = {}
+            for st in State.objects.filter(project=template):
+                state_map[st.id] = State.objects.create(
+                    name=st.name,
+                    color=st.color,
+                    group=st.group,
+                    sequence=st.sequence,
+                    project=new_project,
+                    workspace=workspace,
+                    default=st.default,
+                    created_by=request.user,
+                )
 
-        def _shift(d):
-            return d + timedelta(days=shift_days) if (d and shift_days is not None) else d
-
-        # 4a) Clone the work items (Issue.save() assigns fresh sequence_id/sort_order).
-        issue_map = {}
-        for src in tmpl_issues:
-            issue_map[src.id] = Issue.objects.create(
-                name=src.name,
-                description_json=src.description_json,
-                description_html=src.description_html,
-                description_binary=src.description_binary,
-                priority=src.priority,
-                state=state_map.get(src.state_id),
-                start_date=_shift(src.start_date),
-                target_date=_shift(src.target_date),
-                project=new_project,
-                workspace=workspace,
-                created_by=request.user,
+            # Work out the date shift: earliest template start (or target) -> kickoff.
+            tmpl_issues = list(
+                Issue.issue_objects.filter(project=template, deleted_at__isnull=True).order_by("sort_order", "created_at")
             )
+            shift_days = None
+            if kickoff:
+                starts = [i.start_date for i in tmpl_issues if i.start_date]
+                targets = [i.target_date for i in tmpl_issues if i.target_date]
+                anchor = min(starts) if starts else (min(targets) if targets else None)
+                if anchor:
+                    try:
+                        parts = [int(x) for x in str(kickoff)[:10].split("-")]
+                        shift_days = (date(parts[0], parts[1], parts[2]) - anchor).days
+                    except (ValueError, TypeError, IndexError):
+                        shift_days = None
 
-        # 4b) Re-link parents via .update() (bypasses save() side effects / re-sequencing).
-        for src in tmpl_issues:
-            if src.parent_id and src.parent_id in issue_map:
-                Issue.objects.filter(pk=issue_map[src.id].id).update(parent_id=issue_map[src.parent_id].id)
+            def _shift(d):
+                return d + timedelta(days=shift_days) if (d and shift_days is not None) else d
 
-        # 4c) Recreate dependency edges among the cloned items only.
-        rel_created = 0
-        for r in IssueRelation.objects.filter(issue__in=[i.id for i in tmpl_issues]):
-            a = issue_map.get(r.issue_id)
-            b = issue_map.get(r.related_issue_id)
-            if a and b:
-                IssueRelation.objects.create(
-                    issue=a,
-                    related_issue=b,
-                    relation_type=r.relation_type,
+            # Clone the work items (Issue.save() assigns fresh sequence_id/sort_order).
+            issue_map = {}
+            for src in tmpl_issues:
+                issue_map[src.id] = Issue.objects.create(
+                    name=src.name,
+                    description_json=src.description_json,
+                    description_html=src.description_html,
+                    description_binary=src.description_binary,
+                    priority=src.priority,
+                    state=state_map.get(src.state_id),
+                    start_date=_shift(src.start_date),
+                    target_date=_shift(src.target_date),
                     project=new_project,
                     workspace=workspace,
                     created_by=request.user,
                 )
-                rel_created += 1
+
+            # Re-link parents via .update() (bypasses save() side effects / re-sequencing).
+            for src in tmpl_issues:
+                if src.parent_id and src.parent_id in issue_map:
+                    Issue.objects.filter(pk=issue_map[src.id].id).update(parent_id=issue_map[src.parent_id].id)
+
+            # Recreate dependency edges among the cloned items only.
+            rel_created = 0
+            for r in IssueRelation.objects.filter(issue__in=[i.id for i in tmpl_issues]):
+                a = issue_map.get(r.issue_id)
+                b = issue_map.get(r.related_issue_id)
+                if a and b:
+                    IssueRelation.objects.create(
+                        issue=a,
+                        related_issue=b,
+                        relation_type=r.relation_type,
+                        project=new_project,
+                        workspace=workspace,
+                        created_by=request.user,
+                    )
+                    rel_created += 1
 
         return Response(
             {
@@ -558,9 +567,10 @@ class WorkloadEndpoint(BaseAPIView):
     def get(self, request, slug):
         today = timezone.now().date()
         week = today + timedelta(days=7)
-        active = IssueAssignee.objects.filter(issue__workspace__slug=slug, issue__deleted_at__isnull=True).exclude(
-            issue__state__group__in=["completed", "cancelled"]
-        )
+        # Scope to the caller's own projects so Secret-project load doesn't leak.
+        active = IssueAssignee.objects.filter(
+            issue__project__in=_visible_projects(request, slug), issue__deleted_at__isnull=True
+        ).exclude(issue__state__group__in=["completed", "cancelled"])
         agg = {
             r["assignee_id"]: r
             for r in active.values("assignee_id").annotate(
@@ -616,9 +626,12 @@ class AdoptIssuesEndpoint(BaseAPIView):
         if not target:
             return Response({"error": "target project not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        visible = _visible_projects(request, slug)
         adopted = []
         for sid in source_ids:
-            src = Issue.issue_objects.filter(workspace__slug=slug, id=sid).first()
+            # Scope sources to the caller's own projects — both the copy (read) and the
+            # completed-state write must stay inside projects they're a member of.
+            src = Issue.issue_objects.filter(project__in=visible, id=sid).first()
             if not src:
                 continue
             # save() assigns sequence_id + the target project's default state
@@ -638,7 +651,10 @@ class AdoptIssuesEndpoint(BaseAPIView):
             done = State.objects.filter(project=src.project, group="completed").first()
             if done:
                 src.state = done
-                src.save(update_fields=["state"])
+                # include completed_at: Issue.save() sets it from the state group, but
+                # update_fields=["state"] alone would drop it (breaks burndown/velocity).
+                src.completed_at = timezone.now()
+                src.save(update_fields=["state", "completed_at"])
             adopted.append({"source_id": str(sid), "new_issue_id": str(new_issue.id), "sequence_id": new_issue.sequence_id})
         return Response({"adopted": len(adopted), "issues": adopted}, status=status.HTTP_200_OK)
 
@@ -714,7 +730,7 @@ class ProjectFolderAssignEndpoint(BaseAPIView):
         folder_id = request.data.get("folder_id")
         if not project_id:
             return Response({"error": "project_id required"}, status=status.HTTP_400_BAD_REQUEST)
-        if not Project.objects.filter(workspace__slug=slug, id=project_id).exists():
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         if not folder_id:
             ProjectFolderItem.objects.filter(project_id=project_id).delete()

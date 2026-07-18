@@ -47,8 +47,13 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
     const svg = buildPortfolioSvg(displayed.length ? displayed : portfolio.allProjects);
     if (!svg) return;
     const stamp = new Date().toISOString().slice(0, 10);
-    if (format === "svg") downloadSvg(svg, `portfolio-${stamp}.svg`);
-    else await downloadPng(svg, `portfolio-${stamp}.png`);
+    try {
+      if (format === "svg") downloadSvg(svg, `portfolio-${stamp}.svg`);
+      else await downloadPng(svg, `portfolio-${stamp}.png`);
+    } catch {
+      // rasterization can fail in rare browser states — fall back to the vector export
+      if (format === "png") downloadSvg(svg, `portfolio-${stamp}.svg`);
+    }
   };
 
   const captureBaselines = async () => {
@@ -81,10 +86,10 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const selected = new Set(portfolio.displayedProjectIds);
 
   const toggleProject = (id: string) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    portfolio.setDisplayedProjectIds(allProjects.filter((p) => next.has(p.id)).map((p) => p.id));
+    // Add/remove only the toggled id in place, preserving any manual drag order
+    // (rebuilding from allProjects would reset the timeline to API order).
+    const current = portfolio.displayedProjectIds;
+    portfolio.setDisplayedProjectIds(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
   };
 
   return (
@@ -121,14 +126,19 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 >
                   <span
                     className={cn("flex size-4 items-center justify-center rounded border", {
-                      "border-primary bg-primary text-white": selected.has(p.id),
+                      "border-accent-strong bg-accent-primary text-white": selected.has(p.id),
                       "border-subtle": !selected.has(p.id),
                     })}
                   >
                     {selected.has(p.id) && <Check className="size-3" />}
                   </span>
                   <span className="flex-grow truncate">{p.name}</span>
-                  {!!p.undated_item_count && <span className="text-11 text-amber-600">⚠{p.undated_item_count}</span>}
+                  {!!p.undated_item_count && (
+                    <span className="flex items-center gap-0.5 text-11 text-amber-600">
+                      <AlertTriangle className="size-3" />
+                      {p.undated_item_count}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>

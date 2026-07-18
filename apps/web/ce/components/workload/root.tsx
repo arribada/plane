@@ -94,7 +94,7 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
               </div>
               <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-layer-2">
                 <div
-                  className={cn("h-full rounded-full", r.overdue > 0 ? "bg-red-500" : "bg-accent")}
+                  className={cn("h-full rounded-full", r.overdue > 0 ? "bg-red-500" : "bg-accent-primary")}
                   style={{ width: `${(r.assigned / maxAssigned) * 100}%` }}
                 />
               </div>

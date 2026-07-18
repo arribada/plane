@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Archive, Trash2, X, SignalHigh, FolderInput } from "lucide-react";
+import { Loader2, Archive, Trash2, X, SignalHigh, FolderInput } from "lucide-react";
 import { cn } from "@plane/utils";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMultipleSelectStore } from "@/hooks/store/use-multiple-select-store";
@@ -67,7 +67,8 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setPrioOpen(false);
     try {
       // Optimistic store update — the list re-renders in place, no page reload.
-      await Promise.all(ids.map((id) => updateIssue(ws, pid, id, { priority })));
+      // allSettled so one failing item doesn't abort the batch or skip clearSelection.
+      await Promise.allSettled(ids.map((id) => updateIssue(ws, pid, id, { priority })));
       clearSelection();
     } finally {
       setBusy(false);
@@ -103,7 +104,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setBusy(true);
     try {
       // removeIssue deletes on the server and drops the row from the store — no reload.
-      await Promise.all(ids.map((id) => removeIssue(ws, pid, id)));
+      await Promise.allSettled(ids.map((id) => removeIssue(ws, pid, id)));
       clearSelection();
     } finally {
       setBusy(false);
@@ -119,10 +120,13 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
         className
       )}
     >
-      <span className="mr-1 rounded bg-accent/15 px-2 py-0.5 text-13 font-medium text-accent">
+      <span className="mr-1 rounded bg-accent-primary/15 px-2 py-0.5 text-13 font-medium text-accent-primary">
         {ids.length} selected
       </span>
 
+      {/* Priority / Archive / Delete key off the single route projectId, so only
+          offer them inside a project view (a workspace/global list can span projects). */}
+      {pid && (
       <div className="relative">
         <button type="button" className={btn} disabled={busy} onClick={() => setPrioOpen((v) => !v)}>
           <SignalHigh className="size-3.5" />
@@ -146,6 +150,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
           </>
         )}
       </div>
+      )}
 
       <div className="relative">
         <button type="button" className={btn} disabled={busy} onClick={() => setMoveOpen((v) => !v)}>
@@ -174,21 +179,25 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
         )}
       </div>
 
-      <button type="button" className={btn} disabled={busy} onClick={archive}>
-        <Archive className="size-3.5" />
-        Archive
-      </button>
-      <button type="button" className={cn(btn, "text-danger-primary")} disabled={busy} onClick={remove}>
-        <Trash2 className="size-3.5" />
-        Delete
-      </button>
+      {pid && (
+        <>
+          <button type="button" className={btn} disabled={busy} onClick={archive}>
+            <Archive className="size-3.5" />
+            Archive
+          </button>
+          <button type="button" className={cn(btn, "text-danger-primary")} disabled={busy} onClick={remove}>
+            <Trash2 className="size-3.5" />
+            Delete
+          </button>
+        </>
+      )}
 
-      <div className="mx-1 h-4 w-px bg-subtle" />
+      <div className="mx-1 h-4 w-px bg-layer-2" />
       <button type="button" className={btn} disabled={busy} onClick={clearSelection}>
         <X className="size-3.5" />
         {busy ? "Working…" : "Cancel"}
       </button>
-      {busy && <AlertTriangle className="size-3.5 animate-pulse text-secondary" />}
+      {busy && <Loader2 className="size-3.5 animate-spin text-secondary" />}
     </div>
   );
 });

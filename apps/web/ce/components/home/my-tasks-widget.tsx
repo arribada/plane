@@ -27,9 +27,6 @@ const PRIORITY_DOT: Record<TMyWorkItem["priority"], string> = {
   none: "bg-neutral-300",
 };
 
-// Local-midnight day index, so date-only comparisons ignore the wall clock.
-const dayOf = (d: Date) => Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000);
-
 // Local YYYY-MM-DD for a Date (avoids the UTC shift toISOString would introduce).
 const toLocalISO = (d: Date) => {
   const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
@@ -167,7 +164,13 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   }, [workspaceSlug, service]);
 
   const buckets = useMemo<Bucket[]>(() => {
-    const today = dayOf(new Date());
+    // Compare date-only strings (YYYY-MM-DD sorts chronologically) against local
+    // today / today+7 — avoids the UTC-midnight shift that mis-buckets Americas TZs.
+    const now = new Date();
+    const todayISO = toLocalISO(now);
+    const weekEnd = new Date(now);
+    weekEnd.setDate(now.getDate() + 7);
+    const weekISO = toLocalISO(weekEnd);
     const overdue: TMyWorkItem[] = [];
     const week: TMyWorkItem[] = [];
     const later: TMyWorkItem[] = [];
@@ -177,9 +180,9 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
         undated.push(it);
         continue;
       }
-      const d = dayOf(new Date(it.target_date));
-      if (d < today) overdue.push(it);
-      else if (d <= today + 7) week.push(it);
+      const d = it.target_date.slice(0, 10);
+      if (d < todayISO) overdue.push(it);
+      else if (d <= weekISO) week.push(it);
       else later.push(it);
     }
     return [
@@ -197,18 +200,18 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
 
   if (loading) {
     return (
-      <div className="animate-pulse rounded-xl border border-subtle bg-surface p-4">
-        <div className="mb-3 h-4 w-28 rounded bg-neutral-200/60" />
+      <div className="animate-pulse rounded-xl border border-subtle bg-surface-1 p-4">
+        <div className="mb-3 h-4 w-28 rounded bg-layer-2" />
         <div className="space-y-2">
-          <div className="h-8 rounded bg-neutral-200/40" />
-          <div className="h-8 rounded bg-neutral-200/40" />
+          <div className="h-8 rounded bg-layer-2" />
+          <div className="h-8 rounded bg-layer-2" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border border-subtle bg-surface">
+    <div className="rounded-xl border border-subtle bg-surface-1">
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>

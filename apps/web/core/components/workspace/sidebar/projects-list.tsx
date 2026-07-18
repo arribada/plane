@@ -80,10 +80,10 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
   };
   const orderedJoined = useMemo(() => {
     if (!autoSort) return joinedProjects;
-    return [...joinedProjects].sort(
-      (a, b) =>
-        (getPartialProjectById(b)?.updated_at?.getTime() ?? 0) - (getPartialProjectById(a)?.updated_at?.getTime() ?? 0)
-    );
+    // updated_at is an ISO 8601 string at runtime (the store keeps the raw API
+    // payload, no Date coercion); ISO strings sort chronologically as text.
+    const updatedAt = (id: string) => getPartialProjectById(id)?.updated_at ?? "";
+    return [...joinedProjects].sort((a, b) => String(updatedAt(b)).localeCompare(String(updatedAt(a))));
   }, [autoSort, joinedProjects, getPartialProjectById]);
 
   // Compute limited projects for main sidebar

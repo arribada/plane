@@ -60,14 +60,14 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
   const affineLink = docs.doc_id && docs.workspace_id ? `${AFFINE_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}` : null;
   const driveLink = docs.google_drive_url;
 
-  const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent";
+  const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent-strong";
   const editBtn = "flex items-center gap-1 rounded border border-subtle px-2 py-1 text-12 text-secondary hover:bg-layer-2";
 
   return (
     <div className="mb-3 rounded-lg border border-subtle bg-layer-1">
       {/* header note */}
       <div className="flex items-start gap-2 border-b border-subtle px-4 py-2.5">
-        <Info className="mt-0.5 size-4 flex-shrink-0 text-accent" />
+        <Info className="mt-0.5 size-4 flex-shrink-0 text-accent-primary" />
         <div className="text-13">
           <span className="font-medium text-primary">Project documentation</span>
           <span className="text-secondary">
@@ -82,7 +82,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         <BookOpen className="size-4 flex-shrink-0 text-secondary" />
         <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">AFFiNE wiki</span>
         {affineLink ? (
-          <a href={affineLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 font-medium text-accent hover:underline">
+          <a href={affineLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 font-medium text-accent-primary hover:underline">
             {docs.title || "Open the project wiki"}
             <ExternalLink className="size-3.5" />
           </a>
@@ -94,7 +94,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <div className="flex flex-wrap items-center gap-2">
             <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="Label (optional)" className={cn(input, "w-36")} />
             <input value={draftDoc} onChange={(e) => setDraftDoc(e.target.value)} placeholder="AFFiNE doc id or URL" className={cn(input, "w-56")} />
-            <button type="button" onClick={() => persist({ doc_id: draftDoc.trim(), title: draftTitle.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent px-2 py-1 text-13 text-white disabled:opacity-50">
+            <button type="button" onClick={() => persist({ doc_id: draftDoc.trim(), title: draftTitle.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
               <Check className="size-3.5" />
               {saving ? "Saving…" : "Save"}
             </button>
@@ -123,7 +123,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         <FolderOpen className="size-4 flex-shrink-0 text-secondary" />
         <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">Google Drive</span>
         {driveLink ? (
-          <a href={driveLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-13 font-medium text-accent hover:underline">
+          <a href={driveLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline">
             Open the Drive folder
             <ExternalLink className="size-3.5 flex-shrink-0" />
           </a>
@@ -134,7 +134,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         {editing === "drive" ? (
           <div className="flex flex-wrap items-center gap-2">
             <input value={draftDrive} onChange={(e) => setDraftDrive(e.target.value)} placeholder="https://drive.google.com/…" className={cn(input, "w-64")} />
-            <button type="button" onClick={() => persist({ google_drive_url: draftDrive.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent px-2 py-1 text-13 text-white disabled:opacity-50">
+            <button type="button" onClick={() => persist({ google_drive_url: draftDrive.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
               <Check className="size-3.5" />
               {saving ? "Saving…" : "Save"}
             </button>

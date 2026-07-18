@@ -67,7 +67,7 @@ export const ProjectSectionSwitcher = observer(function ProjectSectionSwitcher({
                 key={s.key}
                 onClick={() => go(s.path)}
                 className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-2", {
-                  "bg-layer-2 font-medium": s.key === current,
+                  "bg-accent-primary/10 font-medium text-accent-primary": s.key === current,
                 })}
               >
                 {s.icon}

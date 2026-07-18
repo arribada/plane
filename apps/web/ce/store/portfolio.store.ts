@@ -294,3 +294,4 @@ export class PortfolioStore implements IPortfolioStore {
     this.sortBy = "manual";
     this.persistOrder();
   };
+}

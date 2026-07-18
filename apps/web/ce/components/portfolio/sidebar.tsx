@@ -4,22 +4,30 @@
  * See the LICENSE file for details.
  */
 
+import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle, GripVertical } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, GripVertical, Signal } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import { ArribadaService } from "@/plane-web/services/arribada.service";
+import type { TProjectStatusUpdate } from "@/plane-web/types/arribada";
 import { projectColor, projectHealth } from "./colors";
+import { ProjectStatusModal, STATUS_META } from "./project-status-modal";
 
 // transient drag source id — plain module var, DnD is a same-frame gesture
 let dragId: string | null = null;
 
-type RowProps = { blockId: string };
+type RowProps = {
+  blockId: string;
+  status?: TProjectStatusUpdate;
+  onOpenStatus: (projectId: string) => void;
+};
 
-const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: RowProps) {
+const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, status, onOpenStatus }: RowProps) {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const portfolio = usePortfolio();
@@ -75,6 +83,19 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: R
           >
             {project?.name}
           </button>
+          <Tooltip tooltipContent={status ? `${STATUS_META[status.status]?.label}${status.message ? ` — ${status.message}` : ""}` : "Set status"}>
+            <button
+              type="button"
+              onClick={() => onOpenStatus(blockId)}
+              className="flex size-5 flex-shrink-0 items-center justify-center rounded hover:bg-layer-1"
+            >
+              {status ? (
+                <span className={cn("size-2.5 rounded-full", STATUS_META[status.status]?.dot)} />
+              ) : (
+                <Signal className="size-3 text-tertiary opacity-0 group-hover:opacity-100" />
+              )}
+            </button>
+          </Tooltip>
           <span className="flex-shrink-0 text-11 text-secondary">{project?.item_count ?? 0}</span>
           {!!project?.undated_item_count && (
             <Tooltip tooltipContent={`${project.undated_item_count} work item(s) with no dates`}>
@@ -97,10 +118,33 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId }: R
 type Props = { blockIds: string[] };
 
 export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }: Props) {
+  const { workspaceSlug } = useParams();
+  const portfolio = usePortfolio();
+  const service = useMemo(() => new ArribadaService(), []);
+  const [statuses, setStatuses] = useState<Record<string, TProjectStatusUpdate>>({});
+  const [statusProjectId, setStatusProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspaceSlug) return;
+    service
+      .getWorkspaceStatuses(workspaceSlug.toString())
+      .then((r) => setStatuses(r || {}))
+      .catch(() => setStatuses({}));
+  }, [workspaceSlug, service]);
+
+  const statusProjectName = statusProjectId ? portfolio.getProject(statusProjectId)?.name : undefined;
+
   return (
     <div className="h-full">
       {blockIds ? (
-        blockIds.map((blockId) => <PortfolioSidebarRow key={blockId} blockId={blockId} />)
+        blockIds.map((blockId) => (
+          <PortfolioSidebarRow
+            key={blockId}
+            blockId={blockId}
+            status={statuses[blockId]}
+            onOpenStatus={setStatusProjectId}
+          />
+        ))
       ) : (
         <Loader className="space-y-3 pr-2">
           <Loader.Item height="34px" />
@@ -108,6 +152,12 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
           <Loader.Item height="34px" />
         </Loader>
       )}
+      <ProjectStatusModal
+        projectId={statusProjectId}
+        projectName={statusProjectName}
+        onClose={() => setStatusProjectId(null)}
+        onPosted={(pid, update) => setStatuses((s) => ({ ...s, [pid]: update }))}
+      />
     </div>
   );
 });

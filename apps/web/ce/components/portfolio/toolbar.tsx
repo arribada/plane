@@ -7,12 +7,13 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Copy, Flag, FolderKanban, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Download, Flag, FolderKanban, Wand2 } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
 import { CloneProjectModal } from "./clone-project-modal";
+import { buildPortfolioSvg, downloadPng, downloadSvg } from "./export";
 
 const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
   { value: "project", label: "Project" },
@@ -38,6 +39,17 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const [reflowing, setReflowing] = useState(false);
   const [reflowResult, setReflowResult] = useState<number | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+
+  const exportTimeline = async (format: "png" | "svg") => {
+    setExportOpen(false);
+    const displayed = portfolio.allProjects.filter((p) => portfolio.displayedProjectIds.includes(p.id));
+    const svg = buildPortfolioSvg(displayed.length ? displayed : portfolio.allProjects);
+    if (!svg) return;
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (format === "svg") downloadSvg(svg, `portfolio-${stamp}.svg`);
+    else await downloadPng(svg, `portfolio-${stamp}.png`);
+  };
 
   const captureBaselines = async () => {
     if (!workspaceSlug || capturing) return;
@@ -191,6 +203,33 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         New from template
       </button>
       <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
+
+      {/* export the timeline as a self-contained image */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setExportOpen((v) => !v)}
+          title="Export the displayed projects' timeline as an image"
+          className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
+        >
+          <Download className="size-3.5 text-secondary" />
+          Export
+          <ChevronDown className="size-3.5 text-secondary" />
+        </button>
+        {exportOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setExportOpen(false)} />
+            <div className="absolute left-0 top-full z-30 mt-1 w-32 rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+              <button type="button" onClick={() => exportTimeline("png")} className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-layer-2">
+                PNG image
+              </button>
+              <button type="button" onClick={() => exportTimeline("svg")} className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-layer-2">
+                SVG (vector)
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="flex-grow" />
 

@@ -46,6 +46,17 @@ export type TMyWorkItem = {
   project_name: string;
 };
 
+export type TProjectStatus = "on_track" | "at_risk" | "off_track";
+
+// An Asana-style status post on a project.
+export type TProjectStatusUpdate = {
+  id: string;
+  status: TProjectStatus;
+  message: string;
+  created_at: string;
+  author: string | null;
+};
+
 export type TProjectSchedule = {
   id: string;
   project: string;

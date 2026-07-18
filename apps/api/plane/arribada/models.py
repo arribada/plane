@@ -140,3 +140,37 @@ class ProjectFolderItem(models.Model):
 
     def __str__(self):
         return f"{self.project_id} in {self.folder_id}"
+
+
+class ProjectStatusUpdate(models.Model):
+    """An Asana-style status post on a project: a health signal (on track / at risk
+    / off track) plus a short note, logged over time. Community Edition has no such
+    concept; kept here so a project's trajectory is legible without reading the board.
+    """
+
+    ON_TRACK = "on_track"
+    AT_RISK = "at_risk"
+    OFF_TRACK = "off_track"
+    STATUS_CHOICES = [
+        (ON_TRACK, "On track"),
+        (AT_RISK, "At risk"),
+        (OFF_TRACK, "Off track"),
+    ]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey("db.Project", on_delete=models.CASCADE, related_name="arribada_status_updates")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ON_TRACK)
+    message = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_project_status_update"
+        ordering = ("-created_at",)
+        verbose_name = "Project status update"
+        verbose_name_plural = "Project status updates"
+
+    def __str__(self):
+        return f"{self.project_id} {self.status} @ {self.created_at:%Y-%m-%d}"

@@ -12,6 +12,8 @@ import type {
   TPortfolioItem,
   TPortfolioProject,
   TProjectSchedule,
+  TProjectStatus,
+  TProjectStatusUpdate,
 } from "@/plane-web/types/arribada";
 
 // Talks to the fork-only /api/arribada/ endpoints (plane.arribada Django app).
@@ -175,6 +177,37 @@ export class ArribadaService extends APIService {
     date_shifted: boolean;
   }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${sourceProjectId}/clone/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Latest status update per project across the workspace (portfolio pills).
+  async getWorkspaceStatuses(workspaceSlug: string): Promise<Record<string, TProjectStatusUpdate>> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/project-statuses/`)
+      .then((response) => response?.data ?? {})
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Recent status updates for one project.
+  async getProjectStatuses(workspaceSlug: string, projectId: string): Promise<TProjectStatusUpdate[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/status/`)
+      .then((response) => response?.data ?? [])
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Post a new status update on a project.
+  async postProjectStatus(
+    workspaceSlug: string,
+    projectId: string,
+    data: { status: TProjectStatus; message?: string }
+  ): Promise<TProjectStatusUpdate> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/status/`, data)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

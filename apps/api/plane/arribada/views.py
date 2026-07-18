@@ -18,7 +18,14 @@ from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
 
-from .models import IssueBaseline, ProjectAffineDoc, ProjectFolder, ProjectFolderItem, ProjectSchedule
+from .models import (
+    IssueBaseline,
+    ProjectAffineDoc,
+    ProjectFolder,
+    ProjectFolderItem,
+    ProjectSchedule,
+    ProjectStatusUpdate,
+)
 from .scheduling import cascade, critical_path
 from .serializers import ProjectScheduleSerializer
 
@@ -324,6 +331,60 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
             status=status.HTTP_200_OK,
         )
+
+
+def _serialize_status(u):
+    return {
+        "id": str(u.id),
+        "status": u.status,
+        "message": u.message,
+        "created_at": u.created_at,
+        "author": getattr(u.created_by, "display_name", None) or getattr(u.created_by, "email", None),
+    }
+
+
+class ProjectStatusEndpoint(BaseAPIView):
+    """Asana-style project status log: GET the recent updates, POST a new one."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        updates = ProjectStatusUpdate.objects.filter(
+            project_id=project_id, project__workspace__slug=slug
+        ).select_related("created_by")[:30]
+        return Response([_serialize_status(u) for u in updates], status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        st = (request.data.get("status") or ProjectStatusUpdate.ON_TRACK).strip()
+        if st not in {c[0] for c in ProjectStatusUpdate.STATUS_CHOICES}:
+            return Response({"error": "invalid status"}, status=status.HTTP_400_BAD_REQUEST)
+        project = Project.objects.filter(workspace__slug=slug, pk=project_id).first()
+        if not project:
+            return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
+        update = ProjectStatusUpdate.objects.create(
+            project=project,
+            status=st,
+            message=(request.data.get("message") or "").strip(),
+            created_by=request.user,
+        )
+        return Response(_serialize_status(update), status=status.HTTP_201_CREATED)
+
+
+class WorkspaceProjectStatusesEndpoint(BaseAPIView):
+    """Latest status per project across the workspace (portfolio status pills)."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        latest = {}
+        for u in (
+            ProjectStatusUpdate.objects.filter(project__workspace__slug=slug)
+            .order_by("project_id", "-created_at")
+            .select_related("created_by")
+        ):
+            key = str(u.project_id)
+            if key not in latest:
+                latest[key] = _serialize_status(u)
+        return Response(latest, status=status.HTTP_200_OK)
 
 
 class ProjectTemplateCloneEndpoint(BaseAPIView):

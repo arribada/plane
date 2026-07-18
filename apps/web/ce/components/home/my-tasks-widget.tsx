@@ -10,12 +10,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, CalendarClock, CalendarDays, CheckCircle2, ChevronRight } from "lucide-react";
+import { AlertTriangle, CalendarClock, CalendarDays, CalendarPlus, CheckCircle2, ChevronRight, LayoutGrid, List } from "lucide-react";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { useUser } from "@/hooks/store/user";
+import { IssueService } from "@/services/issue/issue.service";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TMyWorkItem } from "@/plane-web/types/arribada";
+import { MyTasksCalendar } from "./my-tasks-calendar";
 
 const PRIORITY_DOT: Record<TMyWorkItem["priority"], string> = {
   urgent: "bg-red-500",
@@ -28,6 +30,99 @@ const PRIORITY_DOT: Record<TMyWorkItem["priority"], string> = {
 // Local-midnight day index, so date-only comparisons ignore the wall clock.
 const dayOf = (d: Date) => Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000);
 
+// Local YYYY-MM-DD for a Date (avoids the UTC shift toISOString would introduce).
+const toLocalISO = (d: Date) => {
+  const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return z.toISOString().slice(0, 10);
+};
+
+// Preset due dates relative to today: today, tomorrow, this/next Friday.
+const datePresets = (): { label: string; value: string }[] => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const friday = new Date(today);
+  const toFri = (5 - today.getDay() + 7) % 7; // 0 if today is Friday
+  friday.setDate(today.getDate() + (toFri === 0 ? 0 : toFri));
+  return [
+    { label: "Today", value: toLocalISO(today) },
+    { label: "Tomorrow", value: toLocalISO(tomorrow) },
+    { label: "End of week", value: toLocalISO(friday) },
+  ];
+};
+
+const issueService = new IssueService();
+
+// Small per-row control to set/clear a work item's due date (presets + picker).
+const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string | null) => void }) => {
+  const [open, setOpen] = useState(false);
+  const presets = useMemo(datePresets, []);
+  return (
+    <span className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={item.target_date ? `Due ${item.target_date}` : "Set due date"}
+        className={cn(
+          "flex items-center gap-1 rounded px-1 py-0.5 text-[11px] hover:bg-neutral-500/10",
+          item.target_date ? "text-secondary" : "text-tertiary opacity-0 group-hover:opacity-100"
+        )}
+      >
+        <CalendarPlus className="size-3" />
+        {item.target_date && <span>{item.target_date.slice(5)}</span>}
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <span className="absolute right-0 top-full z-30 mt-1 flex w-36 flex-col rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+            {presets.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                onClick={() => {
+                  onSet(p.value);
+                  setOpen(false);
+                }}
+                className="flex justify-between rounded px-2 py-1 text-left text-12 hover:bg-neutral-500/10"
+              >
+                <span>{p.label}</span>
+                <span className="text-tertiary">{p.value.slice(5)}</span>
+              </button>
+            ))}
+            <label className="mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12 hover:bg-neutral-500/10">
+              Pick…
+              <input
+                type="date"
+                className="ml-auto w-4 cursor-pointer opacity-0"
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onSet(e.target.value);
+                    setOpen(false);
+                  }
+                }}
+              />
+              <CalendarDays className="size-3 text-tertiary" />
+            </label>
+            {item.target_date && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSet(null);
+                  setOpen(false);
+                }}
+                className="rounded px-2 py-1 text-left text-12 text-red-600 hover:bg-red-500/10"
+              >
+                Clear date
+              </button>
+            )}
+          </span>
+        </>
+      )}
+    </span>
+  );
+};
+
 type Bucket = { key: string; label: string; icon: typeof AlertTriangle; tone: string; items: TMyWorkItem[] };
 
 export const MyTasksWidget = observer(function MyTasksWidget() {
@@ -37,6 +132,19 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   const service = useMemo(() => new ArribadaService(), []);
   const [items, setItems] = useState<TMyWorkItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"list" | "calendar">("list");
+
+  const setDue = (item: TMyWorkItem, value: string | null) => {
+    setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: value } : x)));
+    if (workspaceSlug) {
+      issueService
+        .patchIssue(workspaceSlug.toString(), item.project_id, item.id, { target_date: value })
+        .catch(() => {
+          // revert on failure
+          setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: item.target_date } : x)));
+        });
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -106,16 +214,38 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
           <span className="rounded-full bg-neutral-500/10 px-2 py-0.5 text-xs font-medium text-secondary">{total}</span>
         </div>
-        {total > 0 && currentUser?.id && (
-          <button
-            type="button"
-            onClick={() => router.push(`/${workspaceSlug}/profile/${currentUser.id}/assigned`)}
-            className="flex items-center gap-0.5 text-xs font-medium text-secondary hover:text-primary"
-          >
-            View all
-            <ChevronRight className="size-3.5" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {total > 0 && (
+            <div className="flex items-center rounded-md border border-subtle p-0.5">
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                title="List"
+                className={cn("rounded p-1", view === "list" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary")}
+              >
+                <List className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("calendar")}
+                title="Calendar"
+                className={cn("rounded p-1", view === "calendar" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary")}
+              >
+                <LayoutGrid className="size-3.5" />
+              </button>
+            </div>
+          )}
+          {total > 0 && currentUser?.id && (
+            <button
+              type="button"
+              onClick={() => router.push(`/${workspaceSlug}/profile/${currentUser.id}/assigned`)}
+              className="flex items-center gap-0.5 text-xs font-medium text-secondary hover:text-primary"
+            >
+              View all
+              <ChevronRight className="size-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {total === 0 ? (
@@ -123,6 +253,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
           <CheckCircle2 className="size-6 text-green-500" />
           <p className="text-sm text-secondary">Nothing assigned to you. Enjoy the calm.</p>
         </div>
+      ) : view === "calendar" ? (
+        <MyTasksCalendar items={items} onOpenItem={openItem} onSetDue={setDue} />
       ) : (
         <div className="divide-y divide-subtle">
           {buckets.map((b) => {
@@ -136,18 +268,19 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                 </div>
                 <ul>
                   {b.items.slice(0, 6).map((it) => (
-                    <li key={it.id}>
-                      <button
-                        type="button"
-                        onClick={() => openItem(it)}
-                        className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-neutral-500/5"
-                      >
-                        <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
-                        <span className="truncate text-sm text-primary group-hover:text-primary">{it.name}</span>
-                        <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide text-secondary/70">
+                    <li
+                      key={it.id}
+                      onClick={() => openItem(it)}
+                      className="group flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-neutral-500/5"
+                    >
+                      <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
+                      <span className="truncate text-sm text-primary">{it.name}</span>
+                      <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                        <DueDateSetter item={it} onSet={(v) => setDue(it, v)} />
+                        <span className="text-[11px] uppercase tracking-wide text-secondary/70">
                           {it.project_identifier}-{it.sequence_id}
                         </span>
-                      </button>
+                      </span>
                     </li>
                   ))}
                   {b.items.length > 6 && (

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle, Folder, GripVertical, Signal } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, Folder, GripVertical, Signal, TrendingDown, TrendingUp } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
@@ -63,7 +63,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
         <button
           type="button"
           onClick={() => portfolio.toggleFolderCollapse(blockId)}
-          className="flex w-full items-center gap-1.5 pl-1 text-left"
+          className="flex h-full w-full items-center gap-1.5 bg-layer-2/60 px-1 text-left"
         >
           {folder.collapsed ? <ChevronRight className="size-4 text-secondary" /> : <ChevronDown className="size-4 text-secondary" />}
           <Folder className="size-3.5 flex-shrink-0 text-secondary" />
@@ -143,11 +143,11 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
                 <Tooltip tooltipContent={`${slipped ? "Slipped" : "Ahead"} ${Math.abs(drift)}d vs baseline`}>
                   <span
                     className={cn(
-                      "flex-shrink-0 rounded px-1 text-11 font-medium",
+                      "flex flex-shrink-0 items-center gap-0.5 rounded px-1 text-11 font-medium",
                       slipped ? "bg-red-500/15 text-red-600" : "bg-emerald-500/15 text-emerald-600"
                     )}
                   >
-                    {slipped ? "+" : "−"}
+                    {slipped ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
                     {Math.abs(drift)}d
                   </span>
                 </Tooltip>

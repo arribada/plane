@@ -180,17 +180,17 @@ class PortfolioItemsEndpoint(BaseAPIView):
         )
 
         # Attach assignees (id + name + avatar) so the timeline can show who owns each bar.
+        # select_related the avatar_asset too: avatar_url reads it, else it's an N+1 per assignee.
         assignees = defaultdict(list)
-        for a in (
-            IssueAssignee.objects.filter(issue_id__in=[i["id"] for i in item_list])
-            .select_related("assignee")
-        ):
+        for a in IssueAssignee.objects.filter(
+            issue_id__in=[i["id"] for i in item_list]
+        ).select_related("assignee", "assignee__avatar_asset"):
             u = a.assignee
             assignees[a.issue_id].append(
                 {
                     "id": str(u.id),
                     "name": u.display_name or u.first_name or u.email,
-                    "avatar": getattr(u, "avatar_url", None) or u.avatar or None,
+                    "avatar": getattr(u, "avatar_url", None) or None,
                 }
             )
         for i in item_list:
@@ -335,8 +335,12 @@ class WorkspaceCriticalPathEndpoint(BaseAPIView):
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         visible = _visible_projects(request, slug)
+        # Only dated issues can be edges or on the critical path, so load just those —
+        # keeps the relation IN() set small instead of every issue in every project.
         rows = list(
-            Issue.issue_objects.filter(project__in=visible).values("id", "start_date", "target_date", "project_id")
+            Issue.issue_objects.filter(
+                project__in=visible, start_date__isnull=False, target_date__isnull=False
+            ).values("id", "start_date", "target_date", "project_id")
         )
         issues = {str(r["id"]): {"start": r["start_date"], "target": r["target_date"]} for r in rows}
         proj_of = {str(r["id"]): str(r["project_id"]) for r in rows}

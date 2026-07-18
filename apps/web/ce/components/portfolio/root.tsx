@@ -35,6 +35,9 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
     portfolio.setMeUserId(currentUser?.id ?? null);
   }, [currentUser?.id, portfolio]);
 
+  // reset the critical-path toggle on leave, so its singleton state can't linger
+  useEffect(() => () => portfolio.setShowCriticalPath("", false), [portfolio]);
+
   useEffect(() => {
     if (workspaceSlug) portfolio.fetchPortfolio(workspaceSlug.toString());
   }, [workspaceSlug, portfolio]);

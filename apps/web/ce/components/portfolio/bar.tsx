@@ -22,13 +22,14 @@ const ItemAvatars = ({ assignees }: { assignees: TItemAssignee[] }) => {
         <span
           key={a.id}
           title={a.name}
-          className="flex size-3.5 items-center justify-center overflow-hidden rounded-full border border-white/70 bg-neutral-600 text-[8px] font-semibold leading-none text-white"
+          className="flex size-4 items-center justify-center overflow-hidden rounded-full border border-white/70 text-[9px] font-semibold leading-none text-white"
+          style={a.avatar ? undefined : { backgroundColor: projectColor(a.id) }}
         >
           {a.avatar ? <img src={a.avatar} alt="" className="size-full object-cover" /> : a.name.charAt(0).toUpperCase()}
         </span>
       ))}
       {assignees.length > 3 && (
-        <span className="flex size-3.5 items-center justify-center rounded-full border border-white/70 bg-neutral-700 text-[7px] font-semibold text-white">
+        <span className="flex size-4 items-center justify-center rounded-full border border-white/70 bg-neutral-700 text-[8px] font-semibold text-white">
           +{assignees.length - 3}
         </span>
       )}
@@ -71,7 +72,7 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
         className={cn("relative flex w-full items-center gap-1 overflow-hidden rounded px-2", {
           "h-[26px] font-medium shadow-sm": isProject,
           "h-[18px]": !isProject,
-          "ring-2 ring-red-500 ring-offset-1": isCritical,
+          "ring-2 ring-red-500": isCritical,
         })}
         style={
           isDerived

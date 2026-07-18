@@ -253,10 +253,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   Clear filters
                 </button>
               )}
+              <div className="mt-1 border-t border-subtle px-1.5 pt-1 text-10 text-secondary/70">
+                Filters the tasks inside expanded projects.
+                {portfolio.hasActiveFilters && portfolio.expandedProjectIds.size === 0 && (
+                  <span className="mt-0.5 block text-amber-600">Expand a project to see it take effect.</span>
+                )}
+              </div>
             </div>
           </>
         )}
       </div>
+
+      <div className="mx-0.5 h-5 w-px self-center bg-layer-2" />
 
       {/* highlight the cross-project critical path + draw dependency arrows */}
       <button
@@ -285,6 +293,8 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         <Folder className="size-3.5" />
         Group by folder
       </button>
+
+      <div className="mx-0.5 h-5 w-px self-center bg-layer-2" />
 
       {/* reflow: cascade dates along dependencies across displayed projects */}
       <button
@@ -357,6 +367,26 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           <AlertTriangle className="size-3.5" />
           {portfolio.totalUndatedCount} work items without dates
         </span>
+      )}
+
+      {/* critical-path legend + empty-state hint (own wrapping line) */}
+      {portfolio.showCriticalPath && (
+        <div className="flex w-full flex-wrap items-center gap-3 pt-0.5 text-11 text-secondary">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-[3px] w-4 rounded bg-red-500" /> Critical path
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-4 border-t-2 border-dashed border-violet-500" /> Cross-project link
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-[2px] w-4 rounded bg-neutral-400" /> In-project link
+          </span>
+          {portfolio.crossEdges.length === 0 && (
+            <span className="text-amber-600">
+              No task dependencies yet — add “blocked by” links between tasks to see the critical path.
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

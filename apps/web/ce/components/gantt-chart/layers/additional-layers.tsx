@@ -10,10 +10,12 @@
  * renderer is touched.
  */
 import type { FC } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
+import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -31,6 +33,9 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
   const portfolio = usePortfolio();
+  // This overlay is shared by every gantt (issues/cycles/modules); the portfolio-only
+  // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
+  const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
   const service = useMemo(() => new ArribadaService(), []);
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
@@ -120,7 +125,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   // between two currently-positioned bars; critical edges in red, cross-project in
   // purple dashed, in-project in grey. predecessor end -> successor start.
   const arrows: { path: string; hx: number; hy: number; color: string; width: number; dash?: string }[] = [];
-  if (portfolio.showCriticalPath && portfolio.crossEdges.length) {
+  if (isPortfolio && portfolio.showCriticalPath && portfolio.crossEdges.length) {
     const idx = new Map<string, number>();
     blockIds.forEach((id, i) => idx.set(id, i));
     for (const e of portfolio.crossEdges) {
@@ -130,11 +135,12 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       const ba = store.getBlockById(e.from);
       const bb = store.getBlockById(e.to);
       if (!ba?.position || !bb?.position) continue;
-      const x1 = ba.position.marginLeft + (ba.position.width ?? 0);
-      const x2 = bb.position.marginLeft;
+      const x1 = ba.position.marginLeft + (ba.position.width ?? 0); // predecessor end
+      const x2 = bb.position.marginLeft; // successor start
       const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
       const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      const midx = Math.max(x1, x2) + 10;
+      // elbow that drops just before the successor start, then arrives pointing right into it
+      const midx = Math.max(x1 + 6, x2 - 8);
       const color = e.critical ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
       arrows.push({
         path: `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`,

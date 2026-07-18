@@ -11,6 +11,7 @@ import type {
   TMyWorkItem,
   TPortfolioItem,
   TPortfolioProject,
+  TProjectDocs,
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
@@ -101,11 +102,8 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // Which AFFiNE wiki doc a project links to (private deep link, not embedded).
-  async getAffineDoc(
-    workspaceSlug: string,
-    projectId: string
-  ): Promise<{ doc_id: string | null; workspace_id: string | null; title: string | null }> {
+  // A project's documentation pointers: AFFiNE wiki doc + Google Drive URL.
+  async getAffineDoc(workspaceSlug: string, projectId: string): Promise<TProjectDocs> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`)
       .then((response) => response?.data)
       .catch((error) => {
@@ -113,11 +111,12 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Partial update: only the keys you pass are changed (AFFiNE and Drive edit independently).
   async setAffineDoc(
     workspaceSlug: string,
     projectId: string,
-    data: { doc_id: string; title?: string }
-  ): Promise<{ doc_id: string | null; workspace_id: string | null; title: string | null }> {
+    data: { doc_id?: string; title?: string; google_drive_url?: string }
+  ): Promise<TProjectDocs> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`, data)
       .then((response) => response?.data)
       .catch((error) => {

@@ -83,6 +83,9 @@ class ProjectAffineDoc(models.Model):
     workspace_id = models.CharField(max_length=64, default="5b320010-0d8d-4ccc-b4f6-dbe339c42b4e")
     doc_id = models.CharField(max_length=64, null=True, blank=True)
     title = models.CharField(max_length=512, null=True, blank=True)
+    # A Google Drive folder/file URL where the project's documents live — shown as a
+    # reference link on the Pages view so the whole team has access, next to AFFiNE.
+    google_drive_url = models.CharField(max_length=1024, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

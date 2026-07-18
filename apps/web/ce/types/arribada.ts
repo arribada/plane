@@ -46,6 +46,14 @@ export type TMyWorkItem = {
   project_name: string;
 };
 
+// Where a project's documentation lives: an AFFiNE wiki doc + a Google Drive URL.
+export type TProjectDocs = {
+  doc_id: string | null;
+  workspace_id: string | null;
+  title: string | null;
+  google_drive_url: string | null;
+};
+
 export type TProjectStatus = "on_track" | "at_risk" | "off_track";
 
 // An Asana-style status post on a project.

@@ -122,6 +122,22 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Adopt inbox items (e.g. GHIN) into a project — lossless copy + relates_to link.
+  async adoptIssues(
+    workspaceSlug: string,
+    sourceIssueIds: string[],
+    targetProjectId: string
+  ): Promise<{ adopted: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/adopt-issues/`, {
+      source_issue_ids: sourceIssueIds,
+      target_project_id: targetProjectId,
+    })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   // Shared project folders (sidebar grouping).
   async getFolders(
     workspaceSlug: string

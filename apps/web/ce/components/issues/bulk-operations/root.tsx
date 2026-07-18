@@ -11,11 +11,13 @@
 import { useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Archive, Trash2, X, SignalHigh } from "lucide-react";
+import { AlertTriangle, Archive, Trash2, X, SignalHigh, FolderInput } from "lucide-react";
 import { cn } from "@plane/utils";
 import { useMultipleSelectStore } from "@/hooks/store/use-multiple-select-store";
+import { useProject } from "@/hooks/store/use-project";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { IssueService } from "@/services/issue/issue.service";
+import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type Props = {
   className?: string;
@@ -32,13 +34,16 @@ const PRIORITIES: { value: Prio; label: string }[] = [
 ];
 
 const service = new IssueService();
+const arribada = new ArribadaService();
 
 export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot(props: Props) {
   const { className, selectionHelpers } = props;
   const { workspaceSlug, projectId } = useParams();
   const { isSelectionActive, selectedEntityIds, clearSelection } = useMultipleSelectStore();
+  const { joinedProjectIds, getProjectById } = useProject();
   const [busy, setBusy] = useState(false);
   const [prioOpen, setPrioOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   if (!isSelectionActive || selectionHelpers.isSelectionDisabled) return null;
 
@@ -68,6 +73,18 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setBusy(true);
     try {
       await service.bulkArchiveIssues(ws, pid, { issue_ids: ids });
+      done();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const adopt = async (targetProjectId: string) => {
+    if (!ws || busy) return;
+    setBusy(true);
+    setMoveOpen(false);
+    try {
+      await arribada.adoptIssues(ws, ids, targetProjectId);
       done();
     } finally {
       setBusy(false);
@@ -118,6 +135,33 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
                   {p.label}
                 </button>
               ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="relative">
+        <button type="button" className={btn} disabled={busy} onClick={() => setMoveOpen((v) => !v)}>
+          <FolderInput className="size-3.5" />
+          Move to project
+        </button>
+        {moveOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setMoveOpen(false)} />
+            <div className="absolute bottom-full left-0 z-30 mb-1 max-h-64 w-52 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+              <div className="px-2 py-1 text-11 text-placeholder">Adopt into (keeps a link, marks these done)</div>
+              {joinedProjectIds
+                .filter((id) => id !== projectId?.toString())
+                .map((id) => (
+                  <button
+                    type="button"
+                    key={id}
+                    onClick={() => adopt(id)}
+                    className="flex w-full items-center rounded px-2 py-1 text-left text-13 hover:bg-layer-2"
+                  >
+                    {getProjectById(id)?.name ?? id}
+                  </button>
+                ))}
             </div>
           </>
         )}

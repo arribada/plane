@@ -5,6 +5,7 @@
 from django.urls import path
 
 from .views import (
+    AdoptIssuesEndpoint,
     PortfolioEndpoint,
     PortfolioItemsEndpoint,
     ProjectAffineDocEndpoint,
@@ -64,6 +65,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/affine-doc/",
         ProjectAffineDocEndpoint.as_view(),
         name="arribada-project-affine-doc",
+    ),
+    path(
+        "workspaces/<str:slug>/adopt-issues/",
+        AdoptIssuesEndpoint.as_view(),
+        name="arribada-adopt-issues",
     ),
     path(
         "workspaces/<str:slug>/project-folders/",

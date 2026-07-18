@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Issue, IssueRelation, Project
+from plane.db.models import Issue, IssueRelation, Project, State
 
 from plane.db.models import Workspace
 
@@ -318,6 +318,52 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
             status=status.HTTP_200_OK,
         )
+
+
+class AdoptIssuesEndpoint(BaseAPIView):
+    """Adopt inbox items (e.g. GitHub → GHIN) into a real project, losslessly.
+
+    Plane CE cannot move an issue across projects. Instead this creates a copy in
+    the target project, links it back to the original (relates_to), and marks the
+    original as completed — so nothing is lost, traceability stays, and the GitHub
+    cron (which dedups on existence) won't recreate a duplicate.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        source_ids = request.data.get("source_issue_ids", [])
+        target_project_id = request.data.get("target_project_id")
+        if not source_ids or not target_project_id:
+            return Response({"error": "source_issue_ids and target_project_id required"}, status=status.HTTP_400_BAD_REQUEST)
+        target = _visible_projects(request, slug).filter(id=target_project_id).first()
+        if not target:
+            return Response({"error": "target project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        adopted = []
+        for sid in source_ids:
+            src = Issue.issue_objects.filter(workspace__slug=slug, id=sid).first()
+            if not src:
+                continue
+            # save() assigns sequence_id + the target project's default state
+            new_issue = Issue.objects.create(
+                workspace=target.workspace,
+                project=target,
+                name=src.name,
+                description_html=src.description_html,
+                priority=src.priority,
+                created_by=request.user,
+            )
+            IssueRelation.objects.get_or_create(
+                issue=new_issue,
+                related_issue=src,
+                defaults={"relation_type": "relates_to", "project": target, "workspace": target.workspace},
+            )
+            done = State.objects.filter(project=src.project, group="completed").first()
+            if done:
+                src.state = done
+                src.save(update_fields=["state"])
+            adopted.append({"source_id": str(sid), "new_issue_id": str(new_issue.id), "sequence_id": new_issue.sequence_id})
+        return Response({"adopted": len(adopted), "issues": adopted}, status=status.HTTP_200_OK)
 
 
 class ProjectFoldersEndpoint(BaseAPIView):

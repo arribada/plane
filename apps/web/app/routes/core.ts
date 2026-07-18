@@ -110,6 +110,11 @@ export const coreRoutes: RouteConfigEntry[] = [
           route(":workspaceSlug/portfolio", "./(all)/[workspaceSlug]/(projects)/portfolio/page.tsx"),
         ]),
 
+        // Workload (Arribada)
+        layout("./(all)/[workspaceSlug]/(projects)/workload/layout.tsx", [
+          route(":workspaceSlug/workload", "./(all)/[workspaceSlug]/(projects)/workload/page.tsx"),
+        ]),
+
         // Workspace Views
         layout("./(all)/[workspaceSlug]/(projects)/workspace-views/layout.tsx", [
           route(":workspaceSlug/workspace-views", "./(all)/[workspaceSlug]/(projects)/workspace-views/page.tsx"),

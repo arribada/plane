@@ -138,6 +138,28 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Per-person workload across the workspace.
+  async getWorkload(
+    workspaceSlug: string
+  ): Promise<
+    {
+      user_id: string;
+      name: string;
+      email: string;
+      avatar: string | null;
+      assigned: number;
+      overdue: number;
+      due_week: number;
+      points: number;
+    }[]
+  > {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/workload/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   // Shared project folders (sidebar grouping).
   async getFolders(
     workspaceSlug: string

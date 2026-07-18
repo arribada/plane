@@ -18,6 +18,9 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type TFolder = { id: string; name: string; parent_id: string | null; sort_order: number; project_ids: string[] };
 
+// transient drag source (a project id) — DnD is a same-frame gesture
+let dragProjectId: string | null = null;
+
 export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
@@ -96,7 +99,16 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
         const isOpen = open.has(f.id);
         return (
           <div key={f.id}>
-            <div className="group flex items-center gap-1 rounded px-2 py-1 hover:bg-layer-transparent-hover">
+            <div
+              className="group flex items-center gap-1 rounded px-2 py-1 hover:bg-layer-transparent-hover"
+              onDragOver={(e) => {
+                if (dragProjectId) e.preventDefault();
+              }}
+              onDrop={() => {
+                if (dragProjectId) assign(dragProjectId, f.id);
+                dragProjectId = null;
+              }}
+            >
               <button
                 type="button"
                 onClick={() =>
@@ -150,7 +162,11 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
               f.project_ids.map((pid) => (
                 <div
                   key={pid}
-                  className="group/item flex items-center gap-1 rounded py-0.5 pl-7 pr-2 hover:bg-layer-transparent-hover"
+                  draggable
+                  onDragStart={() => {
+                    dragProjectId = pid;
+                  }}
+                  className="group/item flex cursor-grab items-center gap-1 rounded py-0.5 pl-7 pr-2 hover:bg-layer-transparent-hover"
                 >
                   <button
                     type="button"

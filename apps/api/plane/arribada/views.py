@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
-from django.db.models import Count, Max, Min, Q
+from datetime import timedelta
+
+from django.db.models import Count, Max, Min, Q, Sum
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Issue, IssueRelation, Project, State
+from plane.db.models import Issue, IssueAssignee, Project, State, User, WorkspaceMember
+from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
 
@@ -318,6 +322,54 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
             status=status.HTTP_200_OK,
         )
+
+
+class WorkloadEndpoint(BaseAPIView):
+    """Per-person load across the workspace: how much active work each member
+    carries, what's overdue, and what's due this week. Data already exists
+    (assignees + dates + estimate points); this just aggregates it."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        today = timezone.now().date()
+        week = today + timedelta(days=7)
+        active = IssueAssignee.objects.filter(issue__workspace__slug=slug, issue__deleted_at__isnull=True).exclude(
+            issue__state__group__in=["completed", "cancelled"]
+        )
+        agg = {
+            r["assignee_id"]: r
+            for r in active.values("assignee_id").annotate(
+                assigned=Count("issue_id", distinct=True),
+                overdue=Count("issue_id", filter=Q(issue__target_date__lt=today), distinct=True),
+                due_week=Count(
+                    "issue_id",
+                    filter=Q(issue__target_date__gte=today, issue__target_date__lte=week),
+                    distinct=True,
+                ),
+                points=Sum("issue__point"),
+            )
+        }
+        members = WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values_list(
+            "member_id", flat=True
+        )
+        users = {u.id: u for u in User.objects.filter(id__in=list(members))}
+        payload = []
+        for uid, user in users.items():
+            a = agg.get(uid, {})
+            payload.append(
+                {
+                    "user_id": str(uid),
+                    "name": user.display_name or user.first_name or user.email,
+                    "email": user.email,
+                    "avatar": getattr(user, "avatar_url", None) or user.avatar,
+                    "assigned": a.get("assigned", 0),
+                    "overdue": a.get("overdue", 0),
+                    "due_week": a.get("due_week", 0),
+                    "points": a.get("points") or 0,
+                }
+            )
+        payload.sort(key=lambda x: -x["assigned"])
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class AdoptIssuesEndpoint(BaseAPIView):

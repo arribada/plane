@@ -957,6 +957,10 @@ export default {
       duplicate: "Duplicate of",
       blocked_by: "Blocked by",
       blocking: "Blocking",
+      finish_before: "Finish before",
+      finish_after: "Finish after",
+      start_before: "Start before",
+      start_after: "Start after",
     },
     copy_link: "Copy work item link",
     delete: {

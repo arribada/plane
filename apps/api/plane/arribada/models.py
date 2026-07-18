@@ -38,3 +38,30 @@ class ProjectSchedule(models.Model):
 
     def __str__(self):
         return f"{self.project_id} [{self.start_date} → {self.target_date}]"
+
+
+class IssueBaseline(models.Model):
+    """A frozen snapshot of an issue's planned dates, captured at a point in time.
+
+    The gantt draws these as ghost bars behind the live bars so the drift between
+    the committed plan and where things actually landed is visible. Same isolated-app
+    pattern as ProjectSchedule: one row per issue, overwritten on re-capture.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.OneToOneField(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_baseline"
+    )
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+    captured_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_issue_baseline"
+        verbose_name = "Issue baseline"
+        verbose_name_plural = "Issue baselines"
+
+    def __str__(self):
+        return f"baseline {self.issue_id} [{self.start_date} → {self.target_date}]"

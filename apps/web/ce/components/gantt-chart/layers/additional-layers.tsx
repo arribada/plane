@@ -31,12 +31,15 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const store = useTimeLineChartStore();
   const service = useMemo(() => new ArribadaService(), []);
   const [progress, setProgress] = useState<Record<string, number>>({});
+  const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
 
   useEffect(() => {
     let cancelled = false;
     if (workspaceSlug && projectId) {
+      const ws = workspaceSlug.toString();
+      const pid = projectId.toString();
       service
-        .getProjectProgress(workspaceSlug.toString(), projectId.toString())
+        .getProjectProgress(ws, pid)
         .then((rows) => {
           if (cancelled) return;
           const map: Record<string, number> = {};
@@ -45,6 +48,17 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
         })
         .catch(() => {
           if (!cancelled) setProgress({});
+        });
+      service
+        .getBaseline(ws, pid)
+        .then((rows) => {
+          if (cancelled) return;
+          const map: Record<string, { start: string | null; target: string | null }> = {};
+          for (const r of rows || []) map[r.issue_id] = { start: r.start_date, target: r.target_date };
+          setBaseline(map);
+        })
+        .catch(() => {
+          if (!cancelled) setBaseline({});
         });
     }
     return () => {
@@ -89,6 +103,17 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     }
   }
 
+  // ghost bars: the captured baseline, drawn as a hollow outline behind the live bar
+  const ghosts: { x: number; y: number; w: number }[] = [];
+  for (let i = 0; i < blockIds.length; i++) {
+    const b = baseline[blockIds[i]];
+    if (!b || (!b.start && !b.target)) continue;
+    const x1 = store.getPositionFromDateOnGantt(b.start ?? b.target ?? "", 0);
+    const x2 = store.getPositionFromDateOnGantt(b.target ?? b.start ?? "", 0);
+    if (typeof x1 !== "number" || typeof x2 !== "number") continue;
+    ghosts.push({ x: x1, y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2 - 5, w: Math.max(x2 - x1, 3) });
+  }
+
   // milestones: zero-duration items (start === target) drawn as diamonds
   const milestones: { x: number; y: number }[] = [];
   for (let i = 0; i < blockIds.length; i++) {
@@ -105,6 +130,21 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     >
       {bands.map((b, i) => (
         <rect key={`wk-${i}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
+      ))}
+      {ghosts.map((g, i) => (
+        <rect
+          key={`bl-${i}`}
+          x={g.x}
+          y={g.y}
+          width={g.w}
+          height={5}
+          rx={2}
+          fill="none"
+          stroke="#64748b"
+          strokeWidth={1}
+          strokeDasharray="3 2"
+          opacity={0.75}
+        />
       ))}
       {fills.map((f, i) => (
         <rect key={`pf-${i}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />

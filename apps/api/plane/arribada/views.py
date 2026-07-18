@@ -10,7 +10,7 @@ from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, IssueRelation, Project
 
-from .models import ProjectSchedule
+from .models import IssueBaseline, ProjectSchedule
 from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
@@ -186,6 +186,43 @@ class ProjectProgressEndpoint(BaseAPIView):
                 percent = 100 if issue["state__group"] == "completed" else 0
             payload.append({"issue_id": str(iid), "percent": percent})
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class ProjectBaselineEndpoint(BaseAPIView):
+    """Capture (POST) or read (GET) the date baseline of a project's issues.
+
+    POST freezes every issue's current start/target into IssueBaseline (upsert);
+    GET returns them so the gantt can draw ghost bars behind the live ones.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = IssueBaseline.objects.filter(
+            issue__project_id=project_id, issue__workspace__slug=slug
+        ).values("issue_id", "start_date", "target_date")
+        data = [
+            {"issue_id": str(r["issue_id"]), "start_date": r["start_date"], "target_date": r["target_date"]}
+            for r in rows
+        ]
+        return Response(data, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        issues = Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
+            "id", "start_date", "target_date"
+        )
+        captured = 0
+        for issue in issues:
+            IssueBaseline.objects.update_or_create(
+                issue_id=issue["id"],
+                defaults={"start_date": issue["start_date"], "target_date": issue["target_date"]},
+            )
+            captured += 1
+        return Response({"captured": captured}, status=status.HTTP_200_OK)
 
 
 class ProjectScheduleEndpoint(BaseAPIView):

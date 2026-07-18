@@ -59,6 +59,27 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Frozen baseline dates of a project's issues (ghost bars behind the live ones).
+  async getBaseline(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ issue_id: string; start_date: string | null; target_date: string | null }[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Freeze the current dates of every issue in the project as the new baseline.
+  async captureBaseline(workspaceSlug: string, projectId: string): Promise<{ captured: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, {})
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

@@ -1130,6 +1130,10 @@ export default {
       duplicate: "Doublon de",
       blocked_by: "Bloqué par",
       blocking: "Bloque",
+      finish_before: "Doit finir avant",
+      finish_after: "Doit finir après",
+      start_before: "Doit commencer avant",
+      start_after: "Doit commencer après",
     },
     copy_link: "Copier le lien de l’élément de travail",
     delete: {

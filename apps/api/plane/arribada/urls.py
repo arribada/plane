@@ -7,6 +7,7 @@ from django.urls import path
 from .views import (
     PortfolioEndpoint,
     PortfolioItemsEndpoint,
+    ProjectBaselineEndpoint,
     ProjectProgressEndpoint,
     ProjectRelationsEndpoint,
     ProjectScheduleEndpoint,
@@ -37,5 +38,10 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/progress/",
         ProjectProgressEndpoint.as_view(),
         name="arribada-project-progress",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/baseline/",
+        ProjectBaselineEndpoint.as_view(),
+        name="arribada-project-baseline",
     ),
 ]

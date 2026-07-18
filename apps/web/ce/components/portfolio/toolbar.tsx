@@ -4,11 +4,13 @@
  * See the LICENSE file for details.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
-import { AlertTriangle, Check, ChevronDown, FolderKanban } from "lucide-react";
+import { useParams } from "next/navigation";
+import { AlertTriangle, Check, ChevronDown, Flag, FolderKanban } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
 
 const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
@@ -24,8 +26,23 @@ const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
 ];
 
 export const PortfolioToolbar = observer(function PortfolioToolbar() {
+  const { workspaceSlug } = useParams();
   const portfolio = usePortfolio();
+  const service = useMemo(() => new ArribadaService(), []);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [capturedAt, setCapturedAt] = useState<string | null>(null);
+
+  const captureBaselines = async () => {
+    if (!workspaceSlug || capturing) return;
+    setCapturing(true);
+    try {
+      await Promise.all(portfolio.displayedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id)));
+      setCapturedAt(new Date().toLocaleTimeString());
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   const allProjects = portfolio.allProjects.filter((p) => !p.archived);
   const selected = new Set(portfolio.displayedProjectIds);
@@ -117,6 +134,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           ))}
         </select>
       </label>
+
+      {/* capture baseline across displayed projects */}
+      <button
+        type="button"
+        onClick={captureBaselines}
+        disabled={capturing}
+        title="Freeze the current dates of every displayed project as a baseline (ghost bars in each project's gantt)"
+        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1 disabled:opacity-50"
+      >
+        <Flag className="size-3.5 text-secondary" />
+        {capturing ? "Capturing…" : capturedAt ? `Baseline ${capturedAt}` : "Capture baseline"}
+      </button>
 
       <div className="flex-grow" />
 

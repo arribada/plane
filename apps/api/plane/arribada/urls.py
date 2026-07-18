@@ -11,6 +11,9 @@ from .views import (
     ProjectAutoScheduleEndpoint,
     ProjectBaselineEndpoint,
     ProjectCriticalPathEndpoint,
+    ProjectFolderAssignEndpoint,
+    ProjectFolderDetailEndpoint,
+    ProjectFoldersEndpoint,
     ProjectProgressEndpoint,
     ProjectRelationsEndpoint,
     ProjectScheduleEndpoint,
@@ -61,5 +64,20 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/affine-doc/",
         ProjectAffineDocEndpoint.as_view(),
         name="arribada-project-affine-doc",
+    ),
+    path(
+        "workspaces/<str:slug>/project-folders/",
+        ProjectFoldersEndpoint.as_view(),
+        name="arribada-project-folders",
+    ),
+    path(
+        "workspaces/<str:slug>/project-folders/assign/",
+        ProjectFolderAssignEndpoint.as_view(),
+        name="arribada-project-folder-assign",
+    ),
+    path(
+        "workspaces/<str:slug>/project-folders/<uuid:folder_id>/",
+        ProjectFolderDetailEndpoint.as_view(),
+        name="arribada-project-folder-detail",
     ),
 ]

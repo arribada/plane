@@ -10,7 +10,9 @@ from plane.app.permissions import ROLE, allow_permission
 from plane.app.views.base import BaseAPIView
 from plane.db.models import Issue, IssueRelation, Project
 
-from .models import IssueBaseline, ProjectAffineDoc, ProjectSchedule
+from plane.db.models import Workspace
+
+from .models import IssueBaseline, ProjectAffineDoc, ProjectFolder, ProjectFolderItem, ProjectSchedule
 from .scheduling import cascade, critical_path
 from .serializers import ProjectScheduleSerializer
 
@@ -316,6 +318,90 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
             status=status.HTTP_200_OK,
         )
+
+
+class ProjectFoldersEndpoint(BaseAPIView):
+    """Workspace-shared folders that group projects in the sidebar."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        folders = ProjectFolder.objects.filter(workspace__slug=slug).values(
+            "id", "name", "parent_id", "sort_order"
+        )
+        items = ProjectFolderItem.objects.filter(folder__workspace__slug=slug).values(
+            "folder_id", "project_id", "sort_order"
+        )
+        by_folder = defaultdict(list)
+        for it in sorted(items, key=lambda x: x["sort_order"]):
+            by_folder[str(it["folder_id"])].append(str(it["project_id"]))
+        return Response(
+            [
+                {
+                    "id": str(f["id"]),
+                    "name": f["name"],
+                    "parent_id": str(f["parent_id"]) if f["parent_id"] else None,
+                    "sort_order": f["sort_order"],
+                    "project_ids": by_folder.get(str(f["id"]), []),
+                }
+                for f in folders
+            ],
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"error": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if not workspace:
+            return Response({"error": "workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+        parent_id = request.data.get("parent_id")
+        folder = ProjectFolder.objects.create(workspace=workspace, name=name, parent_id=parent_id or None)
+        return Response({"id": str(folder.id), "name": folder.name}, status=status.HTTP_201_CREATED)
+
+
+class ProjectFolderDetailEndpoint(BaseAPIView):
+    """Rename/move (PATCH) or delete (DELETE) a shared folder."""
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def patch(self, request, slug, folder_id):
+        folder = ProjectFolder.objects.filter(workspace__slug=slug, id=folder_id).first()
+        if not folder:
+            return Response({"error": "not found"}, status=status.HTTP_404_NOT_FOUND)
+        if "name" in request.data:
+            folder.name = (request.data.get("name") or "").strip() or folder.name
+        if "sort_order" in request.data:
+            folder.sort_order = request.data["sort_order"]
+        folder.save()
+        return Response({"id": str(folder.id), "name": folder.name}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, folder_id):
+        deleted, _ = ProjectFolder.objects.filter(workspace__slug=slug, id=folder_id).delete()
+        return Response({"deleted": bool(deleted)}, status=status.HTTP_200_OK)
+
+
+class ProjectFolderAssignEndpoint(BaseAPIView):
+    """Put a project into a folder, or remove it (folder_id null)."""
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def put(self, request, slug):
+        project_id = request.data.get("project_id")
+        folder_id = request.data.get("folder_id")
+        if not project_id:
+            return Response({"error": "project_id required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not Project.objects.filter(workspace__slug=slug, id=project_id).exists():
+            return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not folder_id:
+            ProjectFolderItem.objects.filter(project_id=project_id).delete()
+            return Response({"project_id": str(project_id), "folder_id": None}, status=status.HTTP_200_OK)
+        if not ProjectFolder.objects.filter(workspace__slug=slug, id=folder_id).exists():
+            return Response({"error": "folder not found"}, status=status.HTTP_404_NOT_FOUND)
+        ProjectFolderItem.objects.update_or_create(
+            project_id=project_id, defaults={"folder_id": folder_id}
+        )
+        return Response({"project_id": str(project_id), "folder_id": str(folder_id)}, status=status.HTTP_200_OK)
 
 
 class ProjectScheduleEndpoint(BaseAPIView):

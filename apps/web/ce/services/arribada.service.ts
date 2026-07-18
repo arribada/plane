@@ -122,6 +122,56 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Shared project folders (sidebar grouping).
+  async getFolders(
+    workspaceSlug: string
+  ): Promise<{ id: string; name: string; parent_id: string | null; sort_order: number; project_ids: string[] }[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/project-folders/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async createFolder(workspaceSlug: string, name: string): Promise<{ id: string; name: string }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/project-folders/`, { name })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async renameFolder(workspaceSlug: string, folderId: string, name: string): Promise<unknown> {
+    return this.patch(`/api/arribada/workspaces/${workspaceSlug}/project-folders/${folderId}/`, { name })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async deleteFolder(workspaceSlug: string, folderId: string): Promise<unknown> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/project-folders/${folderId}/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async assignProjectToFolder(
+    workspaceSlug: string,
+    projectId: string,
+    folderId: string | null
+  ): Promise<unknown> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/project-folders/assign/`, {
+      project_id: projectId,
+      folder_id: folderId,
+    })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

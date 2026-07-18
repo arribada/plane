@@ -5,14 +5,16 @@
  *
  * Real bulk action bar (upstream ships an upgrade banner here). The multi-select
  * machinery already exists in core; this wires the selection to bulk archive /
- * delete and a quick priority set. A reload after a mutation keeps it simple and
- * correct rather than threading store updates through every layout.
+ * delete and a quick priority set. Priority and delete update the issue store in
+ * place (optimistic, no page reload); archive/adopt change list membership in ways
+ * the layout stores don't cleanly cover, so those still refresh the view.
  */
 import { useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { AlertTriangle, Archive, Trash2, X, SignalHigh, FolderInput } from "lucide-react";
 import { cn } from "@plane/utils";
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMultipleSelectStore } from "@/hooks/store/use-multiple-select-store";
 import { useProject } from "@/hooks/store/use-project";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
@@ -41,6 +43,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
   const { workspaceSlug, projectId } = useParams();
   const { isSelectionActive, selectedEntityIds, clearSelection } = useMultipleSelectStore();
   const { joinedProjectIds, getProjectById } = useProject();
+  const { updateIssue, removeIssue } = useIssueDetail();
   const [busy, setBusy] = useState(false);
   const [prioOpen, setPrioOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -51,7 +54,9 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
   const pid = projectId?.toString();
   const ids = selectedEntityIds;
 
-  const done = () => {
+  // Archive/adopt change which items belong in the list; the layout stores have no
+  // clean "drop from local list" hook for them, so those still refresh the view.
+  const doneWithRefresh = () => {
     clearSelection();
     window.location.reload();
   };
@@ -61,8 +66,9 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setBusy(true);
     setPrioOpen(false);
     try {
-      await Promise.all(ids.map((id) => service.patchIssue(ws, pid, id, { priority })));
-      done();
+      // Optimistic store update — the list re-renders in place, no page reload.
+      await Promise.all(ids.map((id) => updateIssue(ws, pid, id, { priority })));
+      clearSelection();
     } finally {
       setBusy(false);
     }
@@ -73,7 +79,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setBusy(true);
     try {
       await service.bulkArchiveIssues(ws, pid, { issue_ids: ids });
-      done();
+      doneWithRefresh();
     } finally {
       setBusy(false);
     }
@@ -85,7 +91,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     setMoveOpen(false);
     try {
       await arribada.adoptIssues(ws, ids, targetProjectId);
-      done();
+      doneWithRefresh();
     } finally {
       setBusy(false);
     }
@@ -96,8 +102,9 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     if (!window.confirm(`Delete ${ids.length} work item(s)? This cannot be undone.`)) return;
     setBusy(true);
     try {
-      await service.bulkDeleteIssues(ws, pid, { issue_ids: ids });
-      done();
+      // removeIssue deletes on the server and drops the row from the store — no reload.
+      await Promise.all(ids.map((id) => removeIssue(ws, pid, id)));
+      clearSelection();
     } finally {
       setBusy(false);
     }

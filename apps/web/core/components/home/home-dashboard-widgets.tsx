@@ -20,6 +20,7 @@ import { useHome } from "@/hooks/store/use-home";
 import { useProject } from "@/hooks/store/use-project";
 // plane web components
 import { HomePageHeader } from "@/plane-web/components/home/header";
+import { MyTasksWidget } from "@/plane-web/components/home/my-tasks-widget";
 // local imports
 import { StickiesWidget } from "../stickies/widget";
 import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widgets";
@@ -84,6 +85,7 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
   return (
     <div className="relative flex h-full w-full flex-col gap-7">
       <HomePageHeader />
+      <MyTasksWidget />
       <ManageWidgetsModal
         workspaceSlug={workspaceSlug.toString()}
         isModalOpen={showWidgetSettings}

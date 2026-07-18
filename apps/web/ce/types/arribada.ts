@@ -34,6 +34,18 @@ export type TPortfolioItem = {
   priority: "urgent" | "high" | "medium" | "low" | "none";
 };
 
+// One of the requesting user's open assigned work items (Home 'My tasks' widget).
+export type TMyWorkItem = {
+  id: string;
+  name: string;
+  target_date: string | null;
+  priority: "urgent" | "high" | "medium" | "low" | "none";
+  sequence_id: number;
+  project_id: string;
+  project_identifier: string;
+  project_name: string;
+};
+
 export type TProjectSchedule = {
   id: string;
   project: string;

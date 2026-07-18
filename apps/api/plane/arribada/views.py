@@ -325,6 +325,44 @@ class ProjectAffineDocEndpoint(BaseAPIView):
         )
 
 
+class MyWorkEndpoint(BaseAPIView):
+    """The requesting user's open assigned work items across the workspace, with
+    dates — feeds the Home 'My tasks' widget (grouped overdue / this week / later)."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        issues = (
+            Issue.issue_objects.filter(workspace__slug=slug, assignees=request.user, deleted_at__isnull=True)
+            .exclude(state__group__in=["completed", "cancelled"])
+            .select_related("project")
+            .values(
+                "id",
+                "name",
+                "target_date",
+                "priority",
+                "sequence_id",
+                "project_id",
+                "project__identifier",
+                "project__name",
+            )
+            .order_by("target_date")[:150]
+        )
+        payload = [
+            {
+                "id": str(i["id"]),
+                "name": i["name"],
+                "target_date": i["target_date"],
+                "priority": i["priority"],
+                "sequence_id": i["sequence_id"],
+                "project_id": str(i["project_id"]),
+                "project_identifier": i["project__identifier"],
+                "project_name": i["project__name"],
+            }
+            for i in issues
+        ]
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class WorkloadEndpoint(BaseAPIView):
     """Per-person load across the workspace: how much active work each member
     carries, what's overdue, and what's due this week. Data already exists

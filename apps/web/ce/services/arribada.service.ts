@@ -8,6 +8,7 @@ import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
 import type {
   TIssueRelationEdge,
+  TMyWorkItem,
   TPortfolioItem,
   TPortfolioProject,
   TProjectSchedule,
@@ -154,6 +155,15 @@ export class ArribadaService extends APIService {
     }[]
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/workload/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // The requesting user's open assigned work items (Home 'My tasks' widget).
+  async getMyWork(workspaceSlug: string): Promise<TMyWorkItem[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-work/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

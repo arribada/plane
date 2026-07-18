@@ -4,4 +4,6 @@
  * See the LICENSE file for details.
  */
 
-export const useBulkOperationStatus = () => false;
+// Enabled in this fork (upstream gates the bulk action bar behind a paid tier);
+// the multi-select machinery already exists in core.
+export const useBulkOperationStatus = () => true;

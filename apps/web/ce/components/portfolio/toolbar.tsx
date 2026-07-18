@@ -7,11 +7,12 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Flag, FolderKanban, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Flag, FolderKanban, Wand2 } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
+import { CloneProjectModal } from "./clone-project-modal";
 
 const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
   { value: "project", label: "Project" },
@@ -36,6 +37,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
   const [reflowing, setReflowing] = useState(false);
   const [reflowResult, setReflowResult] = useState<number | null>(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
 
   const captureBaselines = async () => {
     if (!workspaceSlug || capturing) return;
@@ -177,6 +179,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         <Flag className="size-3.5 text-secondary" />
         {capturing ? "Capturing…" : capturedAt ? `Baseline ${capturedAt}` : "Capture baseline"}
       </button>
+
+      {/* new project from an existing one used as a template */}
+      <button
+        type="button"
+        onClick={() => setCloneOpen(true)}
+        title="Create a new project by copying an existing one's work items, dependencies and structure"
+        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
+      >
+        <Copy className="size-3.5 text-secondary" />
+        New from template
+      </button>
+      <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
 
       <div className="flex-grow" />
 

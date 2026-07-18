@@ -3,7 +3,7 @@
 # See the LICENSE file for details.
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
@@ -11,8 +11,9 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
+from plane.app.serializers import ProjectSerializer
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Issue, IssueAssignee, Project, State, User, WorkspaceMember
+from plane.db.models import Issue, IssueAssignee, Project, ProjectMember, State, User, WorkspaceMember
 from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
@@ -322,6 +323,121 @@ class ProjectAffineDocEndpoint(BaseAPIView):
         return Response(
             {"doc_id": mapping.doc_id, "workspace_id": mapping.workspace_id, "title": mapping.title},
             status=status.HTTP_200_OK,
+        )
+
+
+class ProjectTemplateCloneEndpoint(BaseAPIView):
+    """Clone a project (used as a template) into a brand-new project: copies its
+    states, work items (with parent links and dependencies), and — when a kickoff
+    date is given — shifts every date so the earliest start lands on that date.
+    Assignees, labels and estimates are intentionally not copied (a template is a
+    plan, not an assignment). The source project is never modified."""
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        name = (request.data.get("name") or "").strip()
+        identifier = (request.data.get("identifier") or "").strip().upper()
+        kickoff = request.data.get("kickoff_date")
+
+        if not name or not identifier:
+            return Response({"error": "name and identifier are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        workspace = Workspace.objects.get(slug=slug)
+        template = Project.objects.filter(workspace=workspace, pk=project_id).first()
+        if not template:
+            return Response({"error": "template project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 1) Create the new project through the same serializer the create endpoint uses
+        #    (handles name/identifier validation + the ProjectIdentifier row).
+        serializer = ProjectSerializer(data={"name": name, "identifier": identifier}, context={"workspace_id": workspace.id})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        new_project = Project.objects.get(pk=serializer.data["id"])
+        ProjectMember.objects.get_or_create(
+            project=new_project, member=request.user, defaults={"role": ROLE.ADMIN.value}
+        )
+
+        # 2) Copy the template's states so state mapping is 1:1 (keeps custom workflows).
+        state_map = {}
+        for st in State.objects.filter(project=template):
+            state_map[st.id] = State.objects.create(
+                name=st.name,
+                color=st.color,
+                group=st.group,
+                sequence=st.sequence,
+                project=new_project,
+                workspace=workspace,
+                default=st.default,
+                created_by=request.user,
+            )
+
+        # 3) Work out the date shift: earliest template start (or target) -> kickoff.
+        tmpl_issues = list(
+            Issue.issue_objects.filter(project=template, deleted_at__isnull=True).order_by("sort_order", "created_at")
+        )
+        shift_days = None
+        if kickoff:
+            starts = [i.start_date for i in tmpl_issues if i.start_date]
+            targets = [i.target_date for i in tmpl_issues if i.target_date]
+            anchor = min(starts) if starts else (min(targets) if targets else None)
+            if anchor:
+                try:
+                    parts = [int(x) for x in str(kickoff)[:10].split("-")]
+                    shift_days = (date(parts[0], parts[1], parts[2]) - anchor).days
+                except (ValueError, TypeError, IndexError):
+                    shift_days = None
+
+        def _shift(d):
+            return d + timedelta(days=shift_days) if (d and shift_days is not None) else d
+
+        # 4a) Clone the work items (Issue.save() assigns fresh sequence_id/sort_order).
+        issue_map = {}
+        for src in tmpl_issues:
+            issue_map[src.id] = Issue.objects.create(
+                name=src.name,
+                description_json=src.description_json,
+                description_html=src.description_html,
+                description_binary=src.description_binary,
+                priority=src.priority,
+                state=state_map.get(src.state_id),
+                start_date=_shift(src.start_date),
+                target_date=_shift(src.target_date),
+                project=new_project,
+                workspace=workspace,
+                created_by=request.user,
+            )
+
+        # 4b) Re-link parents via .update() (bypasses save() side effects / re-sequencing).
+        for src in tmpl_issues:
+            if src.parent_id and src.parent_id in issue_map:
+                Issue.objects.filter(pk=issue_map[src.id].id).update(parent_id=issue_map[src.parent_id].id)
+
+        # 4c) Recreate dependency edges among the cloned items only.
+        rel_created = 0
+        for r in IssueRelation.objects.filter(issue__in=[i.id for i in tmpl_issues]):
+            a = issue_map.get(r.issue_id)
+            b = issue_map.get(r.related_issue_id)
+            if a and b:
+                IssueRelation.objects.create(
+                    issue=a,
+                    related_issue=b,
+                    relation_type=r.relation_type,
+                    project=new_project,
+                    workspace=workspace,
+                    created_by=request.user,
+                )
+                rel_created += 1
+
+        return Response(
+            {
+                "project_id": str(new_project.id),
+                "identifier": new_project.identifier,
+                "issues_created": len(issue_map),
+                "relations_created": rel_created,
+                "date_shifted": shift_days is not None,
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 

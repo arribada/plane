@@ -161,6 +161,26 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Clone a project (template) into a new one: copies states, work items, parent
+  // links and dependencies; shifts dates onto kickoff_date when provided.
+  async cloneProject(
+    workspaceSlug: string,
+    sourceProjectId: string,
+    data: { name: string; identifier: string; kickoff_date?: string | null }
+  ): Promise<{
+    project_id: string;
+    identifier: string;
+    issues_created: number;
+    relations_created: number;
+    date_shifted: boolean;
+  }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${sourceProjectId}/clone/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   // The requesting user's open assigned work items (Home 'My tasks' widget).
   async getMyWork(workspaceSlug: string): Promise<TMyWorkItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-work/`)

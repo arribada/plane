@@ -152,6 +152,42 @@ class ProjectRelationsEndpoint(BaseAPIView):
         return Response(list(edges), status=status.HTTP_200_OK)
 
 
+class ProjectProgressEndpoint(BaseAPIView):
+    """Per-issue completion % for a project, for filling gantt bars.
+
+    A parent's % is the share of its sub-issues in a completed state; a leaf's %
+    is 100 if its own state is completed, else 0. Computed in two grouped queries,
+    not per issue.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        base = Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
+        # child rollup: completed children / total children, per parent
+        child_stats = {
+            row["parent_id"]: row
+            for row in base.filter(parent__isnull=False)
+            .values("parent_id")
+            .annotate(
+                total=Count("id"),
+                done=Count("id", filter=Q(state__group="completed")),
+            )
+        }
+        payload = []
+        for issue in base.values("id", "state__group"):
+            iid = issue["id"]
+            stats = child_stats.get(iid)
+            if stats and stats["total"]:
+                percent = round(100 * stats["done"] / stats["total"])
+            else:
+                percent = 100 if issue["state__group"] == "completed" else 0
+            payload.append({"issue_id": str(iid), "percent": percent})
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class ProjectScheduleEndpoint(BaseAPIView):
     """Read or set a project's planned range."""
 

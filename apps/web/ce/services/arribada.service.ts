@@ -50,6 +50,15 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Per-issue completion % for the whole project, in one call, to fill gantt bars.
+  async getProjectProgress(workspaceSlug: string, projectId: string): Promise<{ issue_id: string; percent: number }[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/progress/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

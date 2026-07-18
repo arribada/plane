@@ -10,9 +10,12 @@
  * renderer is touched.
  */
 import type { FC } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
+import { useParams } from "next/navigation";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type Props = {
   itemsContainerWidth: number;
@@ -20,15 +23,54 @@ type Props = {
 };
 
 const DIAMOND = 7; // half-diagonal of a milestone marker
+const BAR = 18; // visible bar height the progress fill sits inside
 
 export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditionalLayers(props) {
   const { itemsContainerWidth, blockCount } = props;
+  const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
+  const service = useMemo(() => new ArribadaService(), []);
+  const [progress, setProgress] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    if (workspaceSlug && projectId) {
+      service
+        .getProjectProgress(workspaceSlug.toString(), projectId.toString())
+        .then((rows) => {
+          if (cancelled) return;
+          const map: Record<string, number> = {};
+          for (const r of rows || []) map[r.issue_id] = r.percent;
+          setProgress(map);
+        })
+        .catch(() => {
+          if (!cancelled) setProgress({});
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceSlug, projectId, service]);
+
   const view = store.currentViewData;
   if (!view) return null;
 
   const height = Math.max(blockCount, 1) * BLOCK_HEIGHT;
   const blockIds = store.blockIds ?? [];
+
+  // progress fills: a darker inset bar covering `percent` of each item's bar
+  const fills: { x: number; y: number; w: number }[] = [];
+  for (let i = 0; i < blockIds.length; i++) {
+    const pct = progress[blockIds[i]];
+    if (!pct) continue;
+    const block = store.getBlockById(blockIds[i]);
+    if (!block?.position || !block.position.width) continue;
+    fills.push({
+      x: block.position.marginLeft,
+      y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2,
+      w: (block.position.width * Math.min(pct, 100)) / 100,
+    });
+  }
 
   // "today" marker
   const todayX = store.getPositionFromDateOnGantt(new Date(), 0);
@@ -63,6 +105,9 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     >
       {bands.map((b, i) => (
         <rect key={`wk-${i}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
+      ))}
+      {fills.map((f, i) => (
+        <rect key={`pf-${i}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />
       ))}
       {typeof todayX === "number" && (
         <line x1={todayX} y1={0} x2={todayX} y2={height} stroke="#ef4444" strokeWidth={1} opacity={0.7} />

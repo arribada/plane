@@ -44,6 +44,8 @@ export interface IPortfolioStore {
   getProject: (id: string) => TPortfolioProject | undefined;
   getItem: (id: string) => TPortfolioItem | undefined;
   getRowProjectId: (id: string) => string | undefined;
+  isFolderRow: (id: string) => boolean;
+  getFolderRow: (id: string) => { name: string; projectCount: number; collapsed: boolean } | undefined;
   // actions
   fetchPortfolio: (workspaceSlug: string) => Promise<void>;
   toggleProjectExpansion: (workspaceSlug: string, projectId: string) => Promise<void>;
@@ -51,9 +53,14 @@ export interface IPortfolioStore {
   setColorBy: (value: TPortfolioColorBy) => void;
   setSortBy: (value: TPortfolioSortBy) => void;
   moveProject: (dragId: string, dropId: string) => void;
+  setGroupByFolder: (value: boolean) => void;
+  toggleFolderCollapse: (headerId: string) => void;
 }
 
 const ORDER_KEY = "arribada.portfolio.manualOrder";
+const FOLDER_PREFIX = "__folder__:";
+const NO_FOLDER = FOLDER_PREFIX + "none";
+type TFolder = { id: string; name: string; project_ids: string[] };
 
 export class PortfolioStore implements IPortfolioStore {
   projectMap: Record<string, TPortfolioProject> = {};
@@ -65,6 +72,9 @@ export class PortfolioStore implements IPortfolioStore {
   colorBy: TPortfolioColorBy = "project";
   sortBy: TPortfolioSortBy = "start_date";
   isLoading = false;
+  folders: TFolder[] = [];
+  groupByFolder = false;
+  collapsedFolderIds: Set<string> = new Set();
 
   service: ArribadaService;
 
@@ -80,8 +90,12 @@ export class PortfolioStore implements IPortfolioStore {
       colorBy: observable.ref,
       sortBy: observable.ref,
       isLoading: observable.ref,
+      folders: observable,
+      groupByFolder: observable.ref,
+      collapsedFolderIds: observable,
       allProjects: computed,
       sortedProjectIds: computed,
+      folderGroups: computed,
       ganttBlockIds: computed,
       totalUndatedCount: computed,
       fetchPortfolio: action,
@@ -90,6 +104,8 @@ export class PortfolioStore implements IPortfolioStore {
       setColorBy: action,
       setSortBy: action,
       moveProject: action,
+      setGroupByFolder: action,
+      toggleFolderCollapse: action,
     });
   }
 
@@ -165,13 +181,40 @@ export class PortfolioStore implements IPortfolioStore {
     return ids;
   }
 
+  // Displayed projects grouped into folder swimlanes, each preserving the active
+  // sort order; projects in no folder fall into a trailing "No folder" group.
+  get folderGroups(): { headerId: string; name: string; projectIds: string[] }[] {
+    const sorted = this.sortedProjectIds;
+    const seen = new Set<string>();
+    const groups: { headerId: string; name: string; projectIds: string[] }[] = [];
+    for (const f of this.folders) {
+      const set = new Set(f.project_ids);
+      const pids = sorted.filter((id) => set.has(id) && !seen.has(id));
+      pids.forEach((id) => seen.add(id));
+      if (pids.length) groups.push({ headerId: FOLDER_PREFIX + f.id, name: f.name, projectIds: pids });
+    }
+    const ungrouped = sorted.filter((id) => !seen.has(id));
+    if (ungrouped.length) groups.push({ headerId: NO_FOLDER, name: "No folder", projectIds: ungrouped });
+    return groups;
+  }
+
   // The flat id list the gantt renders. Expanding a project injects its item ids
   // right after it, so the sidebar and the grid stay in lockstep automatically.
+  // With grouping on, a folder-header row precedes each swimlane's projects.
   get ganttBlockIds(): string[] {
     const ids: string[] = [];
-    for (const pid of this.sortedProjectIds) {
+    const pushProject = (pid: string) => {
       ids.push(pid);
       if (this.expandedProjectIds.has(pid)) ids.push(...this.sortedItemIds(pid));
+    };
+    if (!this.groupByFolder) {
+      for (const pid of this.sortedProjectIds) pushProject(pid);
+      return ids;
+    }
+    for (const g of this.folderGroups) {
+      ids.push(g.headerId);
+      if (this.collapsedFolderIds.has(g.headerId)) continue;
+      for (const pid of g.projectIds) pushProject(pid);
     }
     return ids;
   }
@@ -192,7 +235,20 @@ export class PortfolioStore implements IPortfolioStore {
     return this.itemProjectId[id];
   });
 
+  isFolderRow = computedFn((id: string): boolean => id.startsWith(FOLDER_PREFIX));
+
+  getFolderRow = computedFn((id: string): { name: string; projectCount: number; collapsed: boolean } | undefined => {
+    if (!id.startsWith(FOLDER_PREFIX)) return undefined;
+    const g = this.folderGroups.find((x) => x.headerId === id);
+    if (!g) return undefined;
+    return { name: g.name, projectCount: g.projectIds.length, collapsed: this.collapsedFolderIds.has(id) };
+  });
+
   getRowById = computedFn((id: string): TGanttRow | undefined => {
+    if (id.startsWith(FOLDER_PREFIX)) {
+      // folder header: a row with no dates, so the gantt draws no bar for it
+      return { id, name: this.getFolderRow(id)?.name ?? "", sort_order: null, start_date: null, target_date: null, project_id: null };
+    }
     const p = this.projectMap[id];
     if (p) {
       return {
@@ -223,8 +279,12 @@ export class PortfolioStore implements IPortfolioStore {
       this.isLoading = true;
     });
     try {
-      const projects = await this.service.getPortfolio(workspaceSlug);
+      const [projects, folders] = await Promise.all([
+        this.service.getPortfolio(workspaceSlug),
+        this.service.getFolders(workspaceSlug).catch(() => []),
+      ]);
       runInAction(() => {
+        this.folders = folders.map((f) => ({ id: f.id, name: f.name, project_ids: f.project_ids }));
         this.projectMap = {};
         for (const project of projects) set(this.projectMap, [project.id], project);
         // default selection: every non-archived project, in API order
@@ -279,6 +339,17 @@ export class PortfolioStore implements IPortfolioStore {
 
   setSortBy = (value: TPortfolioSortBy): void => {
     this.sortBy = value;
+  };
+
+  setGroupByFolder = (value: boolean): void => {
+    this.groupByFolder = value;
+  };
+
+  toggleFolderCollapse = (headerId: string): void => {
+    const next = new Set(this.collapsedFolderIds);
+    if (next.has(headerId)) next.delete(headerId);
+    else next.add(headerId);
+    this.collapsedFolderIds = next;
   };
 
   // Drag reorder: drop `dragId` at the position of `dropId`, switch to manual sort.

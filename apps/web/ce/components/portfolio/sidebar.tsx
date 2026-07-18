@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle, GripVertical, Signal } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, Folder, GripVertical, Signal } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
@@ -32,6 +32,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
   const router = useAppRouter();
   const portfolio = usePortfolio();
   const isProject = portfolio.isProjectRow(blockId);
+  const folder = portfolio.getFolderRow(blockId);
   const project = portfolio.getProject(blockId);
   const item = portfolio.getItem(blockId);
   const isExpanded = portfolio.expandedProjectIds.has(blockId);
@@ -58,7 +59,18 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
         dragId = null;
       }}
     >
-      {isProject ? (
+      {folder ? (
+        <button
+          type="button"
+          onClick={() => portfolio.toggleFolderCollapse(blockId)}
+          className="flex w-full items-center gap-1.5 pl-1 text-left"
+        >
+          {folder.collapsed ? <ChevronRight className="size-4 text-secondary" /> : <ChevronDown className="size-4 text-secondary" />}
+          <Folder className="size-3.5 flex-shrink-0 text-secondary" />
+          <span className="truncate text-13 font-semibold uppercase tracking-wide text-primary">{folder.name}</span>
+          <span className="rounded bg-layer-2 px-1.5 text-11 text-secondary">{folder.projectCount}</span>
+        </button>
+      ) : isProject ? (
         <>
           <GripVertical
             className={cn(

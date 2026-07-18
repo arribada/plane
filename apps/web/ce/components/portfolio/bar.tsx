@@ -41,6 +41,8 @@ const ItemAvatars = ({ assignees }: { assignees: TItemAssignee[] }) => {
 // hatched to say "this is inferred, not committed".
 export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
   const portfolio = usePortfolio();
+  // Folder-header rows span the row with no bar (Asana section-header style).
+  if (portfolio.isFolderRow(blockId)) return null;
   const isProject = portfolio.isProjectRow(blockId);
   const project = portfolio.getProject(blockId);
   const item = portfolio.getItem(blockId);

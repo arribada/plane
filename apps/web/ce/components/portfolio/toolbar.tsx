@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, Flag, FolderKanban, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Download, Flag, Folder, FolderKanban, Wand2 } from "lucide-react";
 import { cn } from "@plane/utils";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -177,6 +177,20 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           ))}
         </select>
       </label>
+
+      {/* group projects into folder swimlanes */}
+      <button
+        type="button"
+        onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)}
+        title="Group projects into folder swimlanes"
+        className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
+          "border-accent-strong bg-accent-primary/10 text-accent-primary": portfolio.groupByFolder,
+          "border-subtle hover:bg-layer-1": !portfolio.groupByFolder,
+        })}
+      >
+        <Folder className="size-3.5" />
+        Group by folder
+      </button>
 
       {/* reflow: cascade dates along dependencies across displayed projects */}
       <button

@@ -19,6 +19,7 @@ import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
 import { GanttUndoButton } from "@/plane-web/components/gantt-chart/undo-button";
+import { GanttLinkPreview } from "@/plane-web/components/gantt-chart/link-preview";
 import { ganttUndo } from "@/plane-web/store/gantt-undo";
 import { IssueGanttSidebar } from "@/components/gantt-chart/sidebar/issues/sidebar";
 // hooks
@@ -167,6 +168,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
         <div className="relative h-full w-full">
+          <GanttLinkPreview />
           <div className="absolute left-3 top-1.5 z-20 flex items-center gap-2">
             <GanttColorBy />
             <GanttUndoButton onUndo={handleGanttUndo} />

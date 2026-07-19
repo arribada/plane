@@ -7,6 +7,7 @@
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
 import type {
+  TGithubInboxItem,
   TIssueRelationEdge,
   TMyWorkItem,
   TPortfolioItem,
@@ -131,15 +132,29 @@ export class ArribadaService extends APIService {
   }
 
   // Adopt inbox items (e.g. GHIN) into a project — lossless copy + relates_to link.
+  // Pass targetParentId to nest the copies under a work item (that item then
+  // "contains" the adopted GitHub tasks as sub-issues).
   async adoptIssues(
     workspaceSlug: string,
     sourceIssueIds: string[],
-    targetProjectId: string
-  ): Promise<{ adopted: number }> {
+    targetProjectId: string,
+    targetParentId?: string
+  ): Promise<{ adopted: number; parent_id: string | null }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/adopt-issues/`, {
       source_issue_ids: sourceIssueIds,
       target_project_id: targetProjectId,
+      ...(targetParentId ? { target_parent_id: targetParentId } : {}),
     })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Open items waiting in the GitHub-inbox (GHIN) project, for the "link GitHub
+  // tasks to this work item" picker.
+  async listGithubInbox(workspaceSlug: string): Promise<TGithubInboxItem[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

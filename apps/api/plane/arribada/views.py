@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -65,6 +66,17 @@ def _visible_projects(request, slug):
         project_projectmember__member=request.user,
         project_projectmember__is_active=True,
     )
+
+
+_GH_URL_RE = re.compile(r"https?://github\.com/[^\s\"'<>)]+", re.IGNORECASE)
+
+
+def _github_url(text):
+    """First github.com URL found in a blob of html/text, or None."""
+    if not text:
+        return None
+    m = _GH_URL_RE.search(str(text))
+    return m.group(0).rstrip(".,;") if m else None
 
 
 class PortfolioEndpoint(BaseAPIView):
@@ -715,6 +727,11 @@ class AdoptIssuesEndpoint(BaseAPIView):
     the target project, links it back to the original (relates_to), and marks the
     original as completed — so nothing is lost, traceability stays, and the GitHub
     cron (which dedups on existence) won't recreate a duplicate.
+
+    Optional `target_parent_id`: when given, each copy is created as a sub-issue of
+    that work item — this is how a single work item comes to "contain" several
+    GitHub tasks. The parent must live in the target project (Plane CE only allows
+    same-project parents).
     """
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
@@ -726,6 +743,18 @@ class AdoptIssuesEndpoint(BaseAPIView):
         target = _visible_projects(request, slug).filter(id=target_project_id).first()
         if not target:
             return Response({"error": "target project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Optional: nest the adopted copies under an existing work item in the target
+        # project, so that work item ends up containing several GitHub tasks.
+        parent = None
+        target_parent_id = request.data.get("target_parent_id")
+        if target_parent_id:
+            parent = Issue.issue_objects.filter(project=target, id=target_parent_id).first()
+            if not parent:
+                return Response(
+                    {"error": "target_parent_id must be a work item in the target project"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         visible = _visible_projects(request, slug)
         adopted = []
@@ -742,6 +771,7 @@ class AdoptIssuesEndpoint(BaseAPIView):
                 name=src.name,
                 description_html=src.description_html,
                 priority=src.priority,
+                parent=parent,
                 created_by=request.user,
             )
             IssueRelation.objects.get_or_create(
@@ -757,7 +787,43 @@ class AdoptIssuesEndpoint(BaseAPIView):
                 src.completed_at = timezone.now()
                 src.save(update_fields=["state", "completed_at"])
             adopted.append({"source_id": str(sid), "new_issue_id": str(new_issue.id), "sequence_id": new_issue.sequence_id})
-        return Response({"adopted": len(adopted), "issues": adopted}, status=status.HTTP_200_OK)
+        return Response(
+            {"adopted": len(adopted), "issues": adopted, "parent_id": str(parent.id) if parent else None},
+            status=status.HTTP_200_OK,
+        )
+
+
+class GithubInboxEndpoint(BaseAPIView):
+    """Open items sitting in a GitHub-inbox (GHIN) project.
+
+    Powers the "link GitHub tasks to this work item" picker: the caller lists open
+    GHIN tasks, selects some, then POSTs them to adopt-issues with target_parent_id
+    set to the work item. Scoped to the caller's own projects (IDOR-safe).
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        visible = _visible_projects(request, slug)
+        rows = (
+            Issue.issue_objects.filter(
+                project__in=visible, project__identifier="GHIN", workspace__slug=slug
+            )
+            .exclude(state__group__in=["completed", "cancelled"])
+            .order_by("-created_at")
+            .values("id", "name", "sequence_id", "description_html", "project__identifier", "state__name")[:200]
+        )
+        items = [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "sequence_id": r["sequence_id"],
+                "project_identifier": r["project__identifier"],
+                "state": r["state__name"],
+                "github_url": _github_url(r["description_html"]),
+            }
+            for r in rows
+        ]
+        return Response(items, status=status.HTTP_200_OK)
 
 
 class ProjectFoldersEndpoint(BaseAPIView):

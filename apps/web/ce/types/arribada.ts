@@ -91,3 +91,14 @@ export type TIssueRelationEdge = {
   related_issue_id: string;
   relation_type: string;
 };
+
+// An open item in a GitHub-inbox (GHIN) project, offered in the "link GitHub
+// tasks to this work item" picker.
+export type TGithubInboxItem = {
+  id: string;
+  name: string;
+  sequence_id: number;
+  project_identifier: string;
+  state: string | null;
+  github_url: string | null;
+};

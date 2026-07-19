@@ -7,7 +7,22 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, Filter, Flag, Folder, FolderKanban, Route, Wand2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  Filter,
+  Flag,
+  Folder,
+  FolderKanban,
+  MoreHorizontal,
+  Route,
+  SlidersHorizontal,
+  Wand2,
+  X,
+} from "lucide-react";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
@@ -29,30 +44,33 @@ const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
   { value: "manual", label: "Manual (drag)" },
 ];
 
+const PRIORITIES: { value: string; label: string }[] = [
+  { value: "urgent", label: "Urgent" },
+  { value: "high", label: "High" },
+  { value: "medium", label: "Medium" },
+  { value: "low", label: "Low" },
+  { value: "none", label: "None" },
+];
+
+const triggerBtn = "flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1";
+const menuRow = "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-13 hover:bg-layer-2 disabled:opacity-50";
+
 export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
-  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"projects" | "filter" | "display" | "actions" | null>(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
-
   const [reflowing, setReflowing] = useState(false);
   const [reflowResult, setReflowResult] = useState<number | null>(null);
-  const [cloneOpen, setCloneOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
-  const PRIORITIES: { value: string; label: string }[] = [
-    { value: "urgent", label: "Urgent" },
-    { value: "high", label: "High" },
-    { value: "medium", label: "Medium" },
-    { value: "low", label: "Low" },
-    { value: "none", label: "None" },
-  ];
+
+  const toggle = (m: "projects" | "filter" | "display" | "actions") => setOpenMenu((v) => (v === m ? null : m));
+  const close = () => setOpenMenu(null);
 
   const exportTimeline = async (format: "png" | "svg") => {
-    setExportOpen(false);
     const displayed = portfolio.allProjects.filter((p) => portfolio.displayedProjectIds.includes(p.id));
     const svg = buildPortfolioSvg(displayed.length ? displayed : portfolio.allProjects);
     if (!svg) return;
@@ -61,7 +79,6 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       if (format === "svg") downloadSvg(svg, `portfolio-${stamp}.svg`);
       else await downloadPng(svg, `portfolio-${stamp}.png`);
     } catch {
-      // rasterization can fail in rare browser states — fall back to the vector export
       if (format === "png") downloadSvg(svg, `portfolio-${stamp}.svg`);
     }
   };
@@ -84,8 +101,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       const results = await Promise.all(
         portfolio.displayedProjectIds.map((id) => service.autoSchedule(workspaceSlug.toString(), id))
       );
-      const total = results.reduce((sum, r) => sum + (r?.rescheduled ?? 0), 0);
-      setReflowResult(total);
+      setReflowResult(results.reduce((sum, r) => sum + (r?.rescheduled ?? 0), 0));
       await portfolio.fetchPortfolio(workspaceSlug.toString());
     } finally {
       setReflowing(false);
@@ -96,8 +112,6 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const selected = new Set(portfolio.displayedProjectIds);
 
   const toggleProject = (id: string) => {
-    // Add/remove only the toggled id in place, preserving any manual drag order
-    // (rebuilding from allProjects would reset the timeline to API order).
     const current = portfolio.displayedProjectIds;
     portfolio.setDisplayedProjectIds(current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
   };
@@ -120,20 +134,16 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         </span>
       )}
 
-      {/* project selector */}
+      {/* Projects scope */}
       <div className="relative">
-        <button
-          type="button"
-          onClick={() => setProjectsOpen((v) => !v)}
-          className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
-        >
+        <button type="button" onClick={() => toggle("projects")} className={triggerBtn}>
           <FolderKanban className="size-3.5 text-secondary" />
           Projects ({selected.size}/{allProjects.length})
           <ChevronDown className="size-3.5 text-secondary" />
         </button>
-        {projectsOpen && (
+        {openMenu === "projects" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={() => setProjectsOpen(false)} />
+            <div className="fixed inset-0 z-20" onClick={close} />
             <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
               <div className="flex items-center justify-between px-2 py-1 text-11 text-secondary">
                 <button type="button" className="hover:text-primary" onClick={() => portfolio.setDisplayedProjectIds(allProjects.map((p) => p.id))}>
@@ -144,12 +154,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 </button>
               </div>
               {allProjects.map((p) => (
-                <button
-                  type="button"
-                  key={p.id}
-                  onClick={() => toggleProject(p.id)}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-layer-2"
-                >
+                <button key={p.id} type="button" onClick={() => toggleProject(p.id)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-layer-2">
                   <span
                     className={cn("flex size-4 items-center justify-center rounded border", {
                       "border-accent-strong bg-accent-primary text-white": selected.has(p.id),
@@ -172,44 +177,11 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         )}
       </div>
 
-      {/* color by */}
-      <label className="flex items-center gap-1.5 text-secondary">
-        Color
-        <select
-          className="rounded border border-subtle bg-layer-1 px-1.5 py-1 text-primary"
-          value={portfolio.colorBy}
-          onChange={(e) => portfolio.setColorBy(e.target.value as TPortfolioColorBy)}
-        >
-          {COLOR_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {/* sort by */}
-      <label className="flex items-center gap-1.5 text-secondary">
-        Sort
-        <select
-          className="rounded border border-subtle bg-layer-1 px-1.5 py-1 text-primary"
-          value={portfolio.sortBy}
-          onChange={(e) => portfolio.setSortBy(e.target.value as TPortfolioSortBy)}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {/* filter task bars by priority / assigned-to-me (affects expanded projects) */}
+      {/* Filters */}
       <div className="relative">
         <button
           type="button"
-          onClick={() => setFilterOpen((v) => !v)}
-          title="Filter task bars (applies to expanded projects)"
+          onClick={() => toggle("filter")}
           className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
             "border-accent-strong bg-accent-primary/10 text-accent-primary": portfolio.hasActiveFilters,
             "border-subtle hover:bg-layer-1": !portfolio.hasActiveFilters,
@@ -223,18 +195,13 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
             </span>
           )}
         </button>
-        {filterOpen && (
+        {openMenu === "filter" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={() => setFilterOpen(false)} />
+            <div className="fixed inset-0 z-20" onClick={close} />
             <div className="absolute left-0 top-full z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5 shadow-lg">
               <div className="px-1.5 py-1 text-11 font-medium uppercase tracking-wide text-secondary">Priority</div>
               {PRIORITIES.map((p) => (
-                <button
-                  key={p.value}
-                  type="button"
-                  onClick={() => portfolio.togglePriorityFilter(p.value)}
-                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
-                >
+                <button key={p.value} type="button" onClick={() => portfolio.togglePriorityFilter(p.value)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
                   <span
                     className={cn("flex size-4 items-center justify-center rounded border", {
                       "border-accent-strong bg-accent-primary text-white": portfolio.priorityFilter.has(p.value),
@@ -247,11 +214,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 </button>
               ))}
               <div className="my-1 h-px bg-layer-2" />
-              <button
-                type="button"
-                onClick={() => portfolio.setAssignedToMeOnly(!portfolio.assignedToMeOnly)}
-                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
-              >
+              <button type="button" onClick={() => portfolio.setAssignedToMeOnly(!portfolio.assignedToMeOnly)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
                 <span
                   className={cn("flex size-4 items-center justify-center rounded border", {
                     "border-accent-strong bg-accent-primary text-white": portfolio.assignedToMeOnly,
@@ -263,11 +226,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 Assigned to me
               </button>
               {portfolio.hasActiveFilters && (
-                <button
-                  type="button"
-                  onClick={() => portfolio.clearFilters()}
-                  className="mt-1 w-full rounded px-1.5 py-1 text-left text-12 text-red-600 hover:bg-red-500/10"
-                >
+                <button type="button" onClick={() => portfolio.clearFilters()} className="mt-1 w-full rounded px-1.5 py-1 text-left text-12 text-red-600 hover:bg-red-500/10">
                   Clear filters
                 </button>
               )}
@@ -282,9 +241,53 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         )}
       </div>
 
-      <div className="mx-0.5 h-5 w-px self-center bg-layer-2" />
+      {/* Display: colour, order, grouping */}
+      <div className="relative">
+        <button type="button" onClick={() => toggle("display")} className={triggerBtn}>
+          <SlidersHorizontal className="size-3.5 text-secondary" />
+          Display
+          <ChevronDown className="size-3.5 text-secondary" />
+        </button>
+        {openMenu === "display" && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={close} />
+            <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5 shadow-lg">
+              <div className="mb-0.5 px-1.5 text-11 font-medium uppercase tracking-wide text-secondary">Colour by</div>
+              <div className="mb-2 flex gap-1 px-1">
+                {COLOR_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => portfolio.setColorBy(o.value)}
+                    className={cn("flex-1 rounded px-2 py-1 text-12", portfolio.colorBy === o.value ? "bg-accent-primary/10 font-medium text-accent-primary" : "text-secondary hover:bg-layer-2")}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mb-0.5 px-1.5 text-11 font-medium uppercase tracking-wide text-secondary">Order by</div>
+              {SORT_OPTIONS.map((o) => (
+                <button key={o.value} type="button" onClick={() => portfolio.setSortBy(o.value)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
+                  <span className={cn("size-3 rounded-full border", portfolio.sortBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle")} />
+                  {o.label}
+                </button>
+              ))}
+              <div className="mt-1.5 border-t border-subtle pt-1.5">
+                <button type="button" onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
+                  <span
+                    className={cn("flex size-4 items-center justify-center rounded border", portfolio.groupByFolder ? "border-accent-strong bg-accent-primary text-white" : "border-subtle")}
+                  >
+                    {portfolio.groupByFolder && <Check className="size-3" />}
+                  </span>
+                  Group by folder
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
 
-      {/* highlight the cross-project critical path + draw dependency arrows */}
+      {/* Critical path (analysis mode) */}
       <button
         type="button"
         onClick={() => workspaceSlug && portfolio.setShowCriticalPath(workspaceSlug.toString(), !portfolio.showCriticalPath)}
@@ -298,78 +301,71 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         Critical path
       </button>
 
-      {/* group projects into folder swimlanes */}
-      <button
-        type="button"
-        onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)}
-        title="Group projects into folder swimlanes"
-        className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
-          "border-accent-strong bg-accent-primary/10 text-accent-primary": portfolio.groupByFolder,
-          "border-subtle hover:bg-layer-1": !portfolio.groupByFolder,
-        })}
-      >
-        <Folder className="size-3.5" />
-        Group by folder
-      </button>
+      <div className="flex-grow" />
 
-      <div className="mx-0.5 h-5 w-px self-center bg-layer-2" />
+      {/* undated indicator */}
+      {portfolio.totalUndatedCount > 0 && (
+        <span className="flex items-center gap-1 rounded bg-amber-500/15 px-2 py-1 text-amber-600">
+          <AlertTriangle className="size-3.5" />
+          {portfolio.totalUndatedCount} without dates
+        </span>
+      )}
 
-      {/* reflow: cascade dates along dependencies across displayed projects */}
-      <button
-        type="button"
-        onClick={reflow}
-        disabled={reflowing}
-        title="Push any task that starts before its dependencies allow, preserving durations (respect links)"
-        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1 disabled:opacity-50"
-      >
-        <Wand2 className="size-3.5 text-secondary" />
-        {reflowing ? "Reflowing…" : reflowResult !== null ? `Reflowed ${reflowResult}` : "Reflow schedule"}
-      </button>
-
-      {/* capture baseline across displayed projects */}
-      <button
-        type="button"
-        onClick={captureBaselines}
-        disabled={capturing}
-        title="Freeze the current dates of every displayed project as a baseline (ghost bars in each project's gantt)"
-        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1 disabled:opacity-50"
-      >
-        <Flag className="size-3.5 text-secondary" />
-        {capturing ? "Capturing…" : capturedAt ? `Baseline ${capturedAt}` : "Capture baseline"}
-      </button>
-
-      {/* new project from an existing one used as a template */}
-      <button
-        type="button"
-        onClick={() => setCloneOpen(true)}
-        title="Create a new project by copying an existing one's work items, dependencies and structure"
-        className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
-      >
-        <Copy className="size-3.5 text-secondary" />
-        New from template
-      </button>
-      <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
-
-      {/* export the timeline as a self-contained image */}
+      {/* Actions menu: occasional operations tucked away */}
       <div className="relative">
-        <button
-          type="button"
-          onClick={() => setExportOpen((v) => !v)}
-          title="Export the displayed projects' timeline as an image"
-          className="flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1"
-        >
-          <Download className="size-3.5 text-secondary" />
-          Export
-          <ChevronDown className="size-3.5 text-secondary" />
+        <button type="button" onClick={() => toggle("actions")} title="More actions" className={triggerBtn}>
+          <MoreHorizontal className="size-4 text-secondary" />
         </button>
-        {exportOpen && (
+        {openMenu === "actions" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={() => setExportOpen(false)} />
-            <div className="absolute left-0 top-full z-30 mt-1 w-32 rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
-              <button type="button" onClick={() => exportTimeline("png")} className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-layer-2">
+            <div className="fixed inset-0 z-20" onClick={close} />
+            <div className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+              <button
+                type="button"
+                disabled={reflowing}
+                onClick={() => {
+                  close();
+                  reflow();
+                }}
+                title="Push any task that starts before its dependencies allow (respects links, weekends)"
+                className={menuRow}
+              >
+                <Wand2 className="size-3.5 text-secondary" />
+                {reflowing ? "Reflowing…" : reflowResult !== null ? `Reflowed ${reflowResult}` : "Reflow schedule"}
+              </button>
+              <button
+                type="button"
+                disabled={capturing}
+                onClick={() => {
+                  close();
+                  captureBaselines();
+                }}
+                title="Freeze the current dates as a baseline (ghost bars + variance)"
+                className={menuRow}
+              >
+                <Flag className="size-3.5 text-secondary" />
+                {capturing ? "Capturing…" : capturedAt ? `Baseline ${capturedAt}` : "Capture baseline"}
+              </button>
+              <div className="my-1 h-px bg-layer-2" />
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  setCloneOpen(true);
+                }}
+                className={menuRow}
+              >
+                <Copy className="size-3.5 text-secondary" />
+                New from template
+              </button>
+              <div className="my-1 h-px bg-layer-2" />
+              <div className="px-2 py-0.5 text-10 font-medium uppercase tracking-wide text-secondary/70">Export timeline</div>
+              <button type="button" onClick={() => { close(); exportTimeline("png"); }} className={menuRow}>
+                <Download className="size-3.5 text-secondary" />
                 PNG image
               </button>
-              <button type="button" onClick={() => exportTimeline("svg")} className="flex w-full items-center rounded px-2 py-1 text-left hover:bg-layer-2">
+              <button type="button" onClick={() => { close(); exportTimeline("svg"); }} className={menuRow}>
+                <Download className="size-3.5 text-secondary" />
                 SVG (vector)
               </button>
             </div>
@@ -377,15 +373,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         )}
       </div>
 
-      <div className="flex-grow" />
-
-      {/* undated indicator */}
-      {portfolio.totalUndatedCount > 0 && (
-        <span className="flex items-center gap-1 rounded bg-amber-500/15 px-2 py-1 text-amber-600">
-          <AlertTriangle className="size-3.5" />
-          {portfolio.totalUndatedCount} work items without dates
-        </span>
-      )}
+      <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
 
       {/* critical-path legend + empty-state hint (own wrapping line) */}
       {portfolio.showCriticalPath && (

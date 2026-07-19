@@ -129,7 +129,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
         <div className="relative h-full w-full">
-          <div className="absolute right-3 top-2.5 z-20">
+          <div className="absolute left-3 top-1.5 z-20">
             <GanttColorBy />
           </div>
           <GanttChartRoot

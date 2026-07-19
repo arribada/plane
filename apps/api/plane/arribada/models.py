@@ -88,6 +88,9 @@ class ProjectAffineDoc(models.Model):
     google_drive_url = models.CharField(max_length=1024, null=True, blank=True)
     # The Mattermost channel this project's notifications go to (link on the Pages view).
     mattermost_channel_url = models.CharField(max_length=1024, null=True, blank=True)
+    # GitHub repos associated with this project (a project can span several). Used both
+    # as reference links on the Pages view and to route GitHub-inbox task warnings.
+    github_repo_urls = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

@@ -12,24 +12,47 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { BookOpen, Check, ExternalLink, FolderOpen, Info, MessageSquare, Pencil, Plus, X } from "lucide-react";
+import { BookOpen, Check, ExternalLink, FolderOpen, Github, Info, MessageSquare, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectDocs } from "@/plane-web/types/arribada";
 
 const AFFINE_BASE = "https://docs.arribada.org";
-const EMPTY: TProjectDocs = { doc_id: null, workspace_id: null, title: null, google_drive_url: null, mattermost_channel_url: null };
+const EMPTY: TProjectDocs = {
+  doc_id: null,
+  workspace_id: null,
+  title: null,
+  google_drive_url: null,
+  mattermost_channel_url: null,
+  github_repo_urls: [],
+};
+
+// "owner/repo" from a github URL, else the raw string trimmed of protocol.
+const repoLabel = (url: string): string => {
+  const m = url.match(/github\.com\/([^/]+\/[^/?#]+)/i);
+  return m ? m[1] : url.replace(/^https?:\/\//, "");
+};
 
 export const AffineWikiPanel = observer(function AffineWikiPanel() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
   const [docs, setDocs] = useState<TProjectDocs>(EMPTY);
-  const [editing, setEditing] = useState<"affine" | "drive" | "chat" | null>(null);
+  const [editing, setEditing] = useState<"affine" | "drive" | "chat" | "github" | null>(null);
   const [draftDoc, setDraftDoc] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDrive, setDraftDrive] = useState("");
   const [draftChat, setDraftChat] = useState("");
+  const [draftRepo, setDraftRepo] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const repos = docs.github_repo_urls ?? [];
+  const addRepo = async () => {
+    const v = draftRepo.trim();
+    if (!v) return;
+    await persist({ github_repo_urls: [...repos, v] });
+    setDraftRepo("");
+  };
+  const removeRepo = (url: string) => persist({ github_repo_urls: repos.filter((u) => u !== url) });
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +97,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <span className="font-medium text-primary">Project documentation</span>
           <span className="text-secondary">
             {" "}
-            — the project's wiki (AFFiNE), files (Google Drive) and notifications channel (Mattermost). Add any missing link below.
+            — the project's wiki (AFFiNE), files (Google Drive), chat channel (Mattermost) and GitHub repos. Add any missing link below.
           </span>
         </div>
       </div>
@@ -194,6 +217,52 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           >
             {chatLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
             {chatLink ? "Change" : "Add link"}
+          </button>
+        )}
+      </div>
+
+      {/* GitHub repos row (a project can span several) */}
+      <div className="flex flex-wrap items-start gap-3 border-t border-subtle px-4 py-2.5">
+        <Github className="mt-0.5 size-4 flex-shrink-0 text-secondary" />
+        <span className="mt-0.5 w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">GitHub repos</span>
+        <div className="flex min-w-0 flex-grow flex-col gap-1.5">
+          {repos.length === 0 && editing !== "github" && (
+            <span className="text-13 text-tertiary">Not linked yet — add the project's GitHub repo(s).</span>
+          )}
+          {repos.map((url) => (
+            <span key={url} className="flex items-center gap-1.5">
+              <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-1 truncate text-13 font-medium text-accent-primary hover:underline">
+                {repoLabel(url)}
+                <ExternalLink className="size-3 flex-shrink-0" />
+              </a>
+              <button type="button" onClick={() => removeRepo(url)} disabled={saving} className="text-tertiary hover:text-red-600" title="Remove">
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ))}
+          {editing === "github" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={draftRepo}
+                onChange={(e) => setDraftRepo(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addRepo()}
+                placeholder="https://github.com/arribada/…"
+                className={cn(input, "w-64")}
+              />
+              <button type="button" onClick={addRepo} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+                <Check className="size-3.5" />
+                {saving ? "Saving…" : "Add"}
+              </button>
+              <button type="button" onClick={() => setEditing(null)} className="text-secondary hover:text-primary">
+                <X className="size-4" />
+              </button>
+            </div>
+          )}
+        </div>
+        {editing !== "github" && (
+          <button type="button" onClick={() => { setDraftRepo(""); setEditing("github"); }} className={editBtn}>
+            <Plus className="size-3" />
+            Add repo
           </button>
         )}
       </div>

@@ -387,7 +387,14 @@ class ProjectAffineDocEndpoint(BaseAPIView):
         mapping = ProjectAffineDoc.objects.filter(project_id=project_id).first()
         if not mapping:
             return Response(
-                {"doc_id": None, "workspace_id": None, "title": None, "google_drive_url": None, "mattermost_channel_url": None},
+                {
+                    "doc_id": None,
+                    "workspace_id": None,
+                    "title": None,
+                    "google_drive_url": None,
+                    "mattermost_channel_url": None,
+                    "github_repo_urls": [],
+                },
                 status=status.HTTP_200_OK,
             )
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
@@ -410,6 +417,18 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             mapping.google_drive_url = (request.data.get("google_drive_url") or "").strip() or None
         if "mattermost_channel_url" in request.data:
             mapping.mattermost_channel_url = (request.data.get("mattermost_channel_url") or "").strip() or None
+        if "github_repo_urls" in request.data:
+            raw = request.data.get("github_repo_urls") or []
+            if not isinstance(raw, list):
+                return Response({"error": "github_repo_urls must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+            # normalize: trimmed non-empty strings, de-duplicated, order preserved
+            seen, urls = set(), []
+            for u in raw:
+                s = str(u).strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    urls.append(s)
+            mapping.github_repo_urls = urls
         mapping.save()
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
 
@@ -421,6 +440,7 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             "title": mapping.title,
             "google_drive_url": mapping.google_drive_url,
             "mattermost_channel_url": mapping.mattermost_channel_url,
+            "github_repo_urls": mapping.github_repo_urls or [],
         }
 
 

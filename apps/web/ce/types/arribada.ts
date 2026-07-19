@@ -59,6 +59,7 @@ export type TProjectDocs = {
   title: string | null;
   google_drive_url: string | null;
   mattermost_channel_url: string | null;
+  github_repo_urls: string[];
 };
 
 export type TProjectStatus = "on_track" | "at_risk" | "off_track";

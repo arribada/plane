@@ -81,6 +81,10 @@ app.conf.beat_schedule = {
         "task": "plane.arribada.reminder_task.due_date_reminder",
         "schedule": crontab(hour=6, minute=0),  # UTC 06:00 daily
     },
+    "arribada-github-classification-warnings": {
+        "task": "plane.arribada.github_classification_task.github_classification_warnings",
+        "schedule": crontab(hour=6, minute=30),  # UTC 06:30 daily
+    },
 }
 
 

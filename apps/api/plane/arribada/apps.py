@@ -11,5 +11,6 @@ class ArribadaConfig(AppConfig):
     verbose_name = "Arribada extensions"
 
     def ready(self):
-        # register the Celery task (autodiscover only scans <app>/tasks.py)
+        # register the Celery tasks (autodiscover only scans <app>/tasks.py)
         from . import reminder_task  # noqa: F401
+        from . import github_classification_task  # noqa: F401

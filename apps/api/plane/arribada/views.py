@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import html
 import re
 from collections import defaultdict
 from datetime import date, timedelta
@@ -72,11 +73,18 @@ _GH_URL_RE = re.compile(r"https?://github\.com/[^\s\"'<>)]+", re.IGNORECASE)
 
 
 def _github_url(text):
-    """First github.com URL found in a blob of html/text, or None."""
+    """First github.com URL found in a blob of html/text, or None.
+
+    The source is HTML, so decode entities (&amp; -> &) and cut at any quote/bracket
+    that decoding reveals, otherwise a query-string URL leaks an `&amp;` into the link.
+    """
     if not text:
         return None
     m = _GH_URL_RE.search(str(text))
-    return m.group(0).rstrip(".,;") if m else None
+    if not m:
+        return None
+    url = re.split(r"[\"'<>\s]", html.unescape(m.group(0)))[0]
+    return url.rstrip(".,;") or None
 
 
 class PortfolioEndpoint(BaseAPIView):
@@ -759,6 +767,10 @@ class AdoptIssuesEndpoint(BaseAPIView):
         visible = _visible_projects(request, slug)
         adopted = []
         for sid in source_ids:
+            # A malformed request could list the parent itself as a source; adopting it
+            # would nest a self-copy and (worse) mark the intended container completed.
+            if parent and str(sid) == str(parent.id):
+                continue
             # Scope sources to the caller's own projects — both the copy (read) and the
             # completed-state write must stay inside projects they're a member of.
             src = Issue.issue_objects.filter(project__in=visible, id=sid).first()

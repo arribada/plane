@@ -37,14 +37,25 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
 
   useEffect(() => {
     if (!isOpen) return;
+    let ignore = false; // drop a response that resolves after this open was torn down
+    setItems([]); // clear the previous open's list so it can't flash on reopen
     setSelected(new Set());
     setError(null);
     setLoading(true);
     service
       .listGithubInbox(workspaceSlug)
-      .then((rows) => setItems(rows || []))
-      .catch(() => setError("Couldn't load the GitHub inbox."))
-      .finally(() => setLoading(false));
+      .then((rows) => {
+        if (!ignore) setItems(rows || []);
+      })
+      .catch(() => {
+        if (!ignore) setError("Couldn't load the GitHub inbox.");
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [isOpen, workspaceSlug, service]);
 
   if (!isOpen) return null;

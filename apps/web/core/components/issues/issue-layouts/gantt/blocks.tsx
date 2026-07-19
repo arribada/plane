@@ -16,6 +16,7 @@ import { SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
 // hooks
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useIssues } from "@/hooks/store/use-issues";
+import { useLabel } from "@/hooks/store/use-label";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
@@ -25,6 +26,7 @@ import { usePlatformOS } from "@/hooks/use-platform-os";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // local imports
+import { ganttBarColor, ganttDisplay } from "@/plane-web/store/gantt-display";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
 import type { GanttStoreType } from "./base-gantt-root";
@@ -41,6 +43,7 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const workspaceSlug = routerWorkspaceSlug?.toString();
   // store hooks
   const { getProjectStates } = useProjectState();
+  const { getLabelById } = useLabel();
   const {
     issue: { getIssueById },
   } = useIssueDetail();
@@ -54,6 +57,9 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
     issueDetails && getProjectStates(issueDetails?.project_id)?.find((state) => state?.id == issueDetails?.state_id);
 
   const { blockStyle } = getBlockViewDetails(issueDetails, stateDetails?.color ?? "");
+  // user-selected "colour by" (state keeps the default); overrides just the fill.
+  const colorOverride = ganttBarColor(ganttDisplay.colorBy, issueDetails, (id) => getLabelById(id)?.color);
+  const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
 
@@ -67,7 +73,7 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
           <div
             id={`issue-${issueId}`}
             className="space-between relative flex h-full w-full cursor-pointer items-center rounded-sm"
-            style={blockStyle}
+            style={style}
             onClick={handleIssuePeekOverview}
           >
             <div className="absolute top-0 left-0 h-full w-full bg-surface-1/50" />

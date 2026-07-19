@@ -17,6 +17,7 @@ import { renderFormattedPayloadDate } from "@plane/utils";
 // components
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
+import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
 import { IssueGanttSidebar } from "@/components/gantt-chart/sidebar/issues/sidebar";
 // hooks
 import { useIssues } from "@/hooks/store/use-issues";
@@ -127,7 +128,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   return (
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
-        <div className="h-full w-full">
+        <div className="relative h-full w-full">
+          <div className="absolute right-3 top-2.5 z-20">
+            <GanttColorBy />
+          </div>
           <GanttChartRoot
             border={false}
             title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}

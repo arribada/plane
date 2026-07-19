@@ -12,12 +12,21 @@ import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
 
 const R = 6; // corner radius
 const HEAD = 6; // arrowhead half-size
+const PARENT_COLOR = "#94a3b8"; // muted slate — hierarchy links, distinct from the coloured dependency arrows
+
+// Left-side bracket connecting a parent bar's start to a child bar's start (hierarchy,
+// not a temporal dependency), so it reads as "belongs to" without cluttering the arrows.
+function parentElbow(x1: number, y1: number, x2: number, y2: number): string {
+  const rail = Math.max(4, Math.min(x1, x2) - 10);
+  return `M ${x1} ${y1} H ${rail} V ${y2} H ${x2}`;
+}
 
 // Arrow points predecessor -> successor. blocked_by is drawn reversed.
 const COLOR: Record<string, string> = {
@@ -50,6 +59,9 @@ function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
 export const TimelineDependencyPaths = observer(function TimelineDependencyPaths(_props: { isEpic?: boolean }) {
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
+  const {
+    issue: { getIssueById },
+  } = useIssueDetail();
   const service = useMemo(() => new ArribadaService(), []);
   const [edges, setEdges] = useState<TIssueRelationEdge[]>([]);
   const [critical, setCritical] = useState<Set<string>>(new Set());
@@ -84,10 +96,28 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   // Only the per-project issue gantt draws arrows; the portfolio has no projectId.
   if (!projectId || !store.currentViewData) return null;
   const blockIds = store.blockIds ?? [];
-  if (!blockIds.length || !edges.length) return null;
+  if (!blockIds.length) return null;
 
   const indexById = new Map<string, number>(blockIds.map((id, i): [string, number] => [id, i]));
   const active = store.activeBlockId;
+
+  // parent -> child hierarchy connectors (both must be visible + dated to have bars)
+  const parentPaths = blockIds
+    .map((childId, ci) => {
+      const parentId = getIssueById(childId)?.parent_id;
+      if (!parentId) return null;
+      const pi = indexById.get(parentId);
+      if (pi === undefined) return null;
+      const child = store.getBlockById(childId);
+      const parent = store.getBlockById(parentId);
+      if (!child?.position || !parent?.position) return null;
+      const x1 = parent.position.marginLeft;
+      const y1 = pi * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+      const x2 = child.position.marginLeft;
+      const y2 = ci * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+      return { key: `pc-${parentId}-${childId}`, d: parentElbow(x1, y1, x2, y2), cx: x2, cy: y2, from: parentId, to: childId };
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null);
 
   const paths = edges
     .map((rel) => {
@@ -112,7 +142,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
 
-  if (!paths.length) return null;
+  if (!paths.length && !parentPaths.length) return null;
 
   return (
     <svg
@@ -141,6 +171,17 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
           </marker>
         ))}
       </defs>
+      {/* parent -> child hierarchy: muted dashed bracket + a small ring on the child */}
+      {parentPaths.map((p) => {
+        const related = active && (p.from === active || p.to === active);
+        const dimmed = active && !related;
+        return (
+          <g key={p.key} opacity={dimmed ? 0.1 : related ? 0.9 : 0.45}>
+            <path d={p.d} fill="none" stroke={PARENT_COLOR} strokeWidth={related ? 1.5 : 1} strokeDasharray="2 2" />
+            <circle cx={p.cx} cy={p.cy} r={2.5} fill="none" stroke={PARENT_COLOR} strokeWidth={1} />
+          </g>
+        );
+      })}
       {paths.map((p) => {
         const related = active && (p.from === active || p.to === active);
         const dimmed = active && !related;

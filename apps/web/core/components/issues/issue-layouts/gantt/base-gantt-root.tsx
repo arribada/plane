@@ -18,6 +18,8 @@ import { renderFormattedPayloadDate } from "@plane/utils";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
+import { GanttUndoButton } from "@/plane-web/components/gantt-chart/undo-button";
+import { ganttUndo } from "@/plane-web/store/gantt-undo";
 import { IssueGanttSidebar } from "@/components/gantt-chart/sidebar/issues/sidebar";
 // hooks
 import { useIssues } from "@/hooks/store/use-issues";
@@ -85,11 +87,47 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const updateIssueBlockStructure = async (issue: TIssue, data: IBlockUpdateData) => {
     if (!workspaceSlug) return;
 
+    // record the pre-change dates so Ctrl+Z / Undo can revert a bar drag or resize
+    if (data.start_date !== undefined || data.target_date !== undefined) {
+      ganttUndo.push({
+        projectId: issue.project_id,
+        issueId: issue.id,
+        prev: { start_date: issue.start_date, target_date: issue.target_date },
+      });
+    }
+
     const payload: any = { ...data };
     if (data.sort_order) payload.sort_order = data.sort_order.newSortOrder;
 
     updateIssue && (await updateIssue(issue.project_id, issue.id, payload));
   };
+
+  // revert the last recorded bar date edit
+  const handleGanttUndo = useCallback(async () => {
+    const entry = ganttUndo.pop();
+    if (!entry || !updateIssue) return;
+    await updateIssue(entry.projectId, entry.issueId, entry.prev);
+  }, [updateIssue]);
+
+  // Ctrl/Cmd+Z reverts the last bar date edit (ignored while typing in a field)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z")) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.isContentEditable) return;
+      if (!ganttUndo.canUndo) return;
+      e.preventDefault();
+      void handleGanttUndo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleGanttUndo]);
+
+  // undo history is scoped to the current project
+  useEffect(() => {
+    ganttUndo.clear();
+    return () => ganttUndo.clear();
+  }, [projectId]);
 
   const isAllowed = allowPermissions([EUserPermissions.ADMIN, EUserPermissions.MEMBER], EUserPermissionsLevel.PROJECT);
   const updateBlockDates = useCallback(
@@ -129,8 +167,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
         <div className="relative h-full w-full">
-          <div className="absolute left-3 top-1.5 z-20">
+          <div className="absolute left-3 top-1.5 z-20 flex items-center gap-2">
             <GanttColorBy />
+            <GanttUndoButton onUndo={handleGanttUndo} />
           </div>
           <GanttChartRoot
             border={false}

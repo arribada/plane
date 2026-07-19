@@ -12,22 +12,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { BookOpen, Check, ExternalLink, FolderOpen, Info, Pencil, Plus, X } from "lucide-react";
+import { BookOpen, Check, ExternalLink, FolderOpen, Info, MessageSquare, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectDocs } from "@/plane-web/types/arribada";
 
 const AFFINE_BASE = "https://docs.arribada.org";
-const EMPTY: TProjectDocs = { doc_id: null, workspace_id: null, title: null, google_drive_url: null };
+const EMPTY: TProjectDocs = { doc_id: null, workspace_id: null, title: null, google_drive_url: null, mattermost_channel_url: null };
 
 export const AffineWikiPanel = observer(function AffineWikiPanel() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
   const [docs, setDocs] = useState<TProjectDocs>(EMPTY);
-  const [editing, setEditing] = useState<"affine" | "drive" | null>(null);
+  const [editing, setEditing] = useState<"affine" | "drive" | "chat" | null>(null);
   const [draftDoc, setDraftDoc] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDrive, setDraftDrive] = useState("");
+  const [draftChat, setDraftChat] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     };
   }, [workspaceSlug, projectId, service]);
 
-  const persist = async (data: { doc_id?: string; title?: string; google_drive_url?: string }) => {
+  const persist = async (data: { doc_id?: string; title?: string; google_drive_url?: string; mattermost_channel_url?: string }) => {
     if (!workspaceSlug || !projectId) return;
     setSaving(true);
     try {
@@ -59,6 +60,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
 
   const affineLink = docs.doc_id && docs.workspace_id ? `${AFFINE_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}` : null;
   const driveLink = docs.google_drive_url;
+  const chatLink = docs.mattermost_channel_url;
 
   const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent-strong";
   const editBtn = "flex items-center gap-1 rounded border border-subtle px-2 py-1 text-12 text-secondary hover:bg-layer-2";
@@ -72,7 +74,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <span className="font-medium text-primary">Project documentation</span>
           <span className="text-secondary">
             {" "}
-            — kept in AFFiNE (wiki) and Google Drive so the whole team has access. Add any missing link below.
+            — the project's wiki (AFFiNE), files (Google Drive) and notifications channel (Mattermost). Add any missing link below.
           </span>
         </div>
       </div>
@@ -153,6 +155,45 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           >
             {driveLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
             {driveLink ? "Change" : "Add link"}
+          </button>
+        )}
+      </div>
+
+      {/* Mattermost channel row */}
+      <div className="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-2.5">
+        <MessageSquare className="size-4 flex-shrink-0 text-secondary" />
+        <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">Chat channel</span>
+        {chatLink ? (
+          <a href={chatLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline">
+            Open the Mattermost channel
+            <ExternalLink className="size-3.5 flex-shrink-0" />
+          </a>
+        ) : (
+          <span className="text-13 text-tertiary">Not linked yet — paste the project's Mattermost channel link for notifications.</span>
+        )}
+        <div className="flex-grow" />
+        {editing === "chat" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={draftChat} onChange={(e) => setDraftChat(e.target.value)} placeholder="https://chat.arribada.org/arribada/channels/…" className={cn(input, "w-64")} />
+            <button type="button" onClick={() => persist({ mattermost_channel_url: draftChat.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+              <Check className="size-3.5" />
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button type="button" onClick={() => setEditing(null)} className="text-secondary hover:text-primary">
+              <X className="size-4" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setDraftChat(docs.mattermost_channel_url ?? "");
+              setEditing("chat");
+            }}
+            className={editBtn}
+          >
+            {chatLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
+            {chatLink ? "Change" : "Add link"}
           </button>
         )}
       </div>

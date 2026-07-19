@@ -115,7 +115,7 @@ export class ArribadaService extends APIService {
   async setAffineDoc(
     workspaceSlug: string,
     projectId: string,
-    data: { doc_id?: string; title?: string; google_drive_url?: string }
+    data: { doc_id?: string; title?: string; google_drive_url?: string; mattermost_channel_url?: string }
   ): Promise<TProjectDocs> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`, data)
       .then((response) => response?.data)

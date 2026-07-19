@@ -86,6 +86,8 @@ class ProjectAffineDoc(models.Model):
     # A Google Drive folder/file URL where the project's documents live — shown as a
     # reference link on the Pages view so the whole team has access, next to AFFiNE.
     google_drive_url = models.CharField(max_length=1024, null=True, blank=True)
+    # The Mattermost channel this project's notifications go to (link on the Pages view).
+    mattermost_channel_url = models.CharField(max_length=1024, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

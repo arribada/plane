@@ -387,7 +387,7 @@ class ProjectAffineDocEndpoint(BaseAPIView):
         mapping = ProjectAffineDoc.objects.filter(project_id=project_id).first()
         if not mapping:
             return Response(
-                {"doc_id": None, "workspace_id": None, "title": None, "google_drive_url": None},
+                {"doc_id": None, "workspace_id": None, "title": None, "google_drive_url": None, "mattermost_channel_url": None},
                 status=status.HTTP_200_OK,
             )
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
@@ -408,6 +408,8 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             mapping.title = (request.data.get("title") or "").strip() or None
         if "google_drive_url" in request.data:
             mapping.google_drive_url = (request.data.get("google_drive_url") or "").strip() or None
+        if "mattermost_channel_url" in request.data:
+            mapping.mattermost_channel_url = (request.data.get("mattermost_channel_url") or "").strip() or None
         mapping.save()
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
 
@@ -418,6 +420,7 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             "workspace_id": mapping.workspace_id,
             "title": mapping.title,
             "google_drive_url": mapping.google_drive_url,
+            "mattermost_channel_url": mapping.mattermost_channel_url,
         }
 
 

@@ -7,8 +7,9 @@
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, Filter, Flag, Folder, FolderKanban, Route, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Download, Filter, Flag, Folder, FolderKanban, Route, Wand2, X } from "lucide-react";
 import { cn } from "@plane/utils";
+import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
@@ -30,6 +31,7 @@ const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
 
 export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const { workspaceSlug } = useParams();
+  const router = useAppRouter();
   const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
   const [projectsOpen, setProjectsOpen] = useState(false);
@@ -102,6 +104,22 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
   return (
     <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-subtle px-4 py-2 text-13">
+      {/* folder-focus chip: portfolio scoped to a single folder */}
+      {portfolio.focusFolderName && (
+        <span className="flex items-center gap-1.5 rounded bg-accent-primary/10 px-2 py-1 font-medium text-accent-primary">
+          <Folder className="size-3.5" />
+          {portfolio.focusFolderName}
+          <button
+            type="button"
+            title="Show all projects"
+            onClick={() => workspaceSlug && router.push(`/${workspaceSlug}/portfolio`)}
+            className="ml-0.5 rounded hover:bg-accent-primary/20"
+          >
+            <X className="size-3.5" />
+          </button>
+        </span>
+      )}
+
       {/* project selector */}
       <div className="relative">
         <button

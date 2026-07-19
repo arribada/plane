@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, FolderPlus, Folder, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderPlus, Folder, GanttChartSquare, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { useProject } from "@/hooks/store/use-project";
 import { useAppRouter } from "@/hooks/use-app-router";
@@ -127,7 +127,15 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
                 <span className="text-11 text-placeholder">{f.project_ids.length}</span>
               </button>
               <div className="relative flex items-center opacity-0 group-hover:opacity-100">
-                <button type="button" onClick={() => setAddingTo(addingTo === f.id ? null : f.id)} title="Add project" className="text-placeholder hover:text-secondary">
+                <button
+                  type="button"
+                  onClick={() => ws && router.push(`/${ws}/portfolio?folder=${f.id}`)}
+                  title="Open this folder in the portfolio timeline"
+                  className="text-placeholder hover:text-secondary"
+                >
+                  <GanttChartSquare className="size-3.5" />
+                </button>
+                <button type="button" onClick={() => setAddingTo(addingTo === f.id ? null : f.id)} title="Add project" className="ml-1 text-placeholder hover:text-secondary">
                   <Plus className="size-3.5" />
                 </button>
                 <button type="button" onClick={() => rename(f)} title="Rename" className="ml-1 text-placeholder hover:text-secondary">

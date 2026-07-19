@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle, Folder, GripVertical, Signal, TrendingDown, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, Folder, GanttChartSquare, GripVertical, Signal, TrendingDown, TrendingUp } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
@@ -60,16 +60,28 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
       }}
     >
       {folder ? (
-        <button
-          type="button"
-          onClick={() => portfolio.toggleFolderCollapse(blockId)}
-          className="flex h-full w-full items-center gap-1.5 bg-layer-2/60 px-1 text-left"
-        >
-          {folder.collapsed ? <ChevronRight className="size-4 text-secondary" /> : <ChevronDown className="size-4 text-secondary" />}
-          <Folder className="size-3.5 flex-shrink-0 text-secondary" />
-          <span className="truncate text-13 font-semibold uppercase tracking-wide text-primary">{folder.name}</span>
-          <span className="rounded bg-layer-2 px-1.5 text-11 text-secondary">{folder.projectCount}</span>
-        </button>
+        <div className="flex h-full w-full items-center gap-1.5 bg-layer-2/60 px-1">
+          <button
+            type="button"
+            onClick={() => portfolio.toggleFolderCollapse(blockId)}
+            className="flex flex-grow items-center gap-1.5 text-left"
+          >
+            {folder.collapsed ? <ChevronRight className="size-4 text-secondary" /> : <ChevronDown className="size-4 text-secondary" />}
+            <Folder className="size-3.5 flex-shrink-0 text-secondary" />
+            <span className="truncate text-13 font-semibold uppercase tracking-wide text-primary">{folder.name}</span>
+            <span className="rounded bg-layer-2 px-1.5 text-11 text-secondary">{folder.projectCount}</span>
+          </button>
+          {blockId !== "__folder__:none" && (
+            <button
+              type="button"
+              title="Open only this folder"
+              onClick={() => workspaceSlug && router.push(`/${workspaceSlug}/portfolio?folder=${blockId.slice("__folder__:".length)}`)}
+              className="mr-1 flex-shrink-0 rounded p-0.5 text-tertiary opacity-0 hover:bg-layer-1 hover:text-secondary group-hover:opacity-100"
+            >
+              <GanttChartSquare className="size-3.5" />
+            </button>
+          )}
+        </div>
       ) : isProject ? (
         <>
           <GripVertical

@@ -6,7 +6,7 @@
 
 import { useEffect } from "react";
 import { observer } from "mobx-react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { GanttChartRoot } from "@/components/gantt-chart";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
@@ -22,6 +22,8 @@ import { PortfolioToolbar } from "./toolbar";
 // draws the flat list it's given, so expand/collapse needs no core changes.
 export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   const { workspaceSlug } = useParams();
+  const searchParams = useSearchParams();
+  const folderParam = searchParams?.get("folder") ?? null;
   const portfolio = usePortfolio();
   const { data: currentUser } = useUser();
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.PROJECT);
@@ -37,6 +39,11 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
 
   // reset the critical-path toggle on leave, so its singleton state can't linger
   useEffect(() => () => portfolio.setShowCriticalPath("", false), [portfolio]);
+
+  // folder-scoped portfolio: ?folder=<id> shows only that folder's projects
+  useEffect(() => {
+    portfolio.setFocusFolder(folderParam);
+  }, [folderParam, portfolio]);
 
   useEffect(() => {
     if (workspaceSlug) portfolio.fetchPortfolio(workspaceSlug.toString());

@@ -55,6 +55,9 @@ export interface IPortfolioStore {
   moveProject: (dragId: string, dropId: string) => void;
   setGroupByFolder: (value: boolean) => void;
   toggleFolderCollapse: (headerId: string) => void;
+  focusFolderId: string | null;
+  focusFolderName: string | null;
+  setFocusFolder: (folderId: string | null) => void;
   hasActiveFilters: boolean;
   togglePriorityFilter: (priority: string) => void;
   setAssignedToMeOnly: (value: boolean) => void;
@@ -84,6 +87,7 @@ export class PortfolioStore implements IPortfolioStore {
   folders: TFolder[] = [];
   groupByFolder = false;
   collapsedFolderIds: Set<string> = new Set();
+  focusFolderId: string | null = null; // when set, the portfolio shows only this folder's projects
   // item-level filters (apply to loaded task rows)
   priorityFilter: Set<string> = new Set();
   assignedToMeOnly = false;
@@ -110,6 +114,7 @@ export class PortfolioStore implements IPortfolioStore {
       folders: observable,
       groupByFolder: observable.ref,
       collapsedFolderIds: observable,
+      focusFolderId: observable.ref,
       priorityFilter: observable,
       assignedToMeOnly: observable.ref,
       meUserId: observable.ref,
@@ -117,7 +122,9 @@ export class PortfolioStore implements IPortfolioStore {
       criticalIssueIds: observable,
       crossEdges: observable,
       allProjects: computed,
+      scopedProjectIds: computed,
       sortedProjectIds: computed,
+      focusFolderName: computed,
       folderGroups: computed,
       ganttBlockIds: computed,
       totalUndatedCount: computed,
@@ -130,6 +137,7 @@ export class PortfolioStore implements IPortfolioStore {
       moveProject: action,
       setGroupByFolder: action,
       toggleFolderCollapse: action,
+      setFocusFolder: action,
       togglePriorityFilter: action,
       setAssignedToMeOnly: action,
       setMeUserId: action,
@@ -168,10 +176,24 @@ export class PortfolioStore implements IPortfolioStore {
     return p.target_date ?? p.derived_target_date;
   }
 
+  // The base project set the timeline shows: the user's selection, or — when a
+  // folder is focused — only that folder's projects (a folder-scoped portfolio).
+  get scopedProjectIds(): string[] {
+    if (!this.focusFolderId) return this.displayedProjectIds;
+    const folder = this.folders.find((f) => f.id === this.focusFolderId);
+    if (!folder) return this.displayedProjectIds;
+    return folder.project_ids.filter((id) => !!this.projectMap[id]);
+  }
+
+  get focusFolderName(): string | null {
+    if (!this.focusFolderId) return null;
+    return this.folders.find((f) => f.id === this.focusFolderId)?.name ?? null;
+  }
+
   get sortedProjectIds(): string[] {
     // manual = the drag order the user set (displayedProjectIds order, untouched)
-    if (this.sortBy === "manual") return [...this.displayedProjectIds];
-    const ids = [...this.displayedProjectIds];
+    if (this.sortBy === "manual") return this.scopedProjectIds.filter((id) => !!this.projectMap[id]);
+    const ids = [...this.scopedProjectIds];
     const p = (id: string) => this.projectMap[id];
     const cmpDate = (a: string | null, b: string | null) => {
       if (a && b) return a.localeCompare(b);
@@ -260,7 +282,7 @@ export class PortfolioStore implements IPortfolioStore {
   }
 
   get totalUndatedCount(): number {
-    return this.displayedProjectIds.reduce((sum, id) => sum + (this.projectMap[id]?.undated_item_count ?? 0), 0);
+    return this.scopedProjectIds.reduce((sum, id) => sum + (this.projectMap[id]?.undated_item_count ?? 0), 0);
   }
 
   isProjectRow = computedFn((id: string): boolean => !!this.projectMap[id]);
@@ -390,6 +412,13 @@ export class PortfolioStore implements IPortfolioStore {
     if (next.has(headerId)) next.delete(headerId);
     else next.add(headerId);
     this.collapsedFolderIds = next;
+  };
+
+  // Focus the portfolio on a single folder (show only its projects), or clear (null).
+  setFocusFolder = (folderId: string | null): void => {
+    this.focusFolderId = folderId;
+    // in single-folder view the swimlane grouping is redundant
+    if (folderId) this.groupByFolder = false;
   };
 
   togglePriorityFilter = (priority: string): void => {

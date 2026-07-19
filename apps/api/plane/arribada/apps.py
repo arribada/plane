@@ -14,3 +14,4 @@ class ArribadaConfig(AppConfig):
         # register the Celery tasks (autodiscover only scans <app>/tasks.py)
         from . import reminder_task  # noqa: F401
         from . import github_classification_task  # noqa: F401
+        from . import github_sync_task  # noqa: F401

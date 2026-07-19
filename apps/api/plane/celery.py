@@ -85,6 +85,10 @@ app.conf.beat_schedule = {
         "task": "plane.arribada.github_classification_task.github_classification_warnings",
         "schedule": crontab(hour=6, minute=30),  # UTC 06:30 daily
     },
+    "arribada-github-plane-sync": {
+        "task": "plane.arribada.github_sync_task.github_plane_sync",
+        "schedule": crontab(minute="*/30"),  # every 30 min — no-op until GITHUB_PAT is set
+    },
 }
 
 

@@ -3,6 +3,7 @@
 # See the LICENSE file for details.
 
 import html
+import os
 import re
 from collections import defaultdict
 from datetime import date, timedelta
@@ -11,6 +12,7 @@ from django.db import transaction
 from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
@@ -836,6 +838,69 @@ class GithubInboxEndpoint(BaseAPIView):
             for r in rows
         ]
         return Response(items, status=status.HTTP_200_OK)
+
+
+class HubProjectsEndpoint(BaseAPIView):
+    """All non-archived projects with task counts, progress, and the links defined
+    in each project's docs note (AFFiNE / Drive / Mattermost / GitHub) — powers the
+    dashboard Team-Hub project directory. Server-to-server: authed by the shared
+    HUB_LINKS_SECRET header, not a user session (the caller is the dashboard, which
+    has no Plane session)."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    AFFINE_BASE = "https://docs.arribada.org"
+    PLANE_BASE = "https://plane.arribada.org"
+
+    def get(self, request, slug):
+        secret = os.environ.get("HUB_LINKS_SECRET")
+        if not secret:
+            return Response({"error": "not_configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if request.headers.get("X-Hub-Secret") != secret:
+            return Response({"error": "unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        projects = list(
+            Project.objects.filter(workspace__slug=slug, archived_at__isnull=True).values("id", "name", "identifier")
+        )
+        pids = [p["id"] for p in projects]
+        agg = {
+            r["project_id"]: r
+            for r in Issue.issue_objects.filter(project_id__in=pids)
+            .values("project_id")
+            .annotate(total=Count("id"), completed=Count("id", filter=Q(state__group="completed")))
+        }
+        docs = {d.project_id: d for d in ProjectAffineDoc.objects.filter(project_id__in=pids)}
+
+        out = []
+        for p in projects:
+            pid = p["id"]
+            a = agg.get(pid, {})
+            total = a.get("total", 0)
+            completed = a.get("completed", 0)
+            d = docs.get(pid)
+            affine_url = (
+                f"{self.AFFINE_BASE}/workspace/{d.workspace_id}/{d.doc_id}"
+                if d and d.doc_id and d.workspace_id
+                else None
+            )
+            out.append(
+                {
+                    "project_id": str(pid),
+                    "name": p["name"],
+                    "identifier": p["identifier"],
+                    "plane_url": f"{self.PLANE_BASE}/{slug}/projects/{pid}/issues/",
+                    "total_issues": total,
+                    "completed_issues": completed,
+                    "progress": round(100 * completed / total) if total else 0,
+                    "affine_url": affine_url,
+                    "google_drive_url": (d.google_drive_url if d else None) or None,
+                    "mattermost_channel_url": (d.mattermost_channel_url if d else None) or None,
+                    "github_repo_urls": (d.github_repo_urls if d else []) or [],
+                }
+            )
+        out.sort(key=lambda x: (-x["total_issues"], x["name"].lower()))
+        return Response(out, status=status.HTTP_200_OK)
 
 
 class ProjectFoldersEndpoint(BaseAPIView):

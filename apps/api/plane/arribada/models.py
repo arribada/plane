@@ -67,6 +67,13 @@ class IssueBaseline(models.Model):
         return f"baseline {self.issue_id} [{self.start_date} → {self.target_date}]"
 
 
+# The Colanode workspace every project doc lives in. It used to default to the
+# AFFiNE workspace UUID, which no longer exists anywhere — a row created with it
+# produced a deep link into a workspace the wiki has never heard of. Every existing
+# row already carries this value; the default was the only place still stale.
+WIKI_WORKSPACE_ID = "01ky60b09cad2nyfk7c75e6555wc"
+
+
 class ProjectWikiDoc(models.Model):
     """Maps a Plane project to a doc in the self-hosted wiki (docs.arribada.org).
 
@@ -80,7 +87,7 @@ class ProjectWikiDoc(models.Model):
     project = models.OneToOneField(
         "db.Project", on_delete=models.CASCADE, related_name="arribada_wiki_doc"
     )
-    workspace_id = models.CharField(max_length=64, default="5b320010-0d8d-4ccc-b4f6-dbe339c42b4e")
+    workspace_id = models.CharField(max_length=64, default=WIKI_WORKSPACE_ID)
     doc_id = models.CharField(max_length=64, null=True, blank=True)
     title = models.CharField(max_length=512, null=True, blank=True)
     # A Google Drive folder/file URL where the project's documents live — shown as a

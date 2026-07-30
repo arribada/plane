@@ -122,6 +122,7 @@ export const PROJECT_ERROR_MESSAGES = {
 };
 
 export enum EProjectFeatureKey {
+  OVERVIEW = "overview",
   WORK_ITEMS = "work_items",
   CYCLES = "cycles",
   MODULES = "modules",

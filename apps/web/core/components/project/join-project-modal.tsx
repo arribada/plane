@@ -36,7 +36,7 @@ export function JoinProjectModal(props: TJoinProjectModalProps) {
 
     await joinProject(workspaceSlug, project.id)
       .then(() => {
-        router.push(`/${workspaceSlug}/projects/${project.id}/issues`);
+        router.push(`/${workspaceSlug}/projects/${project.id}/overview`);
         handleClose();
         return;
       })
@@ -62,7 +62,7 @@ export function JoinProjectModal(props: TJoinProjectModalProps) {
         <Button variant="secondary" size="lg" onClick={handleClose}>
           Cancel
         </Button>
-        <Button variant="primary" size="lg" tabIndex={1} type="submit" onClick={handleJoin} loading={isJoiningLoading}>
+        <Button variant="primary" size="lg" tabIndex={0} type="submit" onClick={handleJoin} loading={isJoiningLoading}>
           {isJoiningLoading ? "Joining..." : "Join Project"}
         </Button>
       </div>

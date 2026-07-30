@@ -34,6 +34,9 @@ import type { TProject } from "@/plane-web/types";
 // local imports
 import { SidebarProjectsListItem } from "./projects-list-item";
 
+// stable keys for the fixed-length loading skeleton (the rows carry no identity of their own)
+const PROJECTS_LOADER_KEYS = ["skeleton-1", "skeleton-2", "skeleton-3", "skeleton-4"];
+
 export const SidebarProjectsList = observer(function SidebarProjectsList() {
   // states
   const [isAllProjectsListOpen, setIsAllProjectsListOpen] = useState(true);
@@ -83,6 +86,9 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
     // updated_at is an ISO 8601 string at runtime (the store keeps the raw API
     // payload, no Date coercion); ISO strings sort chronologically as text.
     const updatedAt = (id: string) => getPartialProjectById(id)?.updated_at ?? "";
+    // Array#toSorted() is ES2023 and this app type-checks against lib ES2022; the spread above
+    // already gives us a fresh array, so sorting it in place leaves the store untouched.
+    // oxlint-disable-next-line unicorn/no-array-sort
     return [...joinedProjects].sort((a, b) => String(updatedAt(b)).localeCompare(String(updatedAt(a))));
   }, [autoSort, joinedProjects, getPartialProjectById]);
 
@@ -96,12 +102,13 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
     projectPreferences.showLimitedProjects && joinedProjects.length > projectPreferences.limitedProjectsCount;
 
   const handleCopyText = (projectId: string) => {
-    copyUrlToClipboard(`${workspaceSlug}/projects/${projectId}/issues`).then(() => {
+    copyUrlToClipboard(`${workspaceSlug}/projects/${projectId}/overview`).then(() => {
       setToast({
         type: TOAST_TYPE.SUCCESS,
         title: t("link_copied"),
         message: t("project_link_copied_to_clipboard"),
       });
+      return undefined;
     });
   };
 
@@ -269,8 +276,8 @@ export const SidebarProjectsList = observer(function SidebarProjectsList() {
             >
               {loader === "init-loader" && (
                 <Loader className="w-full space-y-1.5">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <Loader.Item key={index} height="28px" />
+                  {PROJECTS_LOADER_KEYS.map((loaderKey) => (
+                    <Loader.Item key={loaderKey} height="28px" />
                   ))}
                 </Loader>
               )}

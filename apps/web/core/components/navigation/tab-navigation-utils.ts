@@ -12,7 +12,8 @@ export type TTabPreferences = {
 
 // Constants
 export const TAB_PREFS_KEY = "plane_tab_prefs";
-export const DEFAULT_TAB_KEY = "work_items";
+// Opening a project lands on its Overview, not on the raw work-item list.
+export const DEFAULT_TAB_KEY = "overview";
 
 /**
  * Get tab preferences for a specific project from localStorage
@@ -112,6 +113,6 @@ export const getValidatedDefaultTab = (projectId: string, availableTabKeys: stri
     return defaultTab;
   }
 
-  // Fall back to work_items
+  // Fall back to the default tab
   return DEFAULT_TAB_KEY;
 };

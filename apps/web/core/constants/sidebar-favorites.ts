@@ -27,7 +27,7 @@ export const FAVORITE_ITEM_LINKS: {
 } = {
   project: {
     itemLevel: "project",
-    getLink: () => `issues`,
+    getLink: () => `overview`,
   },
   cycle: {
     itemLevel: "project",

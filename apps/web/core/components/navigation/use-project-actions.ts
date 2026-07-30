@@ -24,7 +24,7 @@ export const useProjectActions = ({ workspaceSlug, projectId, activeItem }: UseP
   }, []);
 
   const handleCopyText = useCallback(async () => {
-    const pathToCopy = activeItem?.href ?? `/${workspaceSlug}/projects/${projectId}/issues`;
+    const pathToCopy = activeItem?.href ?? `/${workspaceSlug}/projects/${projectId}/overview`;
 
     try {
       await copyUrlToClipboard(pathToCopy);

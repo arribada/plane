@@ -10,7 +10,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, FolderPlus, Folder, GanttChartSquare, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Folder,
+  GanttChartSquare,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { cn } from "@plane/utils";
 import { useProject } from "@/hooks/store/use-project";
 import { useAppRouter } from "@/hooks/use-app-router";
@@ -90,8 +100,13 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
   return (
     <div className="flex flex-col">
       <div className="group flex items-center justify-between px-2 py-1">
-        <span className="text-11 font-semibold uppercase tracking-wide text-placeholder">Folders</span>
-        <button type="button" onClick={createFolder} title="New folder" className="text-placeholder hover:text-secondary">
+        <span className="text-11 font-semibold tracking-wide text-placeholder uppercase">Folders</span>
+        <button
+          type="button"
+          onClick={createFolder}
+          title="New folder"
+          className="text-placeholder hover:text-secondary"
+        >
           <FolderPlus className="size-3.5" />
         </button>
       </div>
@@ -135,20 +150,35 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
                 >
                   <GanttChartSquare className="size-3.5" />
                 </button>
-                <button type="button" onClick={() => setAddingTo(addingTo === f.id ? null : f.id)} title="Add project" className="ml-1 text-placeholder hover:text-secondary">
+                <button
+                  type="button"
+                  onClick={() => setAddingTo(addingTo === f.id ? null : f.id)}
+                  title="Add project"
+                  className="ml-1 text-placeholder hover:text-secondary"
+                >
                   <Plus className="size-3.5" />
                 </button>
-                <button type="button" onClick={() => rename(f)} title="Rename" className="ml-1 text-placeholder hover:text-secondary">
+                <button
+                  type="button"
+                  onClick={() => rename(f)}
+                  title="Rename"
+                  className="ml-1 text-placeholder hover:text-secondary"
+                >
                   <MoreHorizontal className="size-3.5" />
                 </button>
-                <button type="button" onClick={() => del(f)} title="Delete folder" className="ml-1 text-placeholder hover:text-danger-primary">
+                <button
+                  type="button"
+                  onClick={() => del(f)}
+                  title="Delete folder"
+                  className="ml-1 text-placeholder hover:text-danger-primary"
+                >
                   <Trash2 className="size-3.5" />
                 </button>
               </div>
             </div>
 
             {addingTo === f.id && (
-              <div className="ml-6 mb-1 max-h-48 overflow-y-auto rounded border border-subtle bg-layer-1 p-1">
+              <div className="mb-1 ml-6 max-h-48 overflow-y-auto rounded border border-subtle bg-layer-1 p-1">
                 {unassigned.length === 0 ? (
                   <div className="px-2 py-1 text-11 text-placeholder">All projects are already in a folder.</div>
                 ) : (
@@ -174,11 +204,11 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
                   onDragStart={() => {
                     dragProjectId = pid;
                   }}
-                  className="group/item flex cursor-grab items-center gap-1 rounded py-0.5 pl-7 pr-2 hover:bg-layer-transparent-hover"
+                  className="group/item flex cursor-grab items-center gap-1 rounded py-0.5 pr-2 pl-7 hover:bg-layer-transparent-hover"
                 >
                   <button
                     type="button"
-                    onClick={() => router.push(`/${ws}/projects/${pid}/issues/`)}
+                    onClick={() => router.push(`/${ws}/projects/${pid}/overview/`)}
                     className={cn("flex-grow truncate text-left text-13 text-secondary hover:text-primary")}
                   >
                     {getProjectById(pid)?.name ?? pid}
@@ -187,7 +217,7 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
                     type="button"
                     onClick={() => assign(pid, null)}
                     title="Remove from folder"
-                    className="text-placeholder opacity-0 hover:text-danger-primary group-hover/item:opacity-100"
+                    className="text-placeholder opacity-0 group-hover/item:opacity-100 hover:text-danger-primary"
                   >
                     <X className="size-3" />
                   </button>

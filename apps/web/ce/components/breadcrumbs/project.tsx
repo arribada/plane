@@ -22,6 +22,13 @@ type TProjectBreadcrumbProps = {
   handleOnClick?: () => void;
 };
 
+// helpers
+const renderIcon = (projectDetails: TProject) => (
+  <span className="grid size-4 flex-shrink-0 place-items-center">
+    <Logo logo={projectDetails.logo_props} size={14} />
+  </span>
+);
+
 export const ProjectBreadcrumb = observer(function ProjectBreadcrumb(props: TProjectBreadcrumbProps) {
   const { workspaceSlug, projectId, handleOnClick } = props;
   // router
@@ -36,10 +43,10 @@ export const ProjectBreadcrumb = observer(function ProjectBreadcrumb(props: TPro
 
   // derived values
   const switcherOptions = joinedProjectIds
-    .map((projectId) => {
-      const project = getPartialProjectById(projectId);
+    .map((joinedProjectId) => {
+      const project = getPartialProjectById(joinedProjectId);
       return {
-        value: projectId,
+        value: joinedProjectId,
         query: project?.name,
         content: (
           <SwitcherLabel
@@ -53,13 +60,6 @@ export const ProjectBreadcrumb = observer(function ProjectBreadcrumb(props: TPro
     })
     .filter((option) => option !== undefined) as ICustomSearchSelectOption[];
 
-  // helpers
-  const renderIcon = (projectDetails: TProject) => (
-    <span className="grid size-4 flex-shrink-0 place-items-center">
-      <Logo logo={projectDetails.logo_props} size={14} />
-    </span>
-  );
-
   return (
     <>
       <Breadcrumbs.Item
@@ -68,13 +68,13 @@ export const ProjectBreadcrumb = observer(function ProjectBreadcrumb(props: TPro
             selectedItem={currentProjectDetails.id}
             navigationItems={switcherOptions}
             onChange={(value: string) => {
-              router.push(`/${workspaceSlug}/projects/${value}/issues`);
+              router.push(`/${workspaceSlug}/projects/${value}/overview`);
             }}
             title={currentProjectDetails?.name}
             icon={renderIcon(currentProjectDetails)}
             handleOnClick={() => {
               if (handleOnClick) handleOnClick();
-              else router.push(`/${workspaceSlug}/projects/${currentProjectDetails.id}/issues/`);
+              else router.push(`/${workspaceSlug}/projects/${currentProjectDetails.id}/overview/`);
             }}
             shouldTruncate
           />

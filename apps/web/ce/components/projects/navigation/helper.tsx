@@ -4,6 +4,7 @@
  * See the LICENSE file for details.
  */
 
+import { LayoutDashboard } from "lucide-react";
 // plane imports
 import { EUserPermissions, EProjectFeatureKey } from "@plane/constants";
 import { CycleIcon, IntakeIcon, ModuleIcon, PageIcon, ViewsIcon, WorkItemsIcon } from "@plane/propel/icons";
@@ -21,6 +22,16 @@ export const getProjectFeatureNavigation = (
     inbox_view: boolean;
   }
 ): TNavigationItem[] => [
+  {
+    i18n_key: "sidebar.overview",
+    key: EProjectFeatureKey.OVERVIEW,
+    name: "Overview",
+    href: `/${workspaceSlug}/projects/${projectId}/overview`,
+    icon: LayoutDashboard,
+    access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+    shouldRender: true,
+    sortOrder: 0,
+  },
   {
     i18n_key: "sidebar.work_items",
     key: EProjectFeatureKey.WORK_ITEMS,

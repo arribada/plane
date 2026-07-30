@@ -46,7 +46,7 @@ export const ProjectSettingsSidebarHeader = observer(function ProjectSettingsSid
           variant="ghost"
           size="base"
           icon={ArrowLeft}
-          onClick={() => router.push(`/${currentWorkspace?.slug}/projects/${projectId}/issues/`)}
+          onClick={() => router.push(`/${currentWorkspace?.slug}/projects/${projectId}/overview/`)}
         />
         <p>Project settings</p>
       </div>

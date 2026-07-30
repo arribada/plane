@@ -20,6 +20,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 
 type TProps = {
   activeTab: "issues" | "cycles" | "modules";
@@ -93,6 +94,7 @@ export const ProjectArchivesHeader = observer(function ProjectArchivesHeader(pro
               />
             )}
           </Breadcrumbs>
+          <ProjectSectionSwitcher current="archives" />
           {activeTab === "issues" && issueCount && issueCount > 0 ? (
             <Tooltip
               isMobile={isMobile}

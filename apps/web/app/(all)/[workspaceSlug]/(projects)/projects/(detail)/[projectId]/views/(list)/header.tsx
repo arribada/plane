@@ -19,6 +19,7 @@ import { useCommandPalette } from "@/hooks/store/use-command-palette";
 import { useProject } from "@/hooks/store/use-project";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 
 export const ProjectViewsHeader = observer(function ProjectViewsHeader() {
   const { workspaceSlug, projectId } = useParams();
@@ -44,6 +45,7 @@ export const ProjectViewsHeader = observer(function ProjectViewsHeader() {
               isLast
             />
           </Breadcrumbs>
+          <ProjectSectionSwitcher current="views" />
         </Header.LeftItem>
         <Header.RightItem>
           <ViewListHeader />

@@ -22,6 +22,7 @@ import { useProject } from "@/hooks/store/use-project";
 import { useAppRouter } from "@/hooks/use-app-router";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 import { PageDetailsHeaderExtraActions } from "@/plane-web/components/pages";
 import { EPageStoreType, usePage, usePageStore } from "@/plane-web/hooks/store";
 
@@ -100,6 +101,7 @@ export const PageDetailsHeader = observer(function PageDetailsHeader() {
             />
           </Breadcrumbs>
         </div>
+        <ProjectSectionSwitcher current="pages" />
       </Header.LeftItem>
       <Header.RightItem>
         <PageSyncingBadge syncStatus={page.isSyncingWithServer} />

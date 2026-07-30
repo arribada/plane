@@ -22,6 +22,7 @@ import { useProjectInbox } from "@/hooks/store/use-project-inbox";
 import { useUserPermissions } from "@/hooks/store/user";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 import { IntakeIcon } from "@plane/propel/icons";
 
 export const ProjectInboxHeader = observer(function ProjectInboxHeader() {
@@ -60,6 +61,7 @@ export const ProjectInboxHeader = observer(function ProjectInboxHeader() {
               isLast
             />
           </Breadcrumbs>
+          <ProjectSectionSwitcher current="intake" />
 
           {loader === "pagination-loading" && (
             <div className="flex items-center gap-1.5 text-tertiary">

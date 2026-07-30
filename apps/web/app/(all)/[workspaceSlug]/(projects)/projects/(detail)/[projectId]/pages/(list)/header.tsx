@@ -22,6 +22,7 @@ import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { useProject } from "@/hooks/store/use-project";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 import { EPageStoreType, usePageStore } from "@/plane-web/hooks/store";
 
 export const PagesListHeader = observer(function PagesListHeader() {
@@ -47,6 +48,7 @@ export const PagesListHeader = observer(function PagesListHeader() {
       .then((res) => {
         const pageId = `/${workspaceSlug}/projects/${currentProjectDetails?.id}/pages/${res?.id}`;
         router.push(pageId);
+        return undefined;
       })
       .catch((err) => {
         setToast({
@@ -75,6 +77,7 @@ export const PagesListHeader = observer(function PagesListHeader() {
             isLast
           />
         </Breadcrumbs>
+        <ProjectSectionSwitcher current="pages" />
       </Header.LeftItem>
       {canCurrentUserCreatePage && (
         <Header.RightItem>

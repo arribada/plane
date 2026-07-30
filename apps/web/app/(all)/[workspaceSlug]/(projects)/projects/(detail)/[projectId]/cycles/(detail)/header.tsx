@@ -49,6 +49,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import useLocalStorage from "@/hooks/use-local-storage";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 
 export const CycleIssuesHeader = observer(function CycleIssuesHeader() {
   // refs
@@ -75,7 +76,7 @@ export const CycleIssuesHeader = observer(function CycleIssuesHeader() {
 
   const { setValue, storedValue } = useLocalStorage("cycle_sidebar_collapsed", false);
 
-  const isSidebarCollapsed = storedValue ? (storedValue === true ? true : false) : false;
+  const isSidebarCollapsed = storedValue === true;
   const toggleSidebar = () => {
     setValue(!isSidebarCollapsed);
   };
@@ -168,6 +169,7 @@ export const CycleIssuesHeader = observer(function CycleIssuesHeader() {
                 isLast
               />
             </Breadcrumbs>
+            <ProjectSectionSwitcher current="cycles" />
             {workItemsCount && workItemsCount > 0 ? (
               <Tooltip
                 isMobile={isMobile}

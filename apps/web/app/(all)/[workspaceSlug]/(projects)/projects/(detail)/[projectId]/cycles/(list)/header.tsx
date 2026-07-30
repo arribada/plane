@@ -22,6 +22,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
 // plane web imports
 import { CommonProjectBreadcrumbs } from "@/plane-web/components/breadcrumbs/common";
+import { ProjectSectionSwitcher } from "@/plane-web/components/issues/section-switcher";
 
 export const CyclesListHeader = observer(function CyclesListHeader() {
   // router
@@ -56,6 +57,7 @@ export const CyclesListHeader = observer(function CyclesListHeader() {
             isLast
           />
         </Breadcrumbs>
+        <ProjectSectionSwitcher current="cycles" />
       </Header.LeftItem>
       {canUserCreateCycle && currentProjectDetails ? (
         <Header.RightItem>

@@ -10,6 +10,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { GanttChartRoot } from "@/components/gantt-chart";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
+import { IssuePeekOverview } from "@/components/issues/peek-overview";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { useUser } from "@/hooks/store/user";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
@@ -50,22 +51,26 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   }, [workspaceSlug, portfolio]);
 
   return (
-    <div className="flex h-full w-full flex-col">
-      <PortfolioToolbar />
-      <div className="relative flex-grow overflow-hidden">
-        <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.PROJECT}>
-          <GanttChartRoot
-            title="Portfolio"
-            loaderTitle="projects"
-            blockIds={portfolio.ganttBlockIds}
-            blockUpdateHandler={() => {}}
-            blockToRender={(data: { id: string }) => <PortfolioBar blockId={data.id} />}
-            sidebarToRender={(props: { blockIds: string[] }) => <PortfolioSidebar blockIds={props.blockIds} />}
-            showAllBlocks
-            showToday
-          />
-        </TimeLineTypeContext.Provider>
+    <>
+      <div className="flex h-full w-full flex-col">
+        <PortfolioToolbar />
+        <div className="relative flex-grow overflow-hidden">
+          <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.PROJECT}>
+            <GanttChartRoot
+              title="Portfolio"
+              loaderTitle="projects"
+              blockIds={portfolio.ganttBlockIds}
+              blockUpdateHandler={() => {}}
+              blockToRender={(data: { id: string }) => <PortfolioBar blockId={data.id} />}
+              sidebarToRender={(props: { blockIds: string[] }) => <PortfolioSidebar blockIds={props.blockIds} />}
+              showAllBlocks
+              showToday
+            />
+          </TimeLineTypeContext.Provider>
+        </div>
       </div>
-    </div>
+      {/* self-fetching and null until something is peeked, so it can mount unconditionally */}
+      <IssuePeekOverview />
+    </>
   );
 });

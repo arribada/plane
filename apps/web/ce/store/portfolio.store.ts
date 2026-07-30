@@ -49,6 +49,8 @@ export interface IPortfolioStore {
   // actions
   fetchPortfolio: (workspaceSlug: string) => Promise<void>;
   toggleProjectExpansion: (workspaceSlug: string, projectId: string) => Promise<void>;
+  applyItemDates: (itemId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
+  refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<void>;
   setDisplayedProjectIds: (ids: string[]) => void;
   setColorBy: (value: TPortfolioColorBy) => void;
   setSortBy: (value: TPortfolioSortBy) => void;
@@ -59,11 +61,17 @@ export interface IPortfolioStore {
   focusFolderName: string | null;
   setFocusFolder: (folderId: string | null) => void;
   hasActiveFilters: boolean;
+  // Observables the toolbar reads back to render its own controls; they were only
+  // ever on the class, so `usePortfolio()` (typed as this interface) could not see them.
+  priorityFilter: Set<string>;
+  assignedToMeOnly: boolean;
+  groupByFolder: boolean;
   togglePriorityFilter: (priority: string) => void;
   setAssignedToMeOnly: (value: boolean) => void;
   setMeUserId: (id: string | null) => void;
   clearFilters: () => void;
   showCriticalPath: boolean;
+  crossEdges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[];
   isCriticalIssue: (id: string) => boolean;
   setShowCriticalPath: (workspaceSlug: string, value: boolean) => void;
   fetchCriticalPath: (workspaceSlug: string) => Promise<void>;
@@ -73,6 +81,14 @@ const ORDER_KEY = "arribada.portfolio.manualOrder";
 const FOLDER_PREFIX = "__folder__:";
 const NO_FOLDER = FOLDER_PREFIX + "none";
 type TFolder = { id: string; name: string; project_ids: string[] };
+
+// Date comparator for row sorting: dated rows come before undated ones.
+const cmpDate = (a: string | null, b: string | null) => {
+  if (a && b) return a.localeCompare(b);
+  if (a) return -1;
+  if (b) return 1;
+  return 0;
+};
 
 export class PortfolioStore implements IPortfolioStore {
   projectMap: Record<string, TPortfolioProject> = {};
@@ -131,6 +147,8 @@ export class PortfolioStore implements IPortfolioStore {
       hasActiveFilters: computed,
       fetchPortfolio: action,
       toggleProjectExpansion: action,
+      applyItemDates: action,
+      refreshProjectItems: action,
       setDisplayedProjectIds: action,
       setColorBy: action,
       setSortBy: action,
@@ -195,12 +213,6 @@ export class PortfolioStore implements IPortfolioStore {
     if (this.sortBy === "manual") return this.scopedProjectIds.filter((id) => !!this.projectMap[id]);
     const ids = [...this.scopedProjectIds];
     const p = (id: string) => this.projectMap[id];
-    const cmpDate = (a: string | null, b: string | null) => {
-      if (a && b) return a.localeCompare(b);
-      if (a) return -1; // dated rows before undated
-      if (b) return 1;
-      return 0;
-    };
     ids.sort((ia, ib) => {
       const a = p(ia);
       const b = p(ib);
@@ -226,21 +238,23 @@ export class PortfolioStore implements IPortfolioStore {
 
   private itemMatchesFilters(it: TPortfolioItem): boolean {
     if (this.priorityFilter.size > 0 && !this.priorityFilter.has(it.priority)) return false;
-    if (this.assignedToMeOnly && this.meUserId && !(it.assignees ?? []).some((a) => a.id === this.meUserId)) return false;
+    if (this.assignedToMeOnly && this.meUserId && !(it.assignees ?? []).some((a) => a.id === this.meUserId))
+      return false;
     return true;
   }
 
   private sortedItemIds(projectId: string): string[] {
-    const ids = Object.values(this.itemMap)
-      .filter((it) => this.itemProjectId[it.id] === projectId && this.itemMatchesFilters(it))
-      .sort((a, b) => {
-        if (a.start_date && b.start_date) return a.start_date.localeCompare(b.start_date);
-        if (a.start_date) return -1;
-        if (b.start_date) return 1;
-        return a.sequence_id - b.sequence_id;
-      })
-      .map((it) => it.id);
-    return ids;
+    // `filter` already returned a fresh array, so sorting it in place mutates nothing shared
+    const rows = Object.values(this.itemMap).filter(
+      (it) => this.itemProjectId[it.id] === projectId && this.itemMatchesFilters(it)
+    );
+    rows.sort((a, b) => {
+      if (a.start_date && b.start_date) return a.start_date.localeCompare(b.start_date);
+      if (a.start_date) return -1;
+      if (b.start_date) return 1;
+      return a.sequence_id - b.sequence_id;
+    });
+    return rows.map((it) => it.id);
   }
 
   // Displayed projects grouped into folder swimlanes, each preserving the active
@@ -250,8 +264,8 @@ export class PortfolioStore implements IPortfolioStore {
     const seen = new Set<string>();
     const groups: { headerId: string; name: string; projectIds: string[] }[] = [];
     for (const f of this.folders) {
-      const set = new Set(f.project_ids);
-      const pids = sorted.filter((id) => set.has(id) && !seen.has(id));
+      const inFolder = new Set(f.project_ids);
+      const pids = sorted.filter((id) => inFolder.has(id) && !seen.has(id));
       pids.forEach((id) => seen.add(id));
       if (pids.length) groups.push({ headerId: FOLDER_PREFIX + f.id, name: f.name, projectIds: pids });
     }
@@ -309,7 +323,14 @@ export class PortfolioStore implements IPortfolioStore {
   getRowById = computedFn((id: string): TGanttRow | undefined => {
     if (id.startsWith(FOLDER_PREFIX)) {
       // folder header: a row with no dates, so the gantt draws no bar for it
-      return { id, name: this.getFolderRow(id)?.name ?? "", sort_order: null, start_date: null, target_date: null, project_id: null };
+      return {
+        id,
+        name: this.getFolderRow(id)?.name ?? "",
+        sort_order: null,
+        start_date: null,
+        target_date: null,
+        project_id: null,
+      };
     }
     const p = this.projectMap[id];
     if (p) {
@@ -388,6 +409,55 @@ export class PortfolioStore implements IPortfolioStore {
         }
         this.loadedItemProjects = new Set(this.loadedItemProjects).add(projectId);
       });
+    }
+  };
+
+  // Dates written elsewhere (bulk modal, AI planner) land on the timeline at once,
+  // without waiting for the round-trip a full refresh would need.
+  applyItemDates = (itemId: string, dates: { start_date?: string | null; target_date?: string | null }): void => {
+    const item = this.itemMap[itemId];
+    if (!item) return;
+    const next = { ...item };
+    if (dates.start_date !== undefined) next.start_date = dates.start_date;
+    if (dates.target_date !== undefined) next.target_date = dates.target_date;
+    set(this.itemMap, [itemId], next);
+  };
+
+  // Reload one project's items and its own row counts. Deliberately NOT
+  // fetchPortfolio(): that resets displayedProjectIds and force-switches sortBy to
+  // "manual" whenever a saved order exists, visibly reshuffling the board.
+  refreshProjectItems = async (workspaceSlug: string, projectId: string): Promise<void> => {
+    runInAction(() => {
+      const loaded = new Set(this.loadedItemProjects);
+      loaded.delete(projectId);
+      this.loadedItemProjects = loaded;
+    });
+    try {
+      const [items, projects] = await Promise.all([
+        this.service.getProjectItems(workspaceSlug, projectId),
+        this.service.getPortfolio(workspaceSlug).catch(() => [] as TPortfolioProject[]),
+      ]);
+      runInAction(() => {
+        // rebuild rather than merge, so items deleted since the last load disappear
+        const nextItems: Record<string, TPortfolioItem> = {};
+        const nextOwner: Record<string, string> = {};
+        for (const [id, pid] of Object.entries(this.itemProjectId)) {
+          if (pid === projectId || !this.itemMap[id]) continue;
+          nextItems[id] = this.itemMap[id];
+          nextOwner[id] = pid;
+        }
+        for (const item of items) {
+          nextItems[item.id] = item;
+          nextOwner[item.id] = projectId;
+        }
+        this.itemMap = nextItems;
+        this.itemProjectId = nextOwner;
+        this.loadedItemProjects = new Set(this.loadedItemProjects).add(projectId);
+        const fresh = projects.find((p) => p.id === projectId);
+        if (fresh) set(this.projectMap, [projectId], fresh);
+      });
+    } catch {
+      // leave the prior rows in place; the next expand re-fetches this project
     }
   };
 

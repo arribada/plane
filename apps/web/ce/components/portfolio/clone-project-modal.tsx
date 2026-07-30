@@ -27,7 +27,11 @@ const suggestIdentifier = (name: string) =>
     .filter(Boolean)
     .map((w) => w[0])
     .join("")
-    .slice(0, 5) || name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
+    .slice(0, 5) ||
+  name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 5);
 
 export const CloneProjectModal = observer(function CloneProjectModal(props: Props) {
   const { isOpen, onClose } = props;
@@ -66,7 +70,7 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
         kickoff_date: kickoff || null,
       });
       onClose();
-      router.push(`/${workspaceSlug}/projects/${res.project_id}/issues/`);
+      router.push(`/${workspaceSlug}/projects/${res.project_id}/overview`);
     } catch (e) {
       const msg =
         (e as { identifier?: string[]; name?: string[]; error?: string })?.identifier?.[0] ??
@@ -79,12 +83,18 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
     }
   };
 
-  const field = "w-full rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-accent-strong";
+  const field =
+    "w-full rounded border border-subtle bg-layer-1 px-2.5 py-1.5 text-13 text-primary outline-none focus:border-accent-strong";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={busy ? undefined : onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5 shadow-2xl">
+      <button
+        type="button"
+        aria-label="Close"
+        className="absolute inset-0 bg-black/40"
+        onClick={busy ? undefined : onClose}
+      />
+      <div className="shadow-2xl relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Copy className="size-4 text-secondary" />
@@ -97,8 +107,13 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
 
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-11 font-medium uppercase tracking-wide text-secondary">Template project</label>
-            <select className={field} value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+            <label
+              htmlFor="clone-source"
+              className="mb-1 block text-11 font-medium tracking-wide text-secondary uppercase"
+            >
+              Template project
+            </label>
+            <select id="clone-source" className={field} value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
               <option value="">Select a project to copy…</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -110,12 +125,29 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
 
           <div className="flex gap-3">
             <div className="flex-grow">
-              <label className="mb-1 block text-11 font-medium uppercase tracking-wide text-secondary">New name</label>
-              <input className={field} value={name} onChange={(e) => onName(e.target.value)} placeholder="e.g. Sea Turtle Tag v2" />
+              <label
+                htmlFor="clone-name"
+                className="mb-1 block text-11 font-medium tracking-wide text-secondary uppercase"
+              >
+                New name
+              </label>
+              <input
+                id="clone-name"
+                className={field}
+                value={name}
+                onChange={(e) => onName(e.target.value)}
+                placeholder="e.g. Sea Turtle Tag v2"
+              />
             </div>
             <div className="w-24">
-              <label className="mb-1 block text-11 font-medium uppercase tracking-wide text-secondary">ID</label>
+              <label
+                htmlFor="clone-identifier"
+                className="mb-1 block text-11 font-medium tracking-wide text-secondary uppercase"
+              >
+                ID
+              </label>
               <input
+                id="clone-identifier"
                 className={cn(field, "uppercase")}
                 value={identifier}
                 onChange={(e) => {
@@ -129,17 +161,31 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
           </div>
 
           <div>
-            <label className="mb-1 block text-11 font-medium uppercase tracking-wide text-secondary">
-              Kickoff date <span className="normal-case text-placeholder">(optional — shifts all planned dates)</span>
+            <label
+              htmlFor="clone-kickoff"
+              className="mb-1 block text-11 font-medium tracking-wide text-secondary uppercase"
+            >
+              Kickoff date <span className="text-placeholder normal-case">(optional — shifts all planned dates)</span>
             </label>
-            <input type="date" className={field} value={kickoff} onChange={(e) => setKickoff(e.target.value)} />
+            <input
+              id="clone-kickoff"
+              type="date"
+              className={field}
+              value={kickoff}
+              onChange={(e) => setKickoff(e.target.value)}
+            />
           </div>
 
-          {error && <p className="rounded bg-red-500/10 px-2.5 py-1.5 text-12 text-red-600">{error}</p>}
+          {error && <p className="bg-red-500/10 text-red-600 rounded px-2.5 py-1.5 text-12">{error}</p>}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="rounded px-3 py-1.5 text-13 text-secondary hover:bg-layer-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded px-3 py-1.5 text-13 text-secondary hover:bg-layer-2"
+          >
             Cancel
           </button>
           <button

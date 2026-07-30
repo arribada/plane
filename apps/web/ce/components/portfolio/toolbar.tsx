@@ -27,9 +27,10 @@ import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TPortfolioColorBy, TPortfolioSortBy } from "@/plane-web/types/arribada";
+import type { TPortfolioColorBy, TPortfolioProject, TPortfolioSortBy } from "@/plane-web/types/arribada";
 import { CloneProjectModal } from "./clone-project-modal";
 import { buildPortfolioSvg, downloadPng, downloadSvg } from "./export";
+import { UndatedItemsModal } from "./undated-items-modal";
 
 const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
   { value: "project", label: "Project" },
@@ -52,22 +53,26 @@ const PRIORITIES: { value: string; label: string }[] = [
   { value: "none", label: "None" },
 ];
 
+type TMenu = "projects" | "filter" | "display" | "actions" | "undated";
+
 const triggerBtn = "flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1";
-const menuRow = "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-13 hover:bg-layer-2 disabled:opacity-50";
+const menuRow =
+  "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-13 hover:bg-layer-2 disabled:opacity-50";
 
 export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
-  const [openMenu, setOpenMenu] = useState<"projects" | "filter" | "display" | "actions" | null>(null);
+  const [openMenu, setOpenMenu] = useState<TMenu | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [undatedProjectId, setUndatedProjectId] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
   const [reflowing, setReflowing] = useState(false);
   const [reflowResult, setReflowResult] = useState<number | null>(null);
 
-  const toggle = (m: "projects" | "filter" | "display" | "actions") => setOpenMenu((v) => (v === m ? null : m));
+  const toggle = (m: TMenu) => setOpenMenu((v) => (v === m ? null : m));
   const close = () => setOpenMenu(null);
 
   const exportTimeline = async (format: "png" | "svg") => {
@@ -87,7 +92,9 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
     if (!workspaceSlug || capturing) return;
     setCapturing(true);
     try {
-      await Promise.all(portfolio.displayedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id)));
+      await Promise.all(
+        portfolio.displayedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id))
+      );
       setCapturedAt(new Date().toLocaleTimeString());
     } finally {
       setCapturing(false);
@@ -110,6 +117,10 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
   const allProjects = portfolio.allProjects.filter((p) => !p.archived);
   const selected = new Set(portfolio.displayedProjectIds);
+  // displayed order, so the dropdown reads the same way the timeline does
+  const undatedProjects = portfolio.sortedProjectIds
+    .map((id) => portfolio.getProject(id))
+    .filter((p): p is TPortfolioProject => !!p && p.undated_item_count > 0);
 
   const toggleProject = (id: string) => {
     const current = portfolio.displayedProjectIds;
@@ -143,18 +154,31 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         </button>
         {openMenu === "projects" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={close} />
-            <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+            <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1">
               <div className="flex items-center justify-between px-2 py-1 text-11 text-secondary">
-                <button type="button" className="hover:text-primary" onClick={() => portfolio.setDisplayedProjectIds(allProjects.map((p) => p.id))}>
+                <button
+                  type="button"
+                  className="hover:text-primary"
+                  onClick={() => portfolio.setDisplayedProjectIds(allProjects.map((p) => p.id))}
+                >
                   Select all
                 </button>
-                <button type="button" className="hover:text-primary" onClick={() => portfolio.setDisplayedProjectIds([])}>
+                <button
+                  type="button"
+                  className="hover:text-primary"
+                  onClick={() => portfolio.setDisplayedProjectIds([])}
+                >
                   Clear
                 </button>
               </div>
               {allProjects.map((p) => (
-                <button key={p.id} type="button" onClick={() => toggleProject(p.id)} className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-layer-2">
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => toggleProject(p.id)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-layer-2"
+                >
                   <span
                     className={cn("flex size-4 items-center justify-center rounded border", {
                       "border-accent-strong bg-accent-primary text-white": selected.has(p.id),
@@ -165,7 +189,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   </span>
                   <span className="flex-grow truncate">{p.name}</span>
                   {!!p.undated_item_count && (
-                    <span className="flex items-center gap-0.5 text-11 text-amber-600">
+                    <span className="text-amber-600 flex items-center gap-0.5 text-11">
                       <AlertTriangle className="size-3" />
                       {p.undated_item_count}
                     </span>
@@ -197,11 +221,16 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         </button>
         {openMenu === "filter" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={close} />
-            <div className="absolute left-0 top-full z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5 shadow-lg">
-              <div className="px-1.5 py-1 text-11 font-medium uppercase tracking-wide text-secondary">Priority</div>
+            <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5">
+              <div className="px-1.5 py-1 text-11 font-medium tracking-wide text-secondary uppercase">Priority</div>
               {PRIORITIES.map((p) => (
-                <button key={p.value} type="button" onClick={() => portfolio.togglePriorityFilter(p.value)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => portfolio.togglePriorityFilter(p.value)}
+                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                >
                   <span
                     className={cn("flex size-4 items-center justify-center rounded border", {
                       "border-accent-strong bg-accent-primary text-white": portfolio.priorityFilter.has(p.value),
@@ -214,7 +243,11 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 </button>
               ))}
               <div className="my-1 h-px bg-layer-2" />
-              <button type="button" onClick={() => portfolio.setAssignedToMeOnly(!portfolio.assignedToMeOnly)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
+              <button
+                type="button"
+                onClick={() => portfolio.setAssignedToMeOnly(!portfolio.assignedToMeOnly)}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+              >
                 <span
                   className={cn("flex size-4 items-center justify-center rounded border", {
                     "border-accent-strong bg-accent-primary text-white": portfolio.assignedToMeOnly,
@@ -226,14 +259,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 Assigned to me
               </button>
               {portfolio.hasActiveFilters && (
-                <button type="button" onClick={() => portfolio.clearFilters()} className="mt-1 w-full rounded px-1.5 py-1 text-left text-12 text-red-600 hover:bg-red-500/10">
+                <button
+                  type="button"
+                  onClick={() => portfolio.clearFilters()}
+                  className="text-red-600 hover:bg-red-500/10 mt-1 w-full rounded px-1.5 py-1 text-left text-12"
+                >
                   Clear filters
                 </button>
               )}
               <div className="mt-1 border-t border-subtle px-1.5 pt-1 text-10 text-secondary/70">
                 Filters the tasks inside expanded projects.
                 {portfolio.hasActiveFilters && portfolio.expandedProjectIds.size === 0 && (
-                  <span className="mt-0.5 block text-amber-600">Expand a project to see it take effect.</span>
+                  <span className="text-amber-600 mt-0.5 block">Expand a project to see it take effect.</span>
                 )}
               </div>
             </div>
@@ -250,32 +287,54 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         </button>
         {openMenu === "display" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={close} />
-            <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5 shadow-lg">
-              <div className="mb-0.5 px-1.5 text-11 font-medium uppercase tracking-wide text-secondary">Colour by</div>
+            <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5">
+              <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Colour by</div>
               <div className="mb-2 flex gap-1 px-1">
                 {COLOR_OPTIONS.map((o) => (
                   <button
                     key={o.value}
                     type="button"
                     onClick={() => portfolio.setColorBy(o.value)}
-                    className={cn("flex-1 rounded px-2 py-1 text-12", portfolio.colorBy === o.value ? "bg-accent-primary/10 font-medium text-accent-primary" : "text-secondary hover:bg-layer-2")}
+                    className={cn(
+                      "flex-1 rounded px-2 py-1 text-12",
+                      portfolio.colorBy === o.value
+                        ? "bg-accent-primary/10 font-medium text-accent-primary"
+                        : "text-secondary hover:bg-layer-2"
+                    )}
                   >
                     {o.label}
                   </button>
                 ))}
               </div>
-              <div className="mb-0.5 px-1.5 text-11 font-medium uppercase tracking-wide text-secondary">Order by</div>
+              <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Order by</div>
               {SORT_OPTIONS.map((o) => (
-                <button key={o.value} type="button" onClick={() => portfolio.setSortBy(o.value)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
-                  <span className={cn("size-3 rounded-full border", portfolio.sortBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle")} />
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => portfolio.setSortBy(o.value)}
+                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                >
+                  <span
+                    className={cn(
+                      "size-3 rounded-full border",
+                      portfolio.sortBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle"
+                    )}
+                  />
                   {o.label}
                 </button>
               ))}
               <div className="mt-1.5 border-t border-subtle pt-1.5">
-                <button type="button" onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2">
+                <button
+                  type="button"
+                  onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)}
+                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                >
                   <span
-                    className={cn("flex size-4 items-center justify-center rounded border", portfolio.groupByFolder ? "border-accent-strong bg-accent-primary text-white" : "border-subtle")}
+                    className={cn(
+                      "flex size-4 items-center justify-center rounded border",
+                      portfolio.groupByFolder ? "border-accent-strong bg-accent-primary text-white" : "border-subtle"
+                    )}
                   >
                     {portfolio.groupByFolder && <Check className="size-3" />}
                   </span>
@@ -290,7 +349,9 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       {/* Critical path (analysis mode) */}
       <button
         type="button"
-        onClick={() => workspaceSlug && portfolio.setShowCriticalPath(workspaceSlug.toString(), !portfolio.showCriticalPath)}
+        onClick={() =>
+          workspaceSlug && portfolio.setShowCriticalPath(workspaceSlug.toString(), !portfolio.showCriticalPath)
+        }
         title="Highlight the program critical path and cross-project dependency arrows"
         className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
           "border-red-500 bg-red-500/10 text-red-600": portfolio.showCriticalPath,
@@ -303,12 +364,44 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
       <div className="flex-grow" />
 
-      {/* undated indicator */}
+      {/* undated indicator — a way in, not just a warning */}
       {portfolio.totalUndatedCount > 0 && (
-        <span className="flex items-center gap-1 rounded bg-amber-500/15 px-2 py-1 text-amber-600">
-          <AlertTriangle className="size-3.5" />
-          {portfolio.totalUndatedCount} without dates
-        </span>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => toggle("undated")}
+            title="Give these work items dates"
+            className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/30 flex items-center gap-1 rounded px-2 py-1"
+          >
+            <AlertTriangle className="size-3.5" />
+            {portfolio.totalUndatedCount} without dates
+            <ChevronDown className="size-3.5" />
+          </button>
+          {openMenu === "undated" && (
+            <>
+              <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
+              <div className="shadow-lg absolute top-full right-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1">
+                <div className="px-2 py-1 text-11 font-medium tracking-wide text-secondary uppercase">
+                  Projects with undated items
+                </div>
+                {undatedProjects.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      close();
+                      setUndatedProjectId(p.id);
+                    }}
+                    className={menuRow}
+                  >
+                    <span className="flex-grow truncate">{p.name}</span>
+                    <span className="text-amber-600 flex-shrink-0 text-11">{p.undated_item_count}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {/* Actions menu: occasional operations tucked away */}
@@ -318,8 +411,8 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         </button>
         {openMenu === "actions" && (
           <>
-            <div className="fixed inset-0 z-20" onClick={close} />
-            <div className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+            <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
+            <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1">
               <button
                 type="button"
                 disabled={reflowing}
@@ -359,12 +452,28 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 New from template
               </button>
               <div className="my-1 h-px bg-layer-2" />
-              <div className="px-2 py-0.5 text-10 font-medium uppercase tracking-wide text-secondary/70">Export timeline</div>
-              <button type="button" onClick={() => { close(); exportTimeline("png"); }} className={menuRow}>
+              <div className="px-2 py-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
+                Export timeline
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  exportTimeline("png");
+                }}
+                className={menuRow}
+              >
                 <Download className="size-3.5 text-secondary" />
                 PNG image
               </button>
-              <button type="button" onClick={() => { close(); exportTimeline("svg"); }} className={menuRow}>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  exportTimeline("svg");
+                }}
+                className={menuRow}
+              >
                 <Download className="size-3.5 text-secondary" />
                 SVG (vector)
               </button>
@@ -375,17 +484,29 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
       <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
 
+      <UndatedItemsModal
+        // remount per project: none of the previous project's rows or drafts survive
+        key={undatedProjectId ?? "none"}
+        projectId={undatedProjectId}
+        projectName={undatedProjectId ? portfolio.getProject(undatedProjectId)?.name : undefined}
+        onClose={() => setUndatedProjectId(null)}
+        onChanged={() => {
+          if (workspaceSlug && undatedProjectId)
+            void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId);
+        }}
+      />
+
       {/* critical-path legend + empty-state hint (own wrapping line) */}
       {portfolio.showCriticalPath && (
         <div className="flex w-full flex-wrap items-center gap-3 pt-0.5 text-11 text-secondary">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-[3px] w-4 rounded bg-red-500" /> Critical path
+            <span className="bg-red-500 inline-block h-[3px] w-4 rounded" /> Critical path
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0 w-4 border-t-2 border-dashed border-violet-500" /> Cross-project link
+            <span className="border-violet-500 inline-block h-0 w-4 border-t-2 border-dashed" /> Cross-project link
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-[2px] w-4 rounded bg-neutral-400" /> In-project link
+            <span className="bg-neutral-400 inline-block h-[2px] w-4 rounded" /> In-project link
           </span>
           {portfolio.crossEdges.length === 0 && (
             <span className="text-amber-600">

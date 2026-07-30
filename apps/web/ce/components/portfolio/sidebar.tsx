@@ -7,16 +7,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, AlertTriangle, Folder, GanttChartSquare, GripVertical, Signal, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  Folder,
+  GanttChartSquare,
+  GripVertical,
+  Signal,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatusUpdate } from "@/plane-web/types/arribada";
 import { baselineDrift, projectColor, projectHealth } from "./colors";
 import { ProjectStatusModal, STATUS_META } from "./project-status-modal";
+import { UndatedItemsModal } from "./undated-items-modal";
 
 // transient drag source id — plain module var, DnD is a same-frame gesture
 let dragId: string | null = null;
@@ -25,12 +37,19 @@ type RowProps = {
   blockId: string;
   status?: TProjectStatusUpdate;
   onOpenStatus: (projectId: string) => void;
+  onOpenUndated: (projectId: string) => void;
 };
 
-const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, status, onOpenStatus }: RowProps) {
+const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
+  blockId,
+  status,
+  onOpenStatus,
+  onOpenUndated,
+}: RowProps) {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const portfolio = usePortfolio();
+  const { setPeekIssue } = useIssueDetail();
   const isProject = portfolio.isProjectRow(blockId);
   const folder = portfolio.getFolderRow(blockId);
   const project = portfolio.getProject(blockId);
@@ -66,17 +85,24 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
             onClick={() => portfolio.toggleFolderCollapse(blockId)}
             className="flex flex-grow items-center gap-1.5 text-left"
           >
-            {folder.collapsed ? <ChevronRight className="size-4 text-secondary" /> : <ChevronDown className="size-4 text-secondary" />}
+            {folder.collapsed ? (
+              <ChevronRight className="size-4 text-secondary" />
+            ) : (
+              <ChevronDown className="size-4 text-secondary" />
+            )}
             <Folder className="size-3.5 flex-shrink-0 text-secondary" />
-            <span className="truncate text-13 font-semibold uppercase tracking-wide text-primary">{folder.name}</span>
+            <span className="truncate text-13 font-semibold tracking-wide text-primary uppercase">{folder.name}</span>
             <span className="rounded bg-layer-2 px-1.5 text-11 text-secondary">{folder.projectCount}</span>
           </button>
           {blockId !== "__folder__:none" && (
             <button
               type="button"
               title="Open only this folder"
-              onClick={() => workspaceSlug && router.push(`/${workspaceSlug}/portfolio?folder=${blockId.slice("__folder__:".length)}`)}
-              className="mr-1 flex-shrink-0 rounded p-0.5 text-tertiary opacity-0 hover:bg-layer-1 hover:text-secondary group-hover:opacity-100"
+              onClick={() =>
+                workspaceSlug &&
+                router.push(`/${workspaceSlug}/portfolio?folder=${blockId.slice("__folder__:".length)}`)
+              }
+              className="mr-1 flex-shrink-0 rounded p-0.5 text-tertiary opacity-0 group-hover:opacity-100 hover:bg-layer-1 hover:text-secondary"
             >
               <GanttChartSquare className="size-3.5" />
             </button>
@@ -97,10 +123,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
           >
             {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
           </button>
-          <span
-            className="size-2.5 flex-shrink-0 rounded-sm"
-            style={{ backgroundColor: projectColor(blockId) }}
-          />
+          <span className="size-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: projectColor(blockId) }} />
           {project &&
             (() => {
               const h = projectHealth(project);
@@ -112,13 +135,19 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
             })()}
           <button
             type="button"
-            onClick={() => router.push(`/${workspaceSlug}/projects/${blockId}/issues/`)}
+            onClick={() => router.push(`/${workspaceSlug}/projects/${blockId}/overview`)}
             title="Open project"
             className="flex-grow truncate text-left text-13 font-medium text-primary hover:text-accent-primary hover:underline"
           >
             {project?.name}
           </button>
-          <Tooltip tooltipContent={status ? `${STATUS_META[status.status]?.label}${status.message ? ` — ${status.message}` : ""}` : "Set status"}>
+          <Tooltip
+            tooltipContent={
+              status
+                ? `${STATUS_META[status.status]?.label}${status.message ? ` — ${status.message}` : ""}`
+                : "Set status"
+            }
+          >
             <button
               type="button"
               onClick={() => onOpenStatus(blockId)}
@@ -136,8 +165,10 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
               <span className="flex flex-shrink-0 items-center gap-1">
                 <span className="h-1 w-8 overflow-hidden rounded-full bg-layer-2">
                   <span
-                    className="block h-full rounded-full bg-emerald-500"
-                    style={{ width: `${Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100)}%` }}
+                    className="bg-emerald-500 block h-full rounded-full"
+                    style={{
+                      width: `${Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100)}%`,
+                    }}
                   />
                 </span>
                 <span className="w-7 text-right text-11 text-secondary">
@@ -167,18 +198,33 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({ blockId, sta
             })()}
           <span className="flex-shrink-0 text-11 text-secondary">{project?.item_count ?? 0}</span>
           {!!project?.undated_item_count && (
-            <Tooltip tooltipContent={`${project.undated_item_count} work item(s) with no dates`}>
-              <span className="flex flex-shrink-0 items-center gap-0.5 rounded bg-amber-500/15 px-1 text-11 text-amber-600">
+            <Tooltip
+              tooltipContent={`${project.undated_item_count} work item(s) with no dates — click to give them dates`}
+            >
+              <button
+                type="button"
+                onClick={() => onOpenUndated(blockId)}
+                className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/30 flex flex-shrink-0 items-center gap-0.5 rounded px-1 text-11"
+              >
                 <AlertTriangle className="size-3" />
                 {project.undated_item_count}
-              </span>
+              </button>
             </Tooltip>
           )}
         </>
       ) : (
-        <div className={cn("flex flex-grow items-center gap-2 truncate pl-8")}>
-          <span className="flex-grow truncate text-13 text-secondary">{item?.name}</span>
-        </div>
+        <button
+          type="button"
+          // TPortfolioItem carries no project_id — the owner has to come from the store
+          onClick={() => {
+            const projectId = portfolio.getRowProjectId(blockId);
+            if (workspaceSlug && projectId)
+              setPeekIssue({ workspaceSlug: workspaceSlug.toString(), projectId, issueId: blockId });
+          }}
+          className="flex flex-grow items-center gap-2 truncate pl-8 text-left"
+        >
+          <span className="flex-grow truncate text-13 text-secondary hover:text-primary">{item?.name}</span>
+        </button>
       )}
     </div>
   );
@@ -192,6 +238,7 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
   const service = useMemo(() => new ArribadaService(), []);
   const [statuses, setStatuses] = useState<Record<string, TProjectStatusUpdate>>({});
   const [statusProjectId, setStatusProjectId] = useState<string | null>(null);
+  const [undatedProjectId, setUndatedProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceSlug) return;
@@ -202,6 +249,7 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
   }, [workspaceSlug, service]);
 
   const statusProjectName = statusProjectId ? portfolio.getProject(statusProjectId)?.name : undefined;
+  const undatedProjectName = undatedProjectId ? portfolio.getProject(undatedProjectId)?.name : undefined;
 
   return (
     <div className="h-full">
@@ -212,6 +260,7 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
             blockId={blockId}
             status={statuses[blockId]}
             onOpenStatus={setStatusProjectId}
+            onOpenUndated={setUndatedProjectId}
           />
         ))
       ) : (
@@ -226,6 +275,17 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
         projectName={statusProjectName}
         onClose={() => setStatusProjectId(null)}
         onPosted={(pid, update) => setStatuses((s) => ({ ...s, [pid]: update }))}
+      />
+      <UndatedItemsModal
+        // remount per project: none of the previous project's rows or drafts survive
+        key={undatedProjectId ?? "none"}
+        projectId={undatedProjectId}
+        projectName={undatedProjectName}
+        onClose={() => setUndatedProjectId(null)}
+        onChanged={() => {
+          if (workspaceSlug && undatedProjectId)
+            void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId);
+        }}
       />
     </div>
   );

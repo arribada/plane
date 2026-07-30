@@ -7,8 +7,11 @@
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
 import type {
+  TAiPlan,
+  TAiSettings,
   TGithubInboxItem,
   TIssueRelationEdge,
+  TProjectOverview,
   TMyWorkItem,
   TPortfolioItem,
   TPortfolioProject,
@@ -162,9 +165,7 @@ export class ArribadaService extends APIService {
   }
 
   // Per-person workload across the workspace.
-  async getWorkload(
-    workspaceSlug: string
-  ): Promise<
+  async getWorkload(workspaceSlug: string): Promise<
     {
       user_id: string;
       name: string;
@@ -204,9 +205,7 @@ export class ArribadaService extends APIService {
   }
 
   // Program-level critical path + cross-project dependency edges across visible projects.
-  async getWorkspaceCriticalPath(
-    workspaceSlug: string
-  ): Promise<{
+  async getWorkspaceCriticalPath(workspaceSlug: string): Promise<{
     issue_ids: string[];
     edges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[];
   }> {
@@ -292,15 +291,74 @@ export class ArribadaService extends APIService {
       });
   }
 
-  async assignProjectToFolder(
-    workspaceSlug: string,
-    projectId: string,
-    folderId: string | null
-  ): Promise<unknown> {
+  async assignProjectToFolder(workspaceSlug: string, projectId: string, folderId: string | null): Promise<unknown> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/project-folders/assign/`, {
       project_id: projectId,
       folder_id: folderId,
     })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Everything the project Overview page shows, in one call (counts, cycles,
+  // modules, pages, links, warnings) — the alternative was five round trips.
+  async getProjectOverview(workspaceSlug: string, projectId: string): Promise<TProjectOverview> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/overview/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Which LLM the planning assistant uses. The key is never returned.
+  async getAiSettings(workspaceSlug: string): Promise<TAiSettings> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/ai-settings/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Pass api_key: "__unchanged__" to save the model/provider without retyping the key.
+  async setAiSettings(
+    workspaceSlug: string,
+    data: { provider?: string; model?: string; base_url?: string; api_key?: string }
+  ): Promise<TAiSettings> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/ai-settings/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Ask the model to place the project's undated work items. Proposes only — the
+  // caller reviews the rows and then calls applyPlan.
+  async aiPlan(
+    workspaceSlug: string,
+    projectId: string,
+    data: {
+      start_date?: string | null;
+      target_date?: string | null;
+      default_duration_days?: number;
+      context?: string;
+    }
+  ): Promise<TAiPlan> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-plan/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Write an approved set of dates onto work items.
+  async applyPlan(
+    workspaceSlug: string,
+    projectId: string,
+    issues: { issue_id: string; start_date: string; target_date: string }[]
+  ): Promise<{ applied: number; rejected: string[] }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/apply-plan/`, { issues })
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

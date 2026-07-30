@@ -80,6 +80,98 @@ export type TProjectSchedule = {
   target_date: string | null;
 };
 
+// Everything the project Overview page renders, from one aggregate endpoint.
+export type TProjectOverview = {
+  project: {
+    id: string;
+    name: string;
+    identifier: string;
+    description: string | null;
+    logo_props: unknown;
+    cycle_view: boolean;
+    module_view: boolean;
+    issue_views_view: boolean;
+    page_view: boolean;
+  };
+  schedule: { start_date: string | null; target_date: string | null };
+  derived: { start_date: string | null; target_date: string | null };
+  items: {
+    total: number;
+    completed: number;
+    started: number;
+    unstarted: number;
+    backlog: number;
+    cancelled: number;
+    undated: number;
+    overdue: number;
+    due_week: number;
+    unassigned: number;
+  };
+  cycles: {
+    id: string;
+    name: string;
+    start_date: string | null;
+    end_date: string | null;
+    total: number;
+    completed: number;
+    is_active: boolean;
+    is_upcoming: boolean;
+  }[];
+  modules: {
+    id: string;
+    name: string;
+    status: string;
+    start_date: string | null;
+    target_date: string | null;
+    total: number;
+    completed: number;
+  }[];
+  pages: { count: number; recent: { id: string; name: string; updated_at: string }[] };
+  links: {
+    wiki_url: string | null;
+    drive_url: string | null;
+    chat_url: string | null;
+    github_repo_urls: string[];
+  };
+  status: TProjectStatusUpdate | null;
+  member_count: number;
+  warnings: { code: string; message: string; severity: "info" | "warning" | "error" }[];
+};
+
+// Which LLM the planning assistant talks to. The key itself is write-only —
+// the API only ever reports whether one is set and where it came from.
+export type TAiSettings = {
+  configured: boolean;
+  provider: string;
+  model: string;
+  base_url: string;
+  has_workspace_key: boolean;
+  source: "workspace" | "environment" | "instance" | null;
+  active_model: string | null;
+  providers?: { value: string; label: string; default_model: string }[];
+  default_provider?: string;
+  provider_defaults?: Record<string, string>;
+};
+
+// One suggested placement for a work item that currently has no dates.
+export type TPlanAssignment = {
+  issue_id: string;
+  name: string;
+  sequence_id: number;
+  start_date: string;
+  target_date: string;
+  reason: string;
+};
+
+export type TAiPlan = {
+  assignments: TPlanAssignment[];
+  skipped: string[];
+  notes: string;
+  undated_count: number;
+  provider: string;
+  model: string;
+};
+
 export type TPortfolioColorBy = "project" | "priority";
 export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated" | "manual";
 

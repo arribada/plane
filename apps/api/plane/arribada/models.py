@@ -150,6 +150,52 @@ class ProjectFolderItem(models.Model):
         return f"{self.project_id} in {self.folder_id}"
 
 
+class WorkspaceAiSettings(models.Model):
+    """Which LLM the planning assistant talks to, per workspace.
+
+    Groq is the default (the team already pays for it for the wiki) but a
+    workspace can paste its own Claude or ChatGPT key here instead, so switching
+    provider is a settings change rather than a redeploy. The key is stored
+    encrypted with Plane's own Fernet helper and is never returned by the API —
+    reads only report whether one is set.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    workspace = models.OneToOneField(
+        "db.Workspace", on_delete=models.CASCADE, related_name="arribada_ai_settings"
+    )
+    provider = models.CharField(max_length=32, default="groq")
+    # Empty means "use the provider's default" — so upgrading the default model
+    # doesn't require every workspace to edit its row.
+    model = models.CharField(max_length=128, blank=True, default="")
+    base_url = models.CharField(max_length=512, blank=True, default="")
+    encrypted_api_key = models.TextField(blank=True, default="")
+    updated_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_workspace_ai_settings"
+        verbose_name = "Workspace AI settings"
+        verbose_name_plural = "Workspace AI settings"
+
+    def set_api_key(self, raw):
+        from plane.license.utils.encryption import encrypt_data
+
+        self.encrypted_api_key = encrypt_data(raw) if raw else ""
+
+    def api_key_plain(self):
+        from plane.license.utils.encryption import decrypt_data
+
+        if not self.encrypted_api_key:
+            return None
+        return decrypt_data(self.encrypted_api_key) or None
+
+    def __str__(self):
+        return f"{self.workspace_id} -> {self.provider}"
+
+
 class ProjectStatusUpdate(models.Model):
     """An Asana-style status post on a project: a health signal (on track / at risk
     / off track) plus a short note, logged over time. Community Edition has no such

@@ -38,6 +38,10 @@ uvicorn==0.29.0
 channels==4.1.0
 # ai
 openai==1.63.2
+# ai (arribada): Claude as an alternative provider for the planning assistant.
+# Groq/OpenAI go through the openai client above; Anthropic gets its own SDK
+# rather than an OpenAI-compatible shim, which drops the parameters that matter.
+anthropic==0.49.0
 # slack
 slack-sdk==3.27.1
 # apm

@@ -26,7 +26,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
 // plane web hooks
 import { EPageStoreType } from "@/plane-web/hooks/store";
-import { AffineWikiPanel } from "@/plane-web/components/pages/affine-wiki-panel";
+import { WikiLinksPanel } from "@/plane-web/components/pages/wiki-links-panel";
 import { WikiNoticeBanner } from "@/plane-web/components/pages/wiki-notice-banner";
 import type { Route } from "./+types/page";
 
@@ -79,7 +79,7 @@ function ProjectPagesPage({ params }: Route.ComponentProps) {
       <PageHead title={pageTitle} />
       <div className="px-4 pt-3 md:px-6">
         <WikiNoticeBanner />
-        <AffineWikiPanel />
+        <WikiLinksPanel />
       </div>
       <PagesListView
         pageType={pageType}

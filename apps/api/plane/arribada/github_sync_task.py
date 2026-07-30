@@ -3,7 +3,7 @@
 # See the LICENSE file for details.
 #
 # Periodic GitHub -> Plane ingestion. Pulls OPEN issues from the GitHub repos the
-# team has mapped to projects (ProjectAffineDoc.github_repo_urls), or an explicit
+# team has mapped to projects (ProjectWikiDoc.github_repo_urls), or an explicit
 # GITHUB_SYNC_REPOS allowlist, and UPSERTs them into the GHIN inbox project keyed
 # on external_id — so re-runs update instead of duplicating. The existing
 # github_classification task then routes each into its real project.
@@ -24,7 +24,7 @@ GITHUB_API = "https://api.github.com"
 
 def _repos_to_sync():
     """owner/repo set: explicit GITHUB_SYNC_REPOS, else every repo mapped to a project."""
-    from plane.arribada.models import ProjectAffineDoc
+    from plane.arribada.models import ProjectWikiDoc
     from plane.arribada.views import _github_url  # reuse the hardened extractor
 
     explicit = os.environ.get("GITHUB_SYNC_REPOS", "").strip()
@@ -37,7 +37,7 @@ def _repos_to_sync():
         return repos
 
     repos = set()
-    for doc in ProjectAffineDoc.objects.exclude(github_repo_urls=[]):
+    for doc in ProjectWikiDoc.objects.exclude(github_repo_urls=[]):
         for url in doc.github_repo_urls or []:
             u = _github_url(url) or str(url)
             # take owner/repo from a github.com url

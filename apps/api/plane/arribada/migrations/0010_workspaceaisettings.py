@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('db', '0121_alter_estimate_type'),
-        ('arribada', '0008_projectaffinedoc_github_repo_urls'),
+        ('arribada', '0009_rename_projectaffinedoc_projectwikidoc'),
     ]
 
     operations = [

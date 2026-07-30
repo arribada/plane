@@ -4,7 +4,7 @@
 #
 # GitHub-inbox triage warnings. GitHub issues land in the "GHIN" staging project.
 # For each open GHIN task:
-#   - if its repo is one linked to a real project (ProjectAffineDoc.github_repo_urls),
+#   - if its repo is one linked to a real project (ProjectWikiDoc.github_repo_urls),
 #     warn that project's lead (the PM) to classify it — and its assignee, if any;
 #   - otherwise it's unclassified; once per day every workspace member gets one
 #     digest of how many GitHub tasks still need triage.
@@ -31,13 +31,13 @@ def _repo_key(text):
 @shared_task
 def github_classification_warnings():
     from plane.db.models import Issue, IssueAssignee, Notification, Project, WorkspaceMember
-    from plane.arribada.models import ProjectAffineDoc
+    from plane.arribada.models import ProjectWikiDoc
 
     since = timezone.now() - timedelta(hours=20)
 
     # 1) repo -> owning project (with its lead) map
     repo_to_project = {}
-    for doc in ProjectAffineDoc.objects.exclude(github_repo_urls=[]).select_related(
+    for doc in ProjectWikiDoc.objects.exclude(github_repo_urls=[]).select_related(
         "project", "project__project_lead", "project__workspace"
     ):
         for url in doc.github_repo_urls or []:

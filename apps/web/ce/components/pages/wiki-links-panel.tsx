@@ -4,10 +4,10 @@
  * See the LICENSE file for details.
  *
  * Info note at the top of a project's Pages section: this project's documentation
- * lives in AFFiNE (the self-hosted wiki) and in Google Drive, so the whole team
- * has access. Each link is either shown (opens in a new tab) or, when missing,
- * invites a member to add it. Private by design — links open in the user's own
- * AFFiNE/Google session; nothing is published.
+ * lives in the team wiki (docs.arribada.org) and in Google Drive, so the whole
+ * team has access. Each link is either shown (opens in a new tab) or, when
+ * missing, invites a member to add it. Private by design — links open in the
+ * user's own wiki/Google session; nothing is published.
  */
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
@@ -17,13 +17,13 @@ import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectDocs } from "@/plane-web/types/arribada";
 
-const AFFINE_BASE = "https://docs.arribada.org";
+const WIKI_BASE = "https://docs.arribada.org";
 const EMPTY: TProjectDocs = {
   doc_id: null,
   workspace_id: null,
   title: null,
   google_drive_url: null,
-  mattermost_channel_url: null,
+  chat_url: null,
   github_repo_urls: [],
 };
 
@@ -33,11 +33,11 @@ const repoLabel = (url: string): string => {
   return m ? m[1] : url.replace(/^https?:\/\//, "");
 };
 
-export const AffineWikiPanel = observer(function AffineWikiPanel() {
+export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
   const [docs, setDocs] = useState<TProjectDocs>(EMPTY);
-  const [editing, setEditing] = useState<"affine" | "drive" | "chat" | "github" | null>(null);
+  const [editing, setEditing] = useState<"wiki" | "drive" | "chat" | "github" | null>(null);
   const [draftDoc, setDraftDoc] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDrive, setDraftDrive] = useState("");
@@ -58,7 +58,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     let cancelled = false;
     if (workspaceSlug && projectId) {
       service
-        .getAffineDoc(workspaceSlug.toString(), projectId.toString())
+        .getWikiDoc(workspaceSlug.toString(), projectId.toString())
         .then((r) => {
           if (!cancelled) setDocs(r ?? EMPTY);
           return undefined;
@@ -74,13 +74,13 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     doc_id?: string;
     title?: string;
     google_drive_url?: string;
-    mattermost_channel_url?: string;
+    chat_url?: string;
     github_repo_urls?: string[];
   }) => {
     if (!workspaceSlug || !projectId) return;
     setSaving(true);
     try {
-      const r = await service.setAffineDoc(workspaceSlug.toString(), projectId.toString(), data);
+      const r = await service.setWikiDoc(workspaceSlug.toString(), projectId.toString(), data);
       setDocs(r ?? EMPTY);
       setEditing(null);
     } finally {
@@ -88,10 +88,10 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     }
   };
 
-  const affineLink =
-    docs.doc_id && docs.workspace_id ? `${AFFINE_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}` : null;
+  // Colanode addresses a doc as /<workspace>/<doc> — any extra segment 404s.
+  const wikiLink = docs.doc_id && docs.workspace_id ? `${WIKI_BASE}/${docs.workspace_id}/${docs.doc_id}` : null;
   const driveLink = docs.google_drive_url;
-  const chatLink = docs.mattermost_channel_url;
+  const chatLink = docs.chat_url;
 
   const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent-strong";
   const editBtn =
@@ -106,21 +106,18 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <span className="font-medium text-primary">Project documentation</span>
           <span className="text-secondary">
             {" "}
-            — the project's wiki (AFFiNE), files (Google Drive), chat channel (Mattermost) and GitHub repos. Add any
-            missing link below.
+            — the project's wiki, files (Google Drive), chat channel and GitHub repos. Add any missing link below.
           </span>
         </div>
       </div>
 
-      {/* AFFiNE row */}
+      {/* Wiki row */}
       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
         <BookOpen className="size-4 flex-shrink-0 text-secondary" />
-        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
-          AFFiNE wiki
-        </span>
-        {affineLink ? (
+        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">Wiki</span>
+        {wikiLink ? (
           <a
-            href={affineLink}
+            href={wikiLink}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-1.5 text-13 font-medium text-accent-primary hover:underline"
@@ -132,7 +129,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <span className="text-13 text-tertiary">Not linked yet — add the wiki page so everyone can find it.</span>
         )}
         <div className="flex-grow" />
-        {editing === "affine" ? (
+        {editing === "wiki" ? (
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={draftTitle}
@@ -143,7 +140,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
             <input
               value={draftDoc}
               onChange={(e) => setDraftDoc(e.target.value)}
-              placeholder="AFFiNE doc id or URL"
+              placeholder="Wiki doc id or URL"
               className={cn(input, "w-56")}
             />
             <button
@@ -165,12 +162,12 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
             onClick={() => {
               setDraftDoc(docs.doc_id ?? "");
               setDraftTitle(docs.title ?? "");
-              setEditing("affine");
+              setEditing("wiki");
             }}
             className={editBtn}
           >
-            {affineLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
-            {affineLink ? "Change" : "Add link"}
+            {wikiLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
+            {wikiLink ? "Change" : "Add link"}
           </button>
         )}
       </div>
@@ -231,7 +228,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         )}
       </div>
 
-      {/* Mattermost channel row */}
+      {/* Chat channel row */}
       <div className="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-2.5">
         <MessageSquare className="size-4 flex-shrink-0 text-secondary" />
         <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
@@ -244,12 +241,12 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
             rel="noreferrer"
             className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline"
           >
-            Open the Mattermost channel
+            Open the chat channel
             <ExternalLink className="size-3.5 flex-shrink-0" />
           </a>
         ) : (
           <span className="text-13 text-tertiary">
-            Not linked yet — paste the project's Mattermost channel link for notifications.
+            Not linked yet — paste the project's chat channel link for notifications.
           </span>
         )}
         <div className="flex-grow" />
@@ -258,12 +255,12 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
             <input
               value={draftChat}
               onChange={(e) => setDraftChat(e.target.value)}
-              placeholder="https://chat.arribada.org/arribada/channels/…"
+              placeholder="https://chat.arribada.org/…"
               className={cn(input, "w-64")}
             />
             <button
               type="button"
-              onClick={() => persist({ mattermost_channel_url: draftChat.trim() })}
+              onClick={() => persist({ chat_url: draftChat.trim() })}
               disabled={saving}
               className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
             >
@@ -278,7 +275,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <button
             type="button"
             onClick={() => {
-              setDraftChat(docs.mattermost_channel_url ?? "");
+              setDraftChat(docs.chat_url ?? "");
               setEditing("chat");
             }}
             className={editBtn}

@@ -61,6 +61,7 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         .getAffineDoc(workspaceSlug.toString(), projectId.toString())
         .then((r) => {
           if (!cancelled) setDocs(r ?? EMPTY);
+          return undefined;
         })
         .catch(() => {});
     }
@@ -69,7 +70,13 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     };
   }, [workspaceSlug, projectId, service]);
 
-  const persist = async (data: { doc_id?: string; title?: string; google_drive_url?: string; mattermost_channel_url?: string }) => {
+  const persist = async (data: {
+    doc_id?: string;
+    title?: string;
+    google_drive_url?: string;
+    mattermost_channel_url?: string;
+    github_repo_urls?: string[];
+  }) => {
     if (!workspaceSlug || !projectId) return;
     setSaving(true);
     try {
@@ -81,12 +88,14 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
     }
   };
 
-  const affineLink = docs.doc_id && docs.workspace_id ? `${AFFINE_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}` : null;
+  const affineLink =
+    docs.doc_id && docs.workspace_id ? `${AFFINE_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}` : null;
   const driveLink = docs.google_drive_url;
   const chatLink = docs.mattermost_channel_url;
 
   const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent-strong";
-  const editBtn = "flex items-center gap-1 rounded border border-subtle px-2 py-1 text-12 text-secondary hover:bg-layer-2";
+  const editBtn =
+    "flex items-center gap-1 rounded border border-subtle px-2 py-1 text-12 text-secondary hover:bg-layer-2";
 
   return (
     <div className="mb-3 rounded-lg border border-subtle bg-layer-1">
@@ -97,7 +106,8 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           <span className="font-medium text-primary">Project documentation</span>
           <span className="text-secondary">
             {" "}
-            — the project's wiki (AFFiNE), files (Google Drive), chat channel (Mattermost) and GitHub repos. Add any missing link below.
+            — the project's wiki (AFFiNE), files (Google Drive), chat channel (Mattermost) and GitHub repos. Add any
+            missing link below.
           </span>
         </div>
       </div>
@@ -105,9 +115,16 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
       {/* AFFiNE row */}
       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
         <BookOpen className="size-4 flex-shrink-0 text-secondary" />
-        <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">AFFiNE wiki</span>
+        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
+          AFFiNE wiki
+        </span>
         {affineLink ? (
-          <a href={affineLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 font-medium text-accent-primary hover:underline">
+          <a
+            href={affineLink}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 text-13 font-medium text-accent-primary hover:underline"
+          >
             {docs.title || "Open the project wiki"}
             <ExternalLink className="size-3.5" />
           </a>
@@ -117,9 +134,24 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         <div className="flex-grow" />
         {editing === "affine" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="Label (optional)" className={cn(input, "w-36")} />
-            <input value={draftDoc} onChange={(e) => setDraftDoc(e.target.value)} placeholder="AFFiNE doc id or URL" className={cn(input, "w-56")} />
-            <button type="button" onClick={() => persist({ doc_id: draftDoc.trim(), title: draftTitle.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+            <input
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              placeholder="Label (optional)"
+              className={cn(input, "w-36")}
+            />
+            <input
+              value={draftDoc}
+              onChange={(e) => setDraftDoc(e.target.value)}
+              placeholder="AFFiNE doc id or URL"
+              className={cn(input, "w-56")}
+            />
+            <button
+              type="button"
+              onClick={() => persist({ doc_id: draftDoc.trim(), title: draftTitle.trim() })}
+              disabled={saving}
+              className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
+            >
               <Check className="size-3.5" />
               {saving ? "Saving…" : "Save"}
             </button>
@@ -146,9 +178,16 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
       {/* Google Drive row */}
       <div className="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-2.5">
         <FolderOpen className="size-4 flex-shrink-0 text-secondary" />
-        <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">Google Drive</span>
+        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
+          Google Drive
+        </span>
         {driveLink ? (
-          <a href={driveLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline">
+          <a
+            href={driveLink}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline"
+          >
             Open the Drive folder
             <ExternalLink className="size-3.5 flex-shrink-0" />
           </a>
@@ -158,8 +197,18 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
         <div className="flex-grow" />
         {editing === "drive" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <input value={draftDrive} onChange={(e) => setDraftDrive(e.target.value)} placeholder="https://drive.google.com/…" className={cn(input, "w-64")} />
-            <button type="button" onClick={() => persist({ google_drive_url: draftDrive.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+            <input
+              value={draftDrive}
+              onChange={(e) => setDraftDrive(e.target.value)}
+              placeholder="https://drive.google.com/…"
+              className={cn(input, "w-64")}
+            />
+            <button
+              type="button"
+              onClick={() => persist({ google_drive_url: draftDrive.trim() })}
+              disabled={saving}
+              className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
+            >
               <Check className="size-3.5" />
               {saving ? "Saving…" : "Save"}
             </button>
@@ -185,20 +234,39 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
       {/* Mattermost channel row */}
       <div className="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-2.5">
         <MessageSquare className="size-4 flex-shrink-0 text-secondary" />
-        <span className="w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">Chat channel</span>
+        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
+          Chat channel
+        </span>
         {chatLink ? (
-          <a href={chatLink} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline">
+          <a
+            href={chatLink}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline"
+          >
             Open the Mattermost channel
             <ExternalLink className="size-3.5 flex-shrink-0" />
           </a>
         ) : (
-          <span className="text-13 text-tertiary">Not linked yet — paste the project's Mattermost channel link for notifications.</span>
+          <span className="text-13 text-tertiary">
+            Not linked yet — paste the project's Mattermost channel link for notifications.
+          </span>
         )}
         <div className="flex-grow" />
         {editing === "chat" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <input value={draftChat} onChange={(e) => setDraftChat(e.target.value)} placeholder="https://chat.arribada.org/arribada/channels/…" className={cn(input, "w-64")} />
-            <button type="button" onClick={() => persist({ mattermost_channel_url: draftChat.trim() })} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+            <input
+              value={draftChat}
+              onChange={(e) => setDraftChat(e.target.value)}
+              placeholder="https://chat.arribada.org/arribada/channels/…"
+              className={cn(input, "w-64")}
+            />
+            <button
+              type="button"
+              onClick={() => persist({ mattermost_channel_url: draftChat.trim() })}
+              disabled={saving}
+              className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
+            >
               <Check className="size-3.5" />
               {saving ? "Saving…" : "Save"}
             </button>
@@ -224,18 +292,31 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
       {/* GitHub repos row (a project can span several) */}
       <div className="flex flex-wrap items-start gap-3 border-t border-subtle px-4 py-2.5">
         <Github className="mt-0.5 size-4 flex-shrink-0 text-secondary" />
-        <span className="mt-0.5 w-24 flex-shrink-0 text-12 font-medium uppercase tracking-wide text-secondary/80">GitHub repos</span>
+        <span className="mt-0.5 w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
+          GitHub repos
+        </span>
         <div className="flex min-w-0 flex-grow flex-col gap-1.5">
           {repos.length === 0 && editing !== "github" && (
             <span className="text-13 text-tertiary">Not linked yet — add the project's GitHub repo(s).</span>
           )}
           {repos.map((url) => (
             <span key={url} className="flex items-center gap-1.5">
-              <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-1 truncate text-13 font-medium text-accent-primary hover:underline">
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 truncate text-13 font-medium text-accent-primary hover:underline"
+              >
                 {repoLabel(url)}
                 <ExternalLink className="size-3 flex-shrink-0" />
               </a>
-              <button type="button" onClick={() => removeRepo(url)} disabled={saving} className="text-tertiary hover:text-red-600" title="Remove">
+              <button
+                type="button"
+                onClick={() => removeRepo(url)}
+                disabled={saving}
+                className="hover:text-red-600 text-tertiary"
+                title="Remove"
+              >
                 <X className="size-3.5" />
               </button>
             </span>
@@ -249,7 +330,12 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
                 placeholder="https://github.com/arribada/…"
                 className={cn(input, "w-64")}
               />
-              <button type="button" onClick={addRepo} disabled={saving} className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50">
+              <button
+                type="button"
+                onClick={addRepo}
+                disabled={saving}
+                className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
+              >
                 <Check className="size-3.5" />
                 {saving ? "Saving…" : "Add"}
               </button>
@@ -260,7 +346,14 @@ export const AffineWikiPanel = observer(function AffineWikiPanel() {
           )}
         </div>
         {editing !== "github" && (
-          <button type="button" onClick={() => { setDraftRepo(""); setEditing("github"); }} className={editBtn}>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftRepo("");
+              setEditing("github");
+            }}
+            className={editBtn}
+          >
             <Plus className="size-3" />
             Add repo
           </button>

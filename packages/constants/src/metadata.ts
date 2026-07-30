@@ -4,14 +4,14 @@
  * See the LICENSE file for details.
  */
 
-export const SITE_NAME = "Plane | Simple, extensible, open-source project management tool.";
-export const SITE_TITLE = "Plane | Simple, extensible, open-source project management tool.";
+export const SITE_NAME = "Arribada | Conservation technology project management";
+export const SITE_TITLE = "Arribada | Conservation technology project management";
 export const SITE_DESCRIPTION =
-  "Open-source project management tool to manage work items, cycles, and product roadmaps easily";
+  "Project management for the Arribada Initiative — plan and track conservation technology hardware, firmware and field deployments";
 export const SITE_KEYWORDS =
-  "software development, plan, ship, software, accelerate, code management, release management, project management, work items tracking, agile, scrum, kanban, collaboration";
+  "Arribada Initiative, conservation technology, wildlife tracking, biologging, hardware development, firmware, field deployments, project management, work items tracking, roadmaps, collaboration";
 export const SITE_URL = "https://app.plane.so/";
-export const TWITTER_USER_NAME = "Plane | Simple, extensible, open-source project management tool.";
+export const TWITTER_USER_NAME = "Arribada | Conservation technology project management";
 
 // Plane Sites Metadata
 export const SPACE_SITE_NAME = "Plane Publish | Make your Plane boards and roadmaps pubic with just one-click. ";

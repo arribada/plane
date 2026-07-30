@@ -1,6 +1,6 @@
 {
-  "name": "Plane",
-  "short_name": "Plane",
+  "name": "Arribada",
+  "short_name": "Arribada",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
@@ -19,7 +19,7 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#FFFFFF",
+  "theme_color": "#0A1929",
   "background_color": "#FFFFFF",
   "start_url": "/",
   "display": "standalone",

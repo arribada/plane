@@ -1,0 +1,19 @@
+<!--
+  Copyright (c) 2026-present Arribada Initiative and contributors
+  SPDX-License-Identifier: AGPL-3.0-only
+  See the LICENSE file for details.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Arribada">
+  <!-- Opaque navy tile: the tab strip is light in one theme and dark in the
+       other, and a transparent mark would vanish in one of them. -->
+  <rect width="64" height="64" rx="14" fill="#0a1929" />
+  <!-- Same "A" geometry as PlaneLogo, inset so the tile's corner radius does
+       not clip the legs. -->
+  <g transform="translate(10 10) scale(0.6875)">
+    <path
+      d="M32 3L62 61H52.7L44.9 46H19.1L11.3 61H2ZM23.2 38H40.8L32 21Z"
+      fill="#1de9b6"
+      fill-rule="evenodd"
+    />
+  </g>
+</svg>

@@ -47,8 +47,8 @@ export const CustomThemeSelector = observer(function CustomThemeSelector() {
     // Fallback to defaults
     return {
       theme: "custom",
-      primary: "#3f76ff",
-      background: "#1a1a1a",
+      primary: "#1de9b6",
+      background: "#0a1929",
       darkPalette: false,
     };
   }, [userProfile?.theme]);

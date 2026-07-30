@@ -10,10 +10,11 @@ import { Links, Meta, Outlet, Scripts } from "react-router";
 import type { LinksFunction } from "react-router";
 import { ThemeProvider, useTheme } from "next-themes";
 // plane imports
-import { SITE_DESCRIPTION, SITE_NAME } from "@plane/constants";
+import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME } from "@plane/constants";
 import { cn } from "@plane/utils";
 // types
 // assets
+import arribadaFavicon from "@/app/assets/favicon/arribada-favicon.svg?url";
 import favicon16 from "@/app/assets/favicon/favicon-16x16.png?url";
 import favicon32 from "@/app/assets/favicon/favicon-32x32.png?url";
 import faviconIco from "@/app/assets/favicon/favicon.ico?url";
@@ -28,14 +29,20 @@ import { LogoSpinner } from "@/components/common/logo-spinner";
 import { CustomErrorComponent } from "./error";
 import { AppProvider } from "./provider";
 // fonts
+// oxlint-disable-next-line import/no-unassigned-import -- side-effect import: injects the Inter @font-face rules
 import "@fontsource-variable/inter";
 import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+// oxlint-disable-next-line import/no-unassigned-import -- side-effect import: injects the Material Symbols @font-face rules
 import "@fontsource/material-symbols-rounded";
+// oxlint-disable-next-line import/no-unassigned-import -- side-effect import: injects the IBM Plex Mono @font-face rules
 import "@fontsource/ibm-plex-mono";
 
-const APP_TITLE = "Plane | Simple, extensible, open-source project management tool.";
+const APP_TITLE = SITE_NAME;
 
 export const links: LinksFunction = () => [
+  // First, and SVG: browsers offered several icons prefer the vector one, so the
+  // Arribada mark wins over the Plane PNGs still sitting in this folder.
+  { rel: "icon", type: "image/svg+xml", href: arribadaFavicon },
   { rel: "icon", type: "image/png", sizes: "32x32", href: favicon32 },
   { rel: "icon", type: "image/png", sizes: "16x16", href: favicon16 },
   { rel: "shortcut icon", href: faviconIco },
@@ -62,9 +69,9 @@ export function Layout({ children }: { children: ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#fff" />
+        <meta name="theme-color" content="#0a1929" />
         {/* Meta info for PWA */}
-        <meta name="application-name" content="Plane" />
+        <meta name="application-name" content="Arribada" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content={SITE_NAME} />
@@ -98,26 +105,17 @@ export const meta: Route.MetaFunction = () => [
   { title: APP_TITLE },
   { name: "description", content: SITE_DESCRIPTION },
   { property: "og:title", content: APP_TITLE },
-  {
-    property: "og:description",
-    content: "Open-source project management tool to manage work items, cycles, and product roadmaps easily",
-  },
-  { property: "og:url", content: "https://app.plane.so/" },
+  { property: "og:description", content: SITE_DESCRIPTION },
   { property: "og:image", content: ogImage },
   { property: "og:image:width", content: "1200" },
   { property: "og:image:height", content: "630" },
-  { property: "og:image:alt", content: "Plane - Modern project management" },
-  {
-    name: "keywords",
-    content:
-      "software development, plan, ship, software, accelerate, code management, release management, project management, work item tracking, agile, scrum, kanban, collaboration",
-  },
-  { name: "twitter:site", content: "@planepowers" },
+  { property: "og:image:alt", content: "Arribada - Conservation technology project management" },
+  { name: "keywords", content: SITE_KEYWORDS },
   { name: "twitter:card", content: "summary_large_image" },
   { name: "twitter:image", content: ogImage },
   { name: "twitter:image:width", content: "1200" },
   { name: "twitter:image:height", content: "630" },
-  { name: "twitter:image:alt", content: "Plane - Modern project management" },
+  { name: "twitter:image:alt", content: "Arribada - Conservation technology project management" },
 ];
 
 export default function Root() {

@@ -162,19 +162,19 @@
     --neutral-1100: oklch(0.4377 0.0066 230.87);
     --neutral-1200: oklch(0.2378 0.0029 230.83);
     --neutral-black: oklch(0.1472 0.0034 230.83);
-    /* Brand colors */
-    --brand-100: oklch(0.9847 0.0083 236.56);
-    --brand-200: oklch(0.9715 0.0167 230.9);
-    --brand-300: oklch(0.9428 0.0341 230.22);
-    --brand-400: oklch(0.9008 0.0587 232);
-    --brand-500: oklch(0.8414 0.0947 233.08);
-    --brand-600: oklch(0.7649 0.1392 236.3);
-    --brand-700: oklch(0.6766 0.1665 243.91);
-    --brand-900: oklch(0.4347 0.104093 242.4823);
-    --brand-1000: oklch(0.3399 0.0783 240.32);
-    --brand-1100: oklch(0.2626 0.0578 237.5);
-    --brand-1200: oklch(0.2093 0.0438 234.02);
-    --brand-default: oklch(0.4799 0.1158 242.91);
+    /* Brand colors — Arribada teal (#1de9b6 sits at ~oklch(0.85 0.14 172)) */
+    --brand-100: oklch(0.9847 0.012 172);
+    --brand-200: oklch(0.9715 0.024 172);
+    --brand-300: oklch(0.9428 0.047 172);
+    --brand-400: oklch(0.9008 0.078 172);
+    --brand-500: oklch(0.8414 0.115 172);
+    --brand-600: oklch(0.7649 0.132 172);
+    --brand-700: oklch(0.6766 0.12 172);
+    --brand-900: oklch(0.4347 0.08 172);
+    --brand-1000: oklch(0.3399 0.064 172);
+    --brand-1100: oklch(0.2626 0.049 172);
+    --brand-1200: oklch(0.2093 0.039 172);
+    --brand-default: oklch(0.49 0.088 172);
     /* Green/Success colors */
     --green-100: oklch(0.9819 0.0181 155.83);
     --green-200: oklch(0.9624 0.0434 156.74);
@@ -413,19 +413,21 @@
       --neutral-1100: oklch(0.8455 0.0035 230.72);
       --neutral-1200: oklch(0.9235 0.001733 230.6853);
       --neutral-white: oklch(0.9702 0 0);
-      /* Brand colors */
-      --brand-100: oklch(0.2029 0.03 232.24);
-      --brand-200: oklch(0.2513 0.0418 234.6);
-      --brand-300: oklch(0.3208 0.05806 236.44);
-      --brand-400: oklch(0.4088 0.077702 237.13);
-      --brand-500: oklch(0.4511 0.087024 237.37);
-      --brand-700: oklch(0.7408 0.100309 233.89);
-      --brand-800: oklch(0.8318 0.065614 232.07);
-      --brand-900: oklch(0.8969 0.040089 231.35);
-      --brand-1000: oklch(0.9409 0.022883 231.01);
-      --brand-1100: oklch(0.9704 0.011421 230.82);
-      --brand-1200: oklch(0.9856 0.005 228.82);
-      --brand-default: oklch(0.6311 0.126281 238.01);
+      /* Brand colors — Arribada teal (#1de9b6 sits at ~oklch(0.85 0.14 172)) */
+      --brand-100: oklch(0.2029 0.03 172);
+      --brand-200: oklch(0.2513 0.042 172);
+      --brand-300: oklch(0.3208 0.058 172);
+      --brand-400: oklch(0.4088 0.076 172);
+      --brand-500: oklch(0.4511 0.085 172);
+      --brand-700: oklch(0.7408 0.125 172);
+      --brand-800: oklch(0.8318 0.09 172);
+      --brand-900: oklch(0.8969 0.056 172);
+      --brand-1000: oklch(0.9409 0.032 172);
+      --brand-1100: oklch(0.9704 0.016 172);
+      --brand-1200: oklch(0.9856 0.007 172);
+      /* Not the full-strength #1de9b6: held near the lightness the blue default
+         had, so --txt-on-color keeps the contrast it was designed against. */
+      --brand-default: oklch(0.64 0.12 172);
       /* Green colors */
       --green-100: oklch(0.2721 0.067322 152.52);
       --green-200: oklch(0.3935 0.0957 152.28);

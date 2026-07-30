@@ -70,10 +70,12 @@ export function AuthHeaderBase(props: TAuthHeaderBase) {
   const { pageTitle, additionalAction } = props;
   return (
     <>
-      <PageHead title={pageTitle + " - Plane"} />
+      <PageHead title={pageTitle + " - Arribada"} />
       <div className="sticky top-0 flex w-full flex-shrink-0 items-center justify-between gap-6">
         <Link href="/">
-          <PlaneLockup height={20} width={95} className="text-primary" />
+          {/* Height-only so the wider "Arribada" wordmark is not squeezed into the
+              width the "Plane" lockup used to need. */}
+          <PlaneLockup className="h-5 w-auto text-primary" />
         </Link>
         {additionalAction}
       </div>

@@ -89,7 +89,7 @@ export default {
       already_have_an_account: "Vous avez déjà un compte ?",
       login: "Se connecter",
       create_account: "Créer un compte",
-      new_to_plane: "Nouveau sur Plane ?",
+      new_to_plane: "Nouveau sur Arribada ?",
       back_to_sign_in: "Retour à la connexion",
       resend_in: "Renvoyer dans {seconds} secondes",
       sign_in_with_unique_code: "Se connecter avec un code unique",

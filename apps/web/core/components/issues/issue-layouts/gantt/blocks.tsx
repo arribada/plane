@@ -12,7 +12,7 @@ import { Tooltip } from "@plane/propel/tooltip";
 import { ControlLink } from "@plane/ui";
 import { findTotalDaysInRange, generateWorkItemLink } from "@plane/utils";
 // components
-import { SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
+import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "@/components/gantt-chart/constants";
 // hooks
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useIssues } from "@/hooks/store/use-issues";
@@ -22,6 +22,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import useIssuePeekOverviewRedirection from "@/hooks/use-issue-peek-overview-redirection";
 import { usePlatformOS } from "@/hooks/use-platform-os";
+import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 // plane web imports
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
@@ -47,11 +48,13 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const {
     issue: { getIssueById },
   } = useIssueDetail();
+  const { sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
   // hooks
   const { isMobile } = usePlatformOS();
   const { handleRedirection } = useIssuePeekOverviewRedirection(isEpic);
 
   // derived values
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const issueDetails = getIssueById(issueId);
   const stateDetails =
     issueDetails && getProjectStates(issueDetails?.project_id)?.find((state) => state?.id == issueDetails?.state_id);
@@ -62,6 +65,13 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
+
+  const handleBlockKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    // Space would scroll the timeline otherwise
+    if (e.key === " ") e.preventDefault();
+    handleIssuePeekOverview();
+  };
 
   const duration = findTotalDaysInRange(issueDetails?.start_date, issueDetails?.target_date) || 0;
 
@@ -74,12 +84,17 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
             id={`issue-${issueId}`}
             className="space-between relative flex h-full w-full cursor-pointer items-center rounded-sm"
             style={style}
+            // a real button element would restyle the bar (UA text-align/appearance) and cannot legally wrap these divs
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
+            role="button"
+            tabIndex={0}
             onClick={handleIssuePeekOverview}
+            onKeyDown={handleBlockKeyDown}
           >
             <div className="absolute top-0 left-0 h-full w-full bg-surface-1/50" />
             <div
               className="sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13 text-primary"
-              style={{ left: `${SIDEBAR_WIDTH}px` }}
+              style={{ left: `${sidebarPaneWidth}px` }}
             >
               {issueDetails?.name}
             </div>

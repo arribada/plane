@@ -10,15 +10,16 @@ import { observer } from "mobx-react";
 import { useAutoScroller } from "@/hooks/use-auto-scroller";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 //
-import { HEADER_HEIGHT, SIDEBAR_WIDTH } from "../constants";
+import { GANTT_SIDEBAR_COLLAPSED_WIDTH, HEADER_HEIGHT } from "../constants";
 
 type Props = {
   ganttContainerRef: RefObject<HTMLDivElement>;
 };
 export const TimelineDragHelper = observer(function TimelineDragHelper(props: Props) {
   const { ganttContainerRef } = props;
-  const { isDragging } = useTimeLineChartStore();
+  const { isDragging, sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
-  useAutoScroller(ganttContainerRef, isDragging, SIDEBAR_WIDTH, HEADER_HEIGHT);
+  useAutoScroller(ganttContainerRef, isDragging, sidebarPaneWidth, HEADER_HEIGHT);
   return <></>;
 });

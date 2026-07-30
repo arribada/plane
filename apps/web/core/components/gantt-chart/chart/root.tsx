@@ -17,7 +17,7 @@ import { GanttChartHeader, GanttChartMainContent } from "@/components/gantt-char
 import { useUserProfile } from "@/hooks/store/user";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 //
-import { SIDEBAR_WIDTH } from "../constants";
+import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../constants";
 import { currentViewDataWithView } from "../data";
 import type { IMonthBlock, IMonthView, IWeekBlock } from "../views";
 import { getNumberOfDaysBetweenTwoDates, monthView, quarterView, weekView } from "../views";
@@ -51,6 +51,14 @@ const timelineViewHelpers = {
   week: weekView,
   month: monthView,
   quarter: quarterView,
+};
+
+// kept at module scope: it only reads the DOM and captures nothing from the component
+const updateCurrentLeftScrollPosition = (width: number) => {
+  const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement;
+  if (!scrollContainer) return;
+
+  scrollContainer.scrollLeft = width + scrollContainer?.scrollLeft;
 };
 
 export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRootProps) {
@@ -90,9 +98,12 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     updateCurrentViewData,
     updateRenderView,
     updateAllBlocksOnChartChangeWhileDragging,
+    sidebarWidth,
+    isSidebarCollapsed,
   } = useTimeLineChartStore();
   const { data } = useUserProfile();
   const startOfWeek = data?.start_of_the_week;
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   const updateCurrentViewRenderPayload = (side: null | "left" | "right", view: TGanttViews, targetDate?: Date) => {
     const selectedCurrentView: TGanttViews = view;
@@ -152,13 +163,6 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     setItemsContainerWidth(width + scrollContainer?.scrollLeft);
   };
 
-  const updateCurrentLeftScrollPosition = (width: number) => {
-    const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement;
-    if (!scrollContainer) return;
-
-    scrollContainer.scrollLeft = width + scrollContainer?.scrollLeft;
-  };
-
   const handleScrollToCurrentSelectedDate = (currentState: ChartDataType, date: Date) => {
     const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement;
     if (!scrollContainer) return;
@@ -171,7 +175,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     scrollWidth =
       Math.abs(daysDifference) * currentState.data.dayWidth -
       (clientVisibleWidth / 2 - currentState.data.dayWidth) +
-      SIDEBAR_WIDTH / 2;
+      sidebarPaneWidth / 2;
 
     scrollContainer.scrollLeft = scrollWidth;
   };

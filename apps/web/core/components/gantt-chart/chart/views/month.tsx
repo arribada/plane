@@ -7,7 +7,7 @@
 import { observer } from "mobx-react";
 // components
 import { cn } from "@plane/utils";
-import { HEADER_HEIGHT, SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
+import { GANTT_SIDEBAR_COLLAPSED_WIDTH, HEADER_HEIGHT } from "@/components/gantt-chart/constants";
 // helpers
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
@@ -17,8 +17,9 @@ import { getNumberOfDaysBetweenTwoDates } from "../../views/helpers";
 
 export const MonthChartView = observer(function MonthChartView(_props: any) {
   // chart hook
-  const { currentViewData, renderView } = useTimeLineChartStore();
+  const { currentViewData, renderView, sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
   const monthView: IMonthView = renderView;
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   if (!monthView) return <></>;
 
@@ -51,7 +52,7 @@ export const MonthChartView = observer(function MonthChartView(_props: any) {
                   <div
                     className="sticky z-[1] m-1 flex items-center bg-surface-1 px-3 py-1 text-14 font-regular whitespace-nowrap text-secondary capitalize"
                     style={{
-                      left: `${SIDEBAR_WIDTH}px`,
+                      left: `${sidebarPaneWidth}px`,
                     }}
                   >
                     {monthBlock?.title}

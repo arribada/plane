@@ -16,6 +16,7 @@ import type {
   EGanttBlockType,
 } from "@plane/types";
 import { renderFormattedPayloadDate } from "@plane/utils";
+import { GANTT_SIDEBAR_MAX_WIDTH, GANTT_SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
 import { currentViewDataWithView } from "@/components/gantt-chart/data";
 import {
   getDateFromPositionOnGantt,
@@ -36,6 +37,16 @@ type BlockData = {
   project_id?: string | undefined | null;
 };
 
+type TSidebarPreferences = {
+  width: number;
+  collapsed: boolean;
+};
+
+const SIDEBAR_STORAGE_KEY = "arribada.gantt.sidebar";
+
+const clampSidebarWidth = (width: number) =>
+  Math.min(Math.max(width, GANTT_SIDEBAR_MIN_WIDTH), GANTT_SIDEBAR_MAX_WIDTH);
+
 export interface IBaseTimelineStore {
   // observables
   currentView: TGanttViews;
@@ -46,6 +57,8 @@ export interface IBaseTimelineStore {
   isDependencyEnabled: boolean;
   blockIds: string[] | undefined;
   linkingSourceId: string | null;
+  sidebarWidth: number;
+  isSidebarCollapsed: boolean;
   //
   setBlockIds: (ids: string[]) => void;
   setLinkingSource: (id: string | null) => void;
@@ -67,6 +80,9 @@ export interface IBaseTimelineStore {
   updateBlockPosition: (id: string, deltaLeft: number, deltaWidth: number, ignoreDependencies?: boolean) => void;
   getNumberOfDaysFromPosition: (position: number | undefined) => number | undefined;
   setIsDragging: (isDragging: boolean) => void;
+  setSidebarWidth: (width: number) => void;
+  commitSidebarPreferences: () => void;
+  toggleSidebarCollapsed: (value?: boolean) => void;
   initGantt: () => void;
 
   getDateFromPositionOnGantt: (position: number, offsetDays: number) => Date | undefined;
@@ -84,12 +100,17 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   renderView: any = [];
   // click-to-link: the block whose dependency handle was clicked first
   linkingSourceId: string | null = null;
+  sidebarWidth: number = SIDEBAR_WIDTH;
+  isSidebarCollapsed: boolean = false;
 
   rootStore: RootStore;
 
   isDependencyEnabled = false;
 
   constructor(_rootStore: RootStore) {
+    // restore before makeObservable so the persisted size is the first observed value
+    this.restoreSidebarPreferences();
+
     makeObservable(this, {
       // observables
       blocksMap: observable,
@@ -100,6 +121,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       activeBlockId: observable.ref,
       renderView: observable,
       linkingSourceId: observable.ref,
+      sidebarWidth: observable.ref,
+      isSidebarCollapsed: observable.ref,
       // actions
       setIsDragging: action,
       setBlockIds: action.bound,
@@ -109,6 +132,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       updateActiveBlockId: action.bound,
       updateRenderView: action.bound,
       setLinkingSource: action.bound,
+      setSidebarWidth: action.bound,
+      toggleSidebarCollapsed: action.bound,
     });
 
     this.initGantt();
@@ -133,6 +158,59 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       this.isDragging = isDragging;
     });
   };
+
+  /**
+   * @description set the timeline sidebar width, clamped to the allowed range
+   * this fires on every mousemove of a resize drag, so it never touches localStorage;
+   * the caller commits once at the end of the drag via commitSidebarPreferences
+   * @param {number} width
+   */
+  setSidebarWidth = (width: number) => {
+    runInAction(() => {
+      this.sidebarWidth = clampSidebarWidth(width);
+    });
+  };
+
+  /**
+   * @description persist the current sidebar preferences, to be called at the end of a resize drag
+   */
+  commitSidebarPreferences = () => {
+    this.persistSidebarPreferences();
+  };
+
+  /**
+   * @description collapse/expand the timeline sidebar, toggles when no value is passed
+   * @param {boolean | undefined} value
+   */
+  toggleSidebarCollapsed = (value?: boolean) => {
+    runInAction(() => {
+      this.isSidebarCollapsed = value ?? !this.isSidebarCollapsed;
+    });
+    this.persistSidebarPreferences();
+  };
+
+  /** localStorage is unavailable in some browsers/privacy modes, so both sides are best-effort */
+  private restoreSidebarPreferences() {
+    try {
+      const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+      if (!stored) return;
+
+      const { width, collapsed } = JSON.parse(stored) as Partial<TSidebarPreferences>;
+      if (typeof width === "number" && Number.isFinite(width)) this.sidebarWidth = clampSidebarWidth(width);
+      if (typeof collapsed === "boolean") this.isSidebarCollapsed = collapsed;
+    } catch {
+      // keep the defaults
+    }
+  }
+
+  private persistSidebarPreferences() {
+    try {
+      const preferences: TSidebarPreferences = { width: this.sidebarWidth, collapsed: this.isSidebarCollapsed };
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(preferences));
+    } catch {
+      // width stays session-only
+    }
+  }
 
   /**
    * @description check if block is active

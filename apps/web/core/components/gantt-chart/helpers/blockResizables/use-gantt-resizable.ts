@@ -11,7 +11,7 @@ import type { IBlockUpdateDependencyData, IGanttBlock } from "@plane/types";
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 //
-import { DEFAULT_BLOCK_WIDTH, SIDEBAR_WIDTH } from "../../constants";
+import { DEFAULT_BLOCK_WIDTH, GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../../constants";
 
 export const useGanttResizable = (
   block: IGanttBlock,
@@ -28,8 +28,17 @@ export const useGanttResizable = (
   const ganttContainerDimensions = useRef<DOMRect | undefined>();
   const currMouseEvent = useRef<MouseEvent | undefined>();
   // states
-  const { currentViewData, updateBlockPosition, setIsDragging, getUpdatedPositionAfterDrag } = useTimeLineChartStore();
+  const {
+    currentViewData,
+    updateBlockPosition,
+    setIsDragging,
+    getUpdatedPositionAfterDrag,
+    sidebarWidth,
+    isSidebarCollapsed,
+  } = useTimeLineChartStore();
   const [isMoving, setIsMoving] = useState<"left" | "right" | "move" | undefined>();
+
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   // handle block resize from the left end
   const handleBlockDrag = (
@@ -46,7 +55,8 @@ export const useGanttResizable = (
     ganttContainerDimensions.current = ganttContainerElement.getBoundingClientRect();
 
     const dayWidth = currentViewData.data.dayWidth;
-    const mouseX = e.clientX - ganttContainerDimensions.current.left - SIDEBAR_WIDTH + ganttContainerElement.scrollLeft;
+    const mouseX =
+      e.clientX - ganttContainerDimensions.current.left - sidebarPaneWidth + ganttContainerElement.scrollLeft;
 
     // record position on drag start
     initialPositionRef.current = {
@@ -59,8 +69,8 @@ export const useGanttResizable = (
       if (currMouseEvent.current) handleMouseMove(currMouseEvent.current);
     };
 
-    const handleMouseMove = (e: MouseEvent) => {
-      currMouseEvent.current = e;
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      currMouseEvent.current = moveEvent;
       setIsMoving(dragDirection);
       setIsDragging(true);
 
@@ -68,14 +78,14 @@ export const useGanttResizable = (
 
       const { left: containerLeft } = ganttContainerDimensions.current;
 
-      const mouseX = e.clientX - containerLeft - SIDEBAR_WIDTH + ganttContainerElement.scrollLeft;
+      const currentMouseX = moveEvent.clientX - containerLeft - sidebarPaneWidth + ganttContainerElement.scrollLeft;
 
       let width = initialPositionRef.current.width;
       let marginLeft = initialPositionRef.current.marginLeft;
 
       if (dragDirection === "left") {
         // calculate new marginLeft and update the initial marginLeft to the newly calculated one
-        marginLeft = Math.round(mouseX / dayWidth) * dayWidth;
+        marginLeft = Math.round(currentMouseX / dayWidth) * dayWidth;
         // get Dimensions from dom's style
         const prevMarginLeft = parseFloat(resizableDiv.style.marginLeft.slice(0, -2));
         const prevWidth = parseFloat(resizableDiv.style.width.slice(0, -2));
@@ -85,18 +95,18 @@ export const useGanttResizable = (
         width = block.target_date ? prevWidth + marginDelta : DEFAULT_BLOCK_WIDTH;
       } else if (dragDirection === "right") {
         // calculate new width and update the initialMarginLeft using +=
-        width = Math.round(mouseX / dayWidth) * dayWidth - marginLeft;
+        width = Math.round(currentMouseX / dayWidth) * dayWidth - marginLeft;
 
         // If start date does not exist while dragging with right handle the revert to default width and adjust marginLeft accordingly
         if (!block.start_date) {
           // calculate new right and update the marginLeft to the newly calculated one
-          const marginRight = Math.round(mouseX / dayWidth) * dayWidth;
+          const marginRight = Math.round(currentMouseX / dayWidth) * dayWidth;
           marginLeft = marginRight - DEFAULT_BLOCK_WIDTH;
           width = DEFAULT_BLOCK_WIDTH;
         }
       } else if (dragDirection === "move") {
         // calculate new marginLeft and update the initial marginLeft using -=
-        marginLeft = Math.round((mouseX - initialPositionRef.current.offsetX) / dayWidth) * dayWidth;
+        marginLeft = Math.round((currentMouseX - initialPositionRef.current.offsetX) / dayWidth) * dayWidth;
       }
 
       // block needs to be at least 1 dayWidth Wide

@@ -12,13 +12,14 @@ import { MODULE_STATUS } from "@plane/constants";
 import { ModuleStatusIcon } from "@plane/propel/icons";
 import { Tooltip } from "@plane/propel/tooltip";
 // components
-import { SIDEBAR_WIDTH } from "@/components/gantt-chart/constants";
+import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "@/components/gantt-chart/constants";
 import { getBlockViewDetails } from "@/components/issues/issue-layouts/utils";
 // constants
 // hooks
 import { useModule } from "@/hooks/store/use-module";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
+import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 
 type Props = {
   moduleId: string;
@@ -31,8 +32,10 @@ export const ModuleGanttBlock = observer(function ModuleGanttBlock(props: Props)
   const { workspaceSlug } = useParams();
   // store hooks
   const { getModuleById } = useModule();
+  const { sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
   // derived values
   const moduleDetails = getModuleById(moduleId);
+  const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   // hooks
   const { isMobile } = usePlatformOS();
 
@@ -40,6 +43,16 @@ export const ModuleGanttBlock = observer(function ModuleGanttBlock(props: Props)
     moduleDetails,
     MODULE_STATUS.find((s) => s.value === moduleDetails?.status)?.color ?? ""
   );
+
+  const handleModuleRedirection = () =>
+    router.push(`/${workspaceSlug?.toString()}/projects/${moduleDetails?.project_id}/modules/${moduleDetails?.id}`);
+
+  const handleBlockKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    // Space would scroll the timeline otherwise
+    if (e.key === " ") e.preventDefault();
+    handleModuleRedirection();
+  };
 
   return (
     <Tooltip
@@ -55,16 +68,17 @@ export const ModuleGanttBlock = observer(function ModuleGanttBlock(props: Props)
       <div
         className="relative flex h-full w-full cursor-pointer items-center rounded-sm"
         style={blockStyle}
-        onClick={() =>
-          router.push(
-            `/${workspaceSlug?.toString()}/projects/${moduleDetails?.project_id}/modules/${moduleDetails?.id}`
-          )
-        }
+        // a real button element would restyle the bar (UA text-align/appearance) and cannot legally wrap these divs
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
+        role="button"
+        tabIndex={0}
+        onClick={handleModuleRedirection}
+        onKeyDown={handleBlockKeyDown}
       >
         <div className="absolute top-0 left-0 h-full w-full bg-surface-1/50" />
         <div
           className="sticky w-auto truncate overflow-hidden px-2.5 py-1 text-13 text-primary"
-          style={{ left: `${SIDEBAR_WIDTH}px` }}
+          style={{ left: `${sidebarPaneWidth}px` }}
         >
           {moduleDetails?.name}
         </div>

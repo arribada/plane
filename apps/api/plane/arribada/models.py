@@ -67,43 +67,43 @@ class IssueBaseline(models.Model):
         return f"baseline {self.issue_id} [{self.start_date} → {self.target_date}]"
 
 
-class ProjectAffineDoc(models.Model):
-    """Maps a Plane project to a doc in the self-hosted AFFiNE wiki (docs.arribada.org).
+class ProjectWikiDoc(models.Model):
+    """Maps a Plane project to a doc in the self-hosted wiki (docs.arribada.org).
 
     The project's Pages section shows a private deep link to this doc — opened in a
-    new tab where the user's own AFFiNE session applies, so nothing is published.
+    new tab where the user's own wiki session applies, so nothing is published.
     """
 
     id = models.UUIDField(
         default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
     )
     project = models.OneToOneField(
-        "db.Project", on_delete=models.CASCADE, related_name="arribada_affine_doc"
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_wiki_doc"
     )
     workspace_id = models.CharField(max_length=64, default="5b320010-0d8d-4ccc-b4f6-dbe339c42b4e")
     doc_id = models.CharField(max_length=64, null=True, blank=True)
     title = models.CharField(max_length=512, null=True, blank=True)
     # A Google Drive folder/file URL where the project's documents live — shown as a
-    # reference link on the Pages view so the whole team has access, next to AFFiNE.
+    # reference link on the Pages view so the whole team has access, next to the wiki.
     google_drive_url = models.CharField(max_length=1024, null=True, blank=True)
-    # The Mattermost channel this project's notifications go to (link on the Pages view).
-    mattermost_channel_url = models.CharField(max_length=1024, null=True, blank=True)
+    # The chat channel this project's notifications go to (link on the Pages view).
+    chat_url = models.CharField(max_length=1024, null=True, blank=True)
     # GitHub repos associated with this project (a project can span several). Used both
     # as reference links on the Pages view and to route GitHub-inbox task warnings.
     github_repo_urls = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "arribada_project_affine_doc"
-        verbose_name = "Project AFFiNE doc"
-        verbose_name_plural = "Project AFFiNE docs"
+        db_table = "arribada_project_wiki_doc"
+        verbose_name = "Project wiki doc"
+        verbose_name_plural = "Project wiki docs"
 
     def __str__(self):
-        return f"{self.project_id} -> affine {self.doc_id}"
+        return f"{self.project_id} -> wiki {self.doc_id}"
 
 
 class ProjectFolder(models.Model):
-    """A workspace-shared folder to group projects in the sidebar (like AFFiNE).
+    """A workspace-shared folder to group projects in the sidebar.
 
     Shared, not per-user: a project lead organizes for the whole team. Nesting via
     a self-FK. Separate from Plane's per-user favorite folders and from
@@ -194,6 +194,144 @@ class WorkspaceAiSettings(models.Model):
 
     def __str__(self):
         return f"{self.workspace_id} -> {self.provider}"
+
+
+# The disciplines a person can hold on a project. A suggestion list for the picker,
+# deliberately NOT a validator: engineering teams invent job titles faster than anyone
+# updates an enum, and a roster that refuses "acoustics" is a roster people stop filling
+# in. ProjectTeamMember.roles therefore accepts any string; this only seeds the UI.
+PROJECT_ROLES = [
+    ("hardware engineer", "Hardware engineer"),
+    ("embedded firmware", "Embedded firmware"),
+    ("software", "Software"),
+    ("mechanical", "Mechanical"),
+    ("designer", "Designer"),
+    ("data / science", "Data / science"),
+    ("field ops", "Field ops"),
+    ("QA / test", "QA / test"),
+    ("reviewer", "Reviewer"),
+    ("project manager", "Project manager"),
+    ("project lead", "Project lead"),
+]
+
+
+class ProjectTeamMember(models.Model):
+    """A person working on a project, and which disciplines they cover on it.
+
+    Two things upstream Plane cannot express. First, ProjectMember.role is a
+    *permission* level (20 admin / 15 member / 5 guest), not a job function, so there
+    is nowhere to record that someone is the firmware engineer. Second, and the reason
+    this is not simply an extra column on ProjectMember: a row here does not require a
+    Plane account. The instance has two accounts while the real team is twenty, so a
+    roster keyed on Plane users would be empty and the planning assistant would have
+    nobody to reason about.
+
+    `name` is therefore always present, `member` is filled in only when we know which
+    account belongs to this person, and `email` is the key we link on later — when that
+    person finally signs in, their address is what turns the row into a real user.
+    """
+
+    MANUAL = "manual"
+    WIKI = "wiki"
+    SOURCE_CHOICES = [(MANUAL, "Manual"), (WIKI, "Wiki")]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_team"
+    )
+    member = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    name = models.CharField(max_length=255)
+    email = models.CharField(max_length=255, blank=True, default="")
+    roles = models.JSONField(default=list, blank=True)
+    is_lead = models.BooleanField(default=False)
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default=MANUAL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_project_team_member"
+        ordering = ("-is_lead", "name")
+        verbose_name = "Project team member"
+        verbose_name_plural = "Project team members"
+        constraints = [
+            # Two partial unique indexes rather than an in-code check: the wiki cron and
+            # a human editing the roster write concurrently, and only the database can
+            # settle that race. The address is the identity whenever we have one; the
+            # name is the fallback for the (common) roster row with no address yet.
+            # Case folding is done in the callers, not here — a functional index over
+            # Lower(name) cannot be expressed without a raw migration, and every write
+            # path already normalises before it looks a person up.
+            models.UniqueConstraint(
+                fields=["project", "email"],
+                condition=~models.Q(email=""),
+                name="arribada_team_unique_project_email",
+            ),
+            models.UniqueConstraint(
+                fields=["project", "name"],
+                condition=models.Q(email=""),
+                name="arribada_team_unique_project_name",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} @ {self.project_id}"
+
+
+class IssueRole(models.Model):
+    """A discipline a work item needs, recorded independently of who holds it.
+
+    Plane can only express "this item belongs to this account". That is unusable here:
+    the instance has two accounts and the team is twenty, so nearly every item the
+    planning assistant reasons about has no-one it is allowed to name, and the answer
+    "firmware" — which is the useful one — had nowhere to live.
+
+    A row is therefore the *requirement*, not the assignment. The assignment is derived:
+    whoever currently holds this discipline on the project roster (ProjectTeamMember)
+    and can actually be given work is added to the item's assignees. Nobody qualifying
+    is the ordinary case, not an error — the requirement is still on the record, and the
+    day that person gets an account the roster sync hands them the work.
+
+    `role` is free text for the same reason ProjectTeamMember.roles is (see
+    PROJECT_ROLES): a vocabulary that refuses "acoustics" is a vocabulary people route
+    around. Matching against the roster is done case-insensitively by the callers.
+    """
+
+    MANUAL = "manual"
+    AI = "ai"
+    SOURCE_CHOICES = [(MANUAL, "Manual"), (AI, "AI")]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.ForeignKey(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_roles"
+    )
+    role = models.CharField(max_length=80)
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default=MANUAL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_issue_role"
+        ordering = ("role",)
+        verbose_name = "Issue role"
+        verbose_name_plural = "Issue roles"
+        constraints = [
+            # A database constraint rather than a read-then-write check: the assistant
+            # applying a plan and a human editing the same item are two writers, and
+            # only the database can settle that race. Every writer pairs it with
+            # bulk_create(ignore_conflicts=True) so the loser is a no-op, not a 500.
+            models.UniqueConstraint(
+                fields=["issue", "role"], name="arribada_issue_role_unique_issue_role"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.issue_id} needs {self.role}"
 
 
 class ProjectStatusUpdate(models.Model):

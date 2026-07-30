@@ -3,12 +3,14 @@
 # See the LICENSE file for details.
 
 import html
+import json
 import os
 import re
+import uuid
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework import status
@@ -24,12 +26,15 @@ from plane.db.models import IssueRelation
 from plane.db.models import Workspace
 
 from .models import (
+    PROJECT_ROLES,
     IssueBaseline,
-    ProjectAffineDoc,
+    IssueRole,
     ProjectFolder,
     ProjectFolderItem,
     ProjectSchedule,
     ProjectStatusUpdate,
+    ProjectTeamMember,
+    ProjectWikiDoc,
     WorkspaceAiSettings,
 )
 from .scheduling import build_edges, cascade, critical_path
@@ -88,6 +93,298 @@ def _github_url(text):
         return None
     url = re.split(r"[\"'<>\s]", html.unescape(m.group(0)))[0]
     return url.rstrip(".,;") or None
+
+
+def _uuid_list(values):
+    """Only the well-formed UUIDs in `values`, as strings.
+
+    A malformed id in a request body must never reach a UUIDField lookup: Django
+    raises there rather than simply not matching, which turns a client typo into a 500.
+    """
+    out = []
+    for value in values or []:
+        try:
+            out.append(str(uuid.UUID(str(value))))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _assignable_member_ids(project_id, member_ids=None):
+    """Users Plane will accept as assignees on this project.
+
+    Mirrors the check IssueSerializer.validate does (role >= MEMBER and is_active):
+    a guest or a deactivated member cannot own a work item, so proposing them would
+    produce a plan that silently fails to apply.
+    """
+    qs = ProjectMember.objects.filter(
+        project_id=project_id, is_active=True, role__gte=ROLE.MEMBER.value
+    )
+    if member_ids is not None:
+        qs = qs.filter(member_id__in=list(member_ids))
+    return {str(m) for m in qs.values_list("member_id", flat=True)}
+
+
+def _clean_roles(values):
+    """A person's disciplines: trimmed, de-duplicated, bounded, order preserved.
+
+    No membership test against PROJECT_ROLES — free text is accepted on purpose (see
+    the constant); this only stops a client writing a novel into a JSON column.
+    """
+    out = []
+    seen = set()
+    for value in values or []:
+        role = str(value).strip()[:80]
+        if not role or role.lower() in seen:
+            continue
+        seen.add(role.lower())
+        out.append(role)
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _team_rows(project_id):
+    """The project roster in the shape the UI and the Overview both consume.
+
+    `in_plane` and `assignable` are two different facts and the UI needs both to
+    explain itself: someone can be on the roster with no Plane account at all, or have
+    an account but not be a member of *this* project — in either case the assistant
+    cannot hand them a work item, and the user deserves to be told which it is.
+    """
+    rows = list(ProjectTeamMember.objects.filter(project_id=project_id))
+    linked = [str(r.member_id) for r in rows if r.member_id]
+    assignable = _assignable_member_ids(project_id, linked) if linked else set()
+    return [
+        {
+            "id": str(r.id),
+            "member_id": str(r.member_id) if r.member_id else None,
+            "name": r.name,
+            "email": r.email or "",
+            "roles": list(r.roles or []),
+            "is_lead": bool(r.is_lead),
+            "source": r.source,
+            "in_plane": bool(r.member_id),
+            "assignable": str(r.member_id) in assignable if r.member_id else False,
+        }
+        for r in rows
+    ]
+
+
+def _role_holders(project_id):
+    """{lowercased discipline: user_id} — who a work item needing that discipline goes to.
+
+    Only a roster entry Plane will actually accept as an assignee can hold a discipline
+    here (linked account, active project member, role >= MEMBER). Everyone else holds it
+    on paper, which is the normal state of this instance and not a failure: the
+    requirement stays recorded on the item and materialises the day they get an account.
+
+    Where two people share a discipline the lead wins, then the first by name. A stable
+    tie-break, not an arbitrary one — otherwise every reconcile pass could hand the same
+    work to a different engineer and the feed would fill with phantom re-assignments.
+    """
+    rows = list(ProjectTeamMember.objects.filter(project_id=project_id))
+    linked = [str(r.member_id) for r in rows if r.member_id]
+    assignable = _assignable_member_ids(project_id, linked) if linked else set()
+    holders = {}
+    for row in sorted(rows, key=lambda r: (not r.is_lead, (r.name or "").lower())):
+        if not row.member_id or str(row.member_id) not in assignable:
+            continue
+        for role in row.roles or []:
+            holders.setdefault(str(role).strip().lower(), str(row.member_id))
+    return holders
+
+
+def _role_vocabulary(project_id):
+    """The disciplines the planning assistant may name on this project.
+
+    The project's own roster comes first, because that is where the real vocabulary
+    lives — a project with an acoustics person needs the model to be able to answer
+    "acoustics". The standard list is appended as the floor, so a project whose roster
+    is still empty does not leave the model with nothing to say.
+    """
+    out, seen = [], set()
+    for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list("roles", flat=True):
+        for role in _clean_roles(roles):
+            if role.lower() not in seen:
+                seen.add(role.lower())
+                out.append(role)
+    for value, _label in PROJECT_ROLES:
+        if value.lower() not in seen:
+            seen.add(value.lower())
+            out.append(value)
+    return out
+
+
+def _materialise_issue_roles(project, actor_id, issue_ids=None, origin=None):
+    """Point every work item carrying a discipline at whoever currently holds it.
+
+    Called after anything that can change the answer — a roster edit, a wiki sync, a
+    plan being applied — because the roles are the durable fact and the assignments are
+    derived from them. ADD only: a person a human put on an item by hand is never taken
+    off, the same rule apply-plan follows.
+
+    Bounded and idempotent by construction: the roster, the roles and the current
+    assignee rows are read in a fixed number of queries whatever the size of the
+    project, and the write is one bulk_create whose ignore_conflicts absorbs both a
+    re-run and the race with someone assigning by hand in the UI. Returns the ids of
+    the issues that gained an owner.
+    """
+    from plane.bgtasks.issue_activities_task import issue_activity
+
+    holders = _role_holders(project.id)
+    if not holders:
+        return set()
+
+    role_rows = IssueRole.objects.filter(
+        issue__project_id=project.id, issue__deleted_at__isnull=True
+    )
+    if issue_ids is not None:
+        role_rows = role_rows.filter(issue_id__in=list(issue_ids))
+    wanted = defaultdict(set)
+    for issue_id, role in role_rows.values_list("issue_id", "role"):
+        holder = holders.get(str(role).strip().lower())
+        if holder:
+            wanted[str(issue_id)].add(holder)
+    if not wanted:
+        return set()
+
+    # Read through IssueAssignee and never the `assignees` m2m: assignee rows are
+    # soft-deleted and a m2m join does not apply the through model's manager, so a
+    # removed owner would still look present and the item would never be re-pointed.
+    current = defaultdict(set)
+    for a in IssueAssignee.objects.filter(
+        issue_id__in=list(wanted.keys()), deleted_at__isnull=True
+    ).values("issue_id", "assignee_id"):
+        current[str(a["issue_id"])].add(str(a["assignee_id"]))
+
+    new_links, gained = [], {}
+    for issue_id, owners in wanted.items():
+        to_add = owners - current[issue_id]
+        if not to_add:
+            continue
+        gained[issue_id] = to_add
+        for assignee_id in sorted(to_add):
+            # bulk_create bypasses save(), so the denormalised project/workspace columns
+            # have to be set here or the rows land with NULLs — same construction as
+            # IssueSerializer.create upstream.
+            new_links.append(
+                IssueAssignee(
+                    issue_id=issue_id,
+                    assignee_id=assignee_id,
+                    project_id=project.id,
+                    workspace_id=project.workspace_id,
+                    created_by_id=actor_id,
+                )
+            )
+    if not new_links:
+        return set()
+    IssueAssignee.objects.bulk_create(new_links, batch_size=100, ignore_conflicts=True)
+
+    # Writing the rows notifies nobody on its own; track_assignees inside this task is
+    # what creates the activity, subscribes the new owner and sends the mail — an
+    # assignment nobody is told about is not an assignment. Skipped entirely when there
+    # is no actor to attribute it to: the notification fan-out dereferences actor_id, and
+    # a silent hand-over beats a crashed roster sync.
+    if actor_id:
+        for issue_id, added in gained.items():
+            issue_activity.delay(
+                type="issue.activity.updated",
+                requested_data=json.dumps({"assignee_ids": sorted(current[issue_id] | added)}),
+                actor_id=str(actor_id),
+                issue_id=str(issue_id),
+                project_id=str(project.id),
+                current_instance=json.dumps({"assignee_ids": sorted(current[issue_id])}),
+                epoch=int(timezone.now().timestamp()),
+                notification=True,
+                origin=origin,
+            )
+    return set(gained.keys())
+
+
+def _plan_candidates(project_id, load_projects):
+    """The people the planning assistant may propose as owners, with the disciplines
+    and the current load it needs in order to choose between them.
+
+    Refs are opaque (P1, P2) for the same reason the work items get T-refs: a UUID in
+    a prompt is tokens wasted and an invitation to hallucinate a plausible one back.
+
+    Ordered by name rather than by load, so the ref a person gets does not move between
+    two runs and P1 is not systematically the idlest (and so the likeliest to be picked).
+    """
+    member_ids = _assignable_member_ids(project_id)
+    if not member_ids:
+        return []
+    roles_of = {}
+    for row in ProjectTeamMember.objects.filter(project_id=project_id, member_id__in=list(member_ids)):
+        if row.roles and str(row.member_id) not in roles_of:
+            roles_of[str(row.member_id)] = _clean_roles(row.roles)
+    load = _load_by_assignee(load_projects)
+    people = []
+    for user in User.objects.filter(id__in=list(member_ids)):
+        stats = load.get(str(user.id), {})
+        people.append(
+            {
+                "user_id": str(user.id),
+                "name": user.display_name or user.first_name or user.email,
+                "roles": roles_of.get(str(user.id), []),
+                "assigned": stats.get("assigned", 0),
+                "overdue": stats.get("overdue", 0),
+            }
+        )
+    people.sort(key=lambda c: (c["name"] or "").lower())
+    for index, person in enumerate(people):
+        person["ref"] = f"P{index + 1}"
+    return people
+
+
+def _users_by_email(slug, emails):
+    """{lowercased address: User} for active members of the workspace.
+
+    The roster links a person to a Plane account through their address and nothing
+    else. Matching on a display name would be a guess, and "Tom" is two different
+    people here — a wrong link would hand someone else's work to the wrong person.
+    """
+    wanted = {str(e).strip().lower() for e in emails if e and str(e).strip()}
+    if not wanted:
+        return {}
+    lookup = Q()
+    for address in wanted:
+        lookup |= Q(email__iexact=address)
+    users = User.objects.filter(lookup).filter(
+        id__in=WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values("member_id")
+    )
+    return {u.email.lower(): u for u in users if u.email}
+
+
+def _load_by_assignee(projects):
+    """Open assigned work per user across `projects`: how much, how much overdue,
+    how much due this week, and the estimate points behind it.
+
+    Shared by the workload view and by the planning assistant, which needs the same
+    numbers to spread work instead of piling it on whoever is already drowning.
+    Counted through IssueAssignee and never through the `assignees` m2m: assignee rows
+    are soft-deleted, and a m2m join does not apply the through model's manager, so an
+    issue whose only assignee was removed would still count against them.
+    """
+    today = timezone.now().date()
+    week = today + timedelta(days=7)
+    active = IssueAssignee.objects.filter(
+        issue__project__in=projects, issue__deleted_at__isnull=True, deleted_at__isnull=True
+    ).exclude(issue__state__group__in=["completed", "cancelled"])
+    return {
+        str(r["assignee_id"]): r
+        for r in active.values("assignee_id").annotate(
+            assigned=Count("issue_id", distinct=True),
+            overdue=Count("issue_id", filter=Q(issue__target_date__lt=today), distinct=True),
+            due_week=Count(
+                "issue_id",
+                filter=Q(issue__target_date__gte=today, issue__target_date__lte=week),
+                distinct=True,
+            ),
+            points=Sum("issue__point"),
+        )
+    }
 
 
 class PortfolioEndpoint(BaseAPIView):
@@ -400,14 +697,14 @@ class WorkspaceCriticalPathEndpoint(BaseAPIView):
         return Response({"issue_ids": sorted(critical), "edges": edges}, status=status.HTTP_200_OK)
 
 
-class ProjectAffineDocEndpoint(BaseAPIView):
-    """Read or set the AFFiNE wiki doc a project links to (private deep link)."""
+class ProjectWikiDocEndpoint(BaseAPIView):
+    """Read or set the wiki doc a project links to (private deep link)."""
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        mapping = ProjectAffineDoc.objects.filter(project_id=project_id).first()
+        mapping = ProjectWikiDoc.objects.filter(project_id=project_id).first()
         if not mapping:
             return Response(
                 {
@@ -415,7 +712,7 @@ class ProjectAffineDocEndpoint(BaseAPIView):
                     "workspace_id": None,
                     "title": None,
                     "google_drive_url": None,
-                    "mattermost_channel_url": None,
+                    "chat_url": None,
                     "github_repo_urls": [],
                 },
                 status=status.HTTP_200_OK,
@@ -426,20 +723,20 @@ class ProjectAffineDocEndpoint(BaseAPIView):
     def put(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        mapping, _ = ProjectAffineDoc.objects.get_or_create(project_id=project_id)
+        mapping, _ = ProjectWikiDoc.objects.get_or_create(project_id=project_id)
         # Partial update: only touch a field when its key is present, so editing the
-        # AFFiNE link never wipes the Drive link (and vice-versa).
+        # wiki link never wipes the Drive link (and vice-versa).
         if "doc_id" in request.data:
             doc_id = (request.data.get("doc_id") or "").strip() or None
-            if doc_id and "/" in doc_id:  # accept a full AFFiNE url or a bare doc id
+            if doc_id and "/" in doc_id:  # accept a full wiki url or a bare doc id
                 doc_id = doc_id.rstrip("/").split("/")[-1]
             mapping.doc_id = doc_id
         if "title" in request.data:
             mapping.title = (request.data.get("title") or "").strip() or None
         if "google_drive_url" in request.data:
             mapping.google_drive_url = (request.data.get("google_drive_url") or "").strip() or None
-        if "mattermost_channel_url" in request.data:
-            mapping.mattermost_channel_url = (request.data.get("mattermost_channel_url") or "").strip() or None
+        if "chat_url" in request.data:
+            mapping.chat_url = (request.data.get("chat_url") or "").strip() or None
         if "github_repo_urls" in request.data:
             raw = request.data.get("github_repo_urls") or []
             if not isinstance(raw, list):
@@ -462,7 +759,7 @@ class ProjectAffineDocEndpoint(BaseAPIView):
             "workspace_id": mapping.workspace_id,
             "title": mapping.title,
             "google_drive_url": mapping.google_drive_url,
-            "mattermost_channel_url": mapping.mattermost_channel_url,
+            "chat_url": mapping.chat_url,
             "github_repo_urls": mapping.github_repo_urls or [],
         }
 
@@ -689,32 +986,15 @@ class WorkloadEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
-        today = timezone.now().date()
-        week = today + timedelta(days=7)
         # Scope to the caller's own projects so Secret-project load doesn't leak.
-        active = IssueAssignee.objects.filter(
-            issue__project__in=_visible_projects(request, slug), issue__deleted_at__isnull=True
-        ).exclude(issue__state__group__in=["completed", "cancelled"])
-        agg = {
-            r["assignee_id"]: r
-            for r in active.values("assignee_id").annotate(
-                assigned=Count("issue_id", distinct=True),
-                overdue=Count("issue_id", filter=Q(issue__target_date__lt=today), distinct=True),
-                due_week=Count(
-                    "issue_id",
-                    filter=Q(issue__target_date__gte=today, issue__target_date__lte=week),
-                    distinct=True,
-                ),
-                points=Sum("issue__point"),
-            )
-        }
+        agg = _load_by_assignee(_visible_projects(request, slug))
         members = WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values_list(
             "member_id", flat=True
         )
         users = {u.id: u for u in User.objects.filter(id__in=list(members))}
         payload = []
         for uid, user in users.items():
-            a = agg.get(uid, {})
+            a = agg.get(str(uid), {})
             payload.append(
                 {
                     "user_id": str(uid),
@@ -843,7 +1123,7 @@ class GithubInboxEndpoint(BaseAPIView):
 
 class HubProjectsEndpoint(BaseAPIView):
     """All non-archived projects with task counts, progress, and the links defined
-    in each project's docs note (AFFiNE / Drive / Mattermost / GitHub) — powers the
+    in each project's docs note (Wiki / Drive / Chat / GitHub) — powers the
     dashboard Team-Hub project directory. Server-to-server: authed by the shared
     HUB_LINKS_SECRET header, not a user session (the caller is the dashboard, which
     has no Plane session)."""
@@ -851,7 +1131,7 @@ class HubProjectsEndpoint(BaseAPIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
-    AFFINE_BASE = "https://docs.arribada.org"
+    WIKI_BASE = "https://docs.arribada.org"
     PLANE_BASE = "https://plane.arribada.org"
 
     def get(self, request, slug):
@@ -871,7 +1151,7 @@ class HubProjectsEndpoint(BaseAPIView):
             .values("project_id")
             .annotate(total=Count("id"), completed=Count("id", filter=Q(state__group="completed")))
         }
-        docs = {d.project_id: d for d in ProjectAffineDoc.objects.filter(project_id__in=pids)}
+        docs = {d.project_id: d for d in ProjectWikiDoc.objects.filter(project_id__in=pids)}
 
         out = []
         for p in projects:
@@ -880,8 +1160,8 @@ class HubProjectsEndpoint(BaseAPIView):
             total = a.get("total", 0)
             completed = a.get("completed", 0)
             d = docs.get(pid)
-            affine_url = (
-                f"{self.AFFINE_BASE}/workspace/{d.workspace_id}/{d.doc_id}"
+            wiki_url = (
+                f"{self.WIKI_BASE}/{d.workspace_id}/{d.doc_id}"
                 if d and d.doc_id and d.workspace_id
                 else None
             )
@@ -894,14 +1174,191 @@ class HubProjectsEndpoint(BaseAPIView):
                     "total_issues": total,
                     "completed_issues": completed,
                     "progress": round(100 * completed / total) if total else 0,
-                    "affine_url": affine_url,
+                    "wiki_url": wiki_url,
                     "google_drive_url": (d.google_drive_url if d else None) or None,
-                    "mattermost_channel_url": (d.mattermost_channel_url if d else None) or None,
+                    "chat_url": (d.chat_url if d else None) or None,
                     "github_repo_urls": (d.github_repo_urls if d else []) or [],
                 }
             )
         out.sort(key=lambda x: (-x["total_issues"], x["name"].lower()))
         return Response(out, status=status.HTTP_200_OK)
+
+
+class TeamSyncEndpoint(BaseAPIView):
+    """Push project leads and their disciplines from the wiki into the Plane roster.
+
+    Server-to-server: the caller is a cron on the wiki host, which has no Plane
+    session — same shared-secret auth as HubProjectsEndpoint above.
+
+    Every entry that cannot be placed comes back in `unmatched` instead of raising. A
+    cron that 500s on one renamed project stops syncing the other nineteen, and nobody
+    notices for a week; a report the caller can log is worth more than a hard failure.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, slug):
+        secret = os.environ.get("HUB_LINKS_SECRET")
+        if not secret:
+            return Response({"error": "not_configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if request.headers.get("X-Hub-Secret") != secret:
+            return Response({"error": "unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        entries = request.data.get("entries")
+        if not isinstance(entries, list):
+            return Response({"error": "entries must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        projects = {str(p.id): p for p in Project.objects.filter(workspace__slug=slug)}
+        by_identifier = {}
+        for project in projects.values():
+            by_identifier.setdefault((project.identifier or "").strip().upper(), project)
+        # The wiki knows a project by the node id of its page, so that is a third way in
+        # — the cron does not have to carry Plane UUIDs around to be useful.
+        by_node = {
+            str(d.doc_id): str(d.project_id)
+            for d in ProjectWikiDoc.objects.filter(project__workspace__slug=slug)
+            if d.doc_id
+        }
+
+        def resolve_project(entry):
+            explicit = str(entry.get("project_id") or "").strip()
+            if explicit and explicit in projects:
+                return projects[explicit]
+            identifier = str(entry.get("project_identifier") or "").strip().upper()
+            if identifier and identifier in by_identifier:
+                return by_identifier[identifier]
+            node = str(entry.get("wiki_node_id") or "").strip()
+            if node and node in by_node:
+                return projects.get(by_node[node])
+            return None
+
+        # One query for every address in the batch, rather than one per entry.
+        users = _users_by_email(slug, [e.get("email") for e in entries if isinstance(e, dict)])
+
+        matched, updated, unmatched = 0, 0, []
+        touched = {}
+
+        def reject(entry, reason):
+            unmatched.append(
+                {
+                    "name": str(entry.get("name") or "") if isinstance(entry, dict) else "",
+                    "email": str(entry.get("email") or "") if isinstance(entry, dict) else "",
+                    "project_id": str(entry.get("project_id") or "") if isinstance(entry, dict) else "",
+                    "project_identifier": str(entry.get("project_identifier") or "")
+                    if isinstance(entry, dict)
+                    else "",
+                    "wiki_node_id": str(entry.get("wiki_node_id") or "") if isinstance(entry, dict) else "",
+                    "reason": reason,
+                }
+            )
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                reject({}, "entry is not an object")
+                continue
+            name = str(entry.get("name") or "").strip()[:255]
+            email = str(entry.get("email") or "").strip().lower()[:255]
+            if not name and not email:
+                reject(entry, "no name")
+                continue
+            if not name:
+                name = email
+            project = resolve_project(entry)
+            if not project:
+                reject(entry, "project not found")
+                continue
+            matched += 1
+
+            # Match a person by address first. Falling back to the name is only safe
+            # against a roster row that has no address yet — a row carrying a different
+            # address is a different person, not a rename, and merging two people is a
+            # far worse outcome than creating one duplicate row.
+            if email:
+                row = ProjectTeamMember.objects.filter(project=project, email__iexact=email).first()
+                if row is None:
+                    row = ProjectTeamMember.objects.filter(
+                        project=project, email="", name__iexact=name
+                    ).first()
+            else:
+                row = ProjectTeamMember.objects.filter(project=project, name__iexact=name).first()
+            creating = row is None
+            if creating:
+                row = ProjectTeamMember(project=project, source=ProjectTeamMember.WIKI)
+
+            before = (row.name, row.email, list(row.roles or []), row.is_lead, row.member_id)
+            row.name = name
+            # Only ever *adds* an address: the wiki not knowing someone's email must
+            # never erase one Plane already has.
+            if email:
+                row.email = email
+                # Linking on an address that belongs to a real workspace member is not
+                # inventing a Plane user — it is exactly the key the model exists to
+                # link on. Anything else leaves member null and the row stays truthful.
+                user = users.get(email)
+                if user is not None:
+                    row.member_id = user.id
+            roles = entry.get("roles")
+            if isinstance(roles, list):
+                row.roles = _clean_roles(roles)
+            is_lead = bool(entry.get("is_lead", True))
+            row.is_lead = is_lead
+            written = 0
+            try:
+                # Savepoint per entry: a collision on one person must not abort the run
+                # or leave the connection in a broken transaction for the next entry.
+                with transaction.atomic():
+                    if creating or before != (
+                        row.name,
+                        row.email,
+                        list(row.roles or []),
+                        row.is_lead,
+                        row.member_id,
+                    ):
+                        row.save()
+                        written += 1
+                    if is_lead:
+                        # The wiki's Project Leaders table is the register of record for
+                        # who leads what, so naming a lead here means "this person, not
+                        # the one who used to be" — otherwise a handover leaves two
+                        # leads on the project forever.
+                        written += (
+                            ProjectTeamMember.objects.filter(project=project, is_lead=True)
+                            .exclude(id=row.id)
+                            .update(is_lead=False)
+                        )
+            except IntegrityError:
+                # Rolled back, so nothing was written — report the entry instead.
+                matched -= 1
+                reject(entry, "conflicts with an existing roster entry")
+                continue
+            updated += written
+            if written:
+                touched[str(project.id)] = project
+
+        # The wiki is where a handover is recorded, so this is the pass that actually
+        # moves work when a project changes hands: every item asking for a discipline
+        # goes to whoever now holds it. Only projects this run wrote to.
+        reassigned = 0
+        for touched_project in touched.values():
+            # No user is signing this — the caller is a cron with no Plane session — so
+            # the activity is attributed to the project lead, falling back to whoever
+            # created the project.
+            actor_id = touched_project.project_lead_id or touched_project.created_by_id
+            reassigned += len(_materialise_issue_roles(touched_project, actor_id))
+
+        return Response(
+            # `matched` counts entries that found a project; `updated` counts roster
+            # rows actually written, so a no-op sync answers matched=n, updated=0.
+            # `reassigned` counts work items that gained an owner from the new roster.
+            {
+                "matched": matched,
+                "updated": updated,
+                "reassigned": reassigned,
+                "unmatched": unmatched,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectFoldersEndpoint(BaseAPIView):
@@ -1016,6 +1473,150 @@ class ProjectScheduleEndpoint(BaseAPIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class ProjectTeamEndpoint(BaseAPIView):
+    """Read or replace who works on a project and what they do on it.
+
+    The roster is people, not accounts (see ProjectTeamMember): it stays useful on an
+    instance with two Plane users and a team of twenty, and it is what lets the
+    planning assistant send firmware work to the firmware engineer.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {
+                "roles_vocabulary": [{"value": v, "label": label} for v, label in PROJECT_ROLES],
+                "team": _team_rows(project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def put(self, request, slug, project_id):
+        from plane.utils.host import base_host
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        payload = request.data.get("team")
+        if not isinstance(payload, list):
+            return Response({"error": "team must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        cleaned, seen = [], set()
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()[:255]
+            email = str(row.get("email") or "").strip().lower()[:255]
+            if not name and not email:
+                continue
+            if not name:
+                name = email
+            # A roster is a set of people. Two rows for the same person would trip the
+            # partial unique index mid-write, so collapse them here and keep the first.
+            key = ("email", email) if email else ("name", name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(
+                {
+                    "id": str(row.get("id") or "").strip(),
+                    "member_id": str(row.get("member_id") or "").strip(),
+                    "name": name,
+                    "email": email,
+                    "roles": _clean_roles(row.get("roles")),
+                    "is_lead": bool(row.get("is_lead")),
+                }
+            )
+
+        # An explicit member_id is only honoured for someone who actually has an active
+        # account in this workspace — otherwise `in_plane` would claim a Plane user that
+        # nobody can be assigned to, or point at an account outside the workspace.
+        wanted_members = _uuid_list(c["member_id"] for c in cleaned)
+        allowed_members = (
+            {
+                str(m)
+                for m in WorkspaceMember.objects.filter(
+                    workspace__slug=slug, is_active=True, member_id__in=wanted_members
+                ).values_list("member_id", flat=True)
+            }
+            if wanted_members
+            else set()
+        )
+        # Nobody typed a member_id? Then link on the address, the key the model exists
+        # for — with two accounts and twenty people, doing it by hand would never happen.
+        by_email = _users_by_email(slug, [c["email"] for c in cleaned if c["email"]])
+
+        existing = list(ProjectTeamMember.objects.filter(project_id=project_id))
+        by_id = {str(r.id): r for r in existing}
+        by_row_email = {r.email.lower(): r for r in existing if r.email}
+        # Name matching only ever claims a row that has no address yet. A row that
+        # already carries one is a known person, and quietly stripping their address
+        # because someone re-typed the same name is not a trade worth making.
+        by_row_name = {}
+        for r in existing:
+            if not r.email:
+                by_row_name.setdefault(r.name.strip().lower(), r)
+
+        resolved, keep = [], set()
+        for c in cleaned:
+            row = by_id.get(c["id"])
+            if row is None and c["email"]:
+                row = by_row_email.get(c["email"])
+            if row is None and not c["email"]:
+                row = by_row_name.get(c["name"].lower())
+            if row is None or str(row.id) in keep:
+                row = ProjectTeamMember(project_id=project_id, source=ProjectTeamMember.MANUAL)
+            row.name = c["name"]
+            row.email = c["email"]
+            row.roles = c["roles"]
+            row.is_lead = c["is_lead"]
+            # An unusable member_id falls back to the address rather than dropping the
+            # link entirely — the address is the more durable of the two.
+            member_id = c["member_id"] if c["member_id"] in allowed_members else ""
+            if not member_id and c["email"] in by_email:
+                member_id = str(by_email[c["email"]].id)
+            row.member_id = member_id or None
+            resolved.append(row)
+            keep.add(str(row.id))
+
+        try:
+            with transaction.atomic():
+                # Full replace: drop whoever is no longer on the list *before* writing,
+                # so a person renamed onto a freed name does not collide with the row
+                # that is about to disappear.
+                ProjectTeamMember.objects.filter(project_id=project_id).exclude(id__in=list(keep)).delete()
+                for row in resolved:
+                    row.save()
+        except IntegrityError:
+            # Two people swapping names in one request is the realistic way to get here.
+            return Response(
+                {"error": "Two roster entries collide on the same person; give them distinct names or emails."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # A roster edit is exactly the event that changes who holds a discipline, so the
+        # work items asking for one follow it here. Outside the transaction above: this
+        # fans out notifications, and a slow queue must not hold a write lock on the
+        # roster — and a failure here has not lost the roster edit.
+        repointed = _materialise_issue_roles(
+            project, request.user.id, origin=base_host(request=request, is_app=True)
+        )
+
+        return Response(
+            {
+                "roles_vocabulary": [{"value": v, "label": label} for v, label in PROJECT_ROLES],
+                "team": _team_rows(project_id),
+                # How many work items the roster edit just handed to somebody.
+                "reassigned": len(repointed),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class ProjectOverviewEndpoint(BaseAPIView):
     """Everything the project Overview page shows, in one call.
 
@@ -1061,6 +1662,22 @@ class ProjectOverviewEndpoint(BaseAPIView):
             issue__project_id=project_id, deleted_at__isnull=True
         ).values("issue_id")
         unassigned = issues.filter(still_open).exclude(id__in=assigned_issue_ids).count()
+
+        # Work items asking for a discipline nobody on the roster can be given work in.
+        # Not a bug and not the same thing as `unassigned`: the requirement is recorded
+        # and correct, there simply is no account to hand it to yet — which is the
+        # normal state of this instance and the one thing the Overview must say out loud,
+        # because otherwise it reads as the assistant having quietly done nothing.
+        holders = _role_holders(project_id)
+        roles_pending = len(
+            {
+                str(issue_id)
+                for issue_id, role in IssueRole.objects.filter(
+                    issue__project_id=project_id, issue__deleted_at__isnull=True
+                ).values_list("issue_id", "role")
+                if str(role).strip().lower() not in holders
+            }
+        )
 
         # Cycles and their roll-up: two grouped queries, not one per cycle.
         cycle_rows = list(
@@ -1152,16 +1769,16 @@ class ProjectOverviewEndpoint(BaseAPIView):
             )[:5]
         ]
 
-        docs = ProjectAffineDoc.objects.filter(project_id=project_id).first()
+        docs = ProjectWikiDoc.objects.filter(project_id=project_id).first()
         wiki_url = (
-            f"{HubProjectsEndpoint.AFFINE_BASE}/workspace/{docs.workspace_id}/{docs.doc_id}"
+            f"{HubProjectsEndpoint.WIKI_BASE}/{docs.workspace_id}/{docs.doc_id}"
             if docs and docs.doc_id and docs.workspace_id
             else None
         )
         links = {
             "wiki_url": wiki_url,
             "drive_url": (docs.google_drive_url if docs else None) or None,
-            "chat_url": (docs.mattermost_channel_url if docs else None) or None,
+            "chat_url": (docs.chat_url if docs else None) or None,
             "github_repo_urls": (docs.github_repo_urls if docs else []) or [],
         }
 
@@ -1194,6 +1811,13 @@ class ProjectOverviewEndpoint(BaseAPIView):
             warn("overdue_items", f"{counts['overdue']} open work item(s) are past their due date.", "error")
         if unassigned:
             warn("unassigned_items", f"{unassigned} open work item(s) have no assignee.", "info")
+        if roles_pending:
+            warn(
+                "roles_pending",
+                f"{roles_pending} work item(s) need a discipline nobody on the roster can "
+                "be given work in - add the person to the team, or invite them to Plane.",
+                "info",
+            )
         if project.cycle_view and not cycles:
             warn("no_cycles", "No sprint has been created yet.", "info")
         if not total:
@@ -1233,11 +1857,15 @@ class ProjectOverviewEndpoint(BaseAPIView):
                     "overdue": counts.get("overdue", 0),
                     "due_week": counts.get("due_week", 0),
                     "unassigned": unassigned,
+                    "roles_pending": roles_pending,
                 },
                 "cycles": cycles,
                 "modules": modules,
                 "pages": {"count": page_qs.count(), "recent": recent_pages},
                 "links": links,
+                # Same shape the team endpoint returns, so the Overview keeps its
+                # one-round-trip promise instead of the client chasing a second call.
+                "team": _team_rows(project_id),
                 "status": _serialize_status(latest_status) if latest_status else None,
                 "member_count": ProjectMember.objects.filter(
                     project_id=project_id, is_active=True
@@ -1339,24 +1967,49 @@ def _parse_date(value):
 
 
 class ProjectAiPlanEndpoint(BaseAPIView):
-    """Ask the model to place a project's undated work items on a calendar.
+    """Ask the model to complete a project's work items: dates, and an owner.
 
-    It only ever *proposes*: the response is a list of suggested dates with a
-    one-line rationale each, which the UI shows for review. Nothing here writes to
-    an issue - applying is a separate, explicit call.
+    Two modes. With no `issue_ids` it takes the project's undated items, which is the
+    project-setup case. With `issue_ids` it takes exactly those items whether or not
+    they already have dates - the motivating case being a batch just imported from
+    GitHub, where the dates came across but nobody owns anything.
+
+    It only ever *proposes*: the response is a list of suggestions with a one-line
+    rationale each, which the UI shows for review. Nothing here writes to an issue -
+    applying is a separate, explicit call.
+
+    Every assignment also carries a `role` - the discipline the work needs. That is what
+    makes the assistant useful at all on this instance: there are two Plane accounts and
+    twenty people on the team, so on most projects there is nobody the model is allowed
+    to name and an assignee-only answer would come back empty every time. The discipline
+    is always answerable, it is recorded on the item, and it turns into a real assignment
+    by itself the day someone holding it gets an account.
     """
 
     SYSTEM = (
         "You are a project scheduler for a conservation-technology engineering team. "
-        "Given a project window, its work items, their likely durations and their "
-        "dependencies, you assign a start date and a target date to every item that "
-        "has none. Rules: use ISO dates (YYYY-MM-DD); never start an item before a "
-        "dependency it is blocked by has finished; keep every date inside the project "
-        "window when one is given; prefer Monday-Friday for start dates; give shorter "
-        "durations to small items and longer ones to items with many sub-items; never "
-        "invent work items. Reply with JSON only, no prose, in exactly this shape: "
+        "Given a project window, its work items, their likely durations, their "
+        "dependencies and the people on the team, you give every item you are asked "
+        "about a start date, a target date, a discipline and an owner. Rules: use ISO "
+        "dates (YYYY-MM-DD); never start an item before a dependency it is blocked by "
+        "has finished; keep every date inside the project window when one is given; "
+        "prefer Monday-Friday for start dates; give shorter durations to small items and "
+        "longer ones to items with many sub-items; never invent work items. "
+        "For the owner, match the work to the discipline - firmware work to the "
+        "embedded firmware engineer, a schematic or a PCB to the hardware engineer, an "
+        "enclosure to the mechanical engineer, a deployment to field ops - and spread "
+        "the work across the team instead of piling it on one person, taking their "
+        "current load into account. Use only the P-refs listed under Team, and return "
+        'assignee_ref: null when you genuinely cannot tell who should own an item. '
+        "Always answer `role` as well, chosen from the Disciplines list you are given: "
+        "most of this team has no account on this instance, so when no candidate fits - "
+        "or nobody is assignable at all - naming the discipline the work needs is the "
+        "answer, and it is what gets the item to the right person later. Return "
+        "role: null only for an item that needs no particular discipline. "
+        "Reply with JSON only, no prose, in exactly this shape: "
         '{"assignments":[{"ref":"T1","start_date":"YYYY-MM-DD","target_date":"YYYY-MM-DD",'
-        '"reason":"one short sentence"}],"notes":"one short paragraph"}'
+        '"assignee_ref":"P1","role":"embedded firmware","reason":"one short sentence"}],'
+        '"notes":"one short paragraph"}'
     )
 
     # How many work items one request may describe to the model. A hard cap, so the
@@ -1402,22 +2055,37 @@ class ProjectAiPlanEndpoint(BaseAPIView):
             .exclude(state__group="cancelled")
             .order_by("sequence_id")
         )
-        # The undated items are the whole point of the request, so they claim the
-        # budget first and dated items only fill what is left (as dependency context).
+        # An explicit selection wins over "whatever has no dates": the caller has just
+        # imported a batch and knows which items need finishing, dated or not.
+        raw_chosen = request.data.get("issue_ids")
+        chosen_ids = _uuid_list(raw_chosen if isinstance(raw_chosen, list) else [])
+        explicit = bool(chosen_ids)
+        # The items to complete are the whole point of the request, so they claim the
+        # budget first and the rest only fill what is left (as dependency context).
         # Slicing one sequence_id-ordered query instead would answer "everything is
         # already scheduled" on any project whose oldest N items happen to be dated.
-        undated_qs = base.filter(start_date__isnull=True, target_date__isnull=True)
-        dated_qs = base.exclude(start_date__isnull=True, target_date__isnull=True)
-        undated_total = undated_qs.count()
-        dated_total = dated_qs.count()
-        undated_rows = list(undated_qs.values(*self.ROW_FIELDS)[: self.MAX_ITEMS])
-        dated_rows = list(dated_qs.values(*self.ROW_FIELDS)[: self.MAX_ITEMS - len(undated_rows)])
+        if explicit:
+            target_qs = base.filter(id__in=chosen_ids)
+            context_qs = base.exclude(id__in=chosen_ids)
+        else:
+            target_qs = base.filter(start_date__isnull=True, target_date__isnull=True)
+            context_qs = base.exclude(start_date__isnull=True, target_date__isnull=True)
+        target_total = target_qs.count()
+        context_total = context_qs.count()
+        target_rows = list(target_qs.values(*self.ROW_FIELDS)[: self.MAX_ITEMS])
+        context_rows = list(context_qs.values(*self.ROW_FIELDS)[: self.MAX_ITEMS - len(target_rows)])
         # Bounded on purpose: the prompt must not grow with the size of the project.
-        truncated = undated_total > len(undated_rows) or dated_total > len(dated_rows)
-        rows = sorted(undated_rows + dated_rows, key=lambda r: r["sequence_id"])
+        truncated = target_total > len(target_rows) or context_total > len(context_rows)
+        rows = sorted(target_rows + context_rows, key=lambda r: r["sequence_id"])
         if not rows:
             return Response({"error": "This project has no work items."}, status=status.HTTP_400_BAD_REQUEST)
+        if explicit and not target_rows:
+            return Response(
+                {"error": "None of the selected work items belong to this project."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        target_ids = {str(r["id"]) for r in target_rows}
         ref_of = {str(r["id"]): f"T{i + 1}" for i, r in enumerate(rows)}
         id_of = {v: k for k, v in ref_of.items()}
 
@@ -1438,14 +2106,18 @@ class ProjectAiPlanEndpoint(BaseAPIView):
             if pred in ref_of and succ in ref_of:
                 edges.append(f"{ref_of[pred]} -> {ref_of[succ]} ({kind})")
 
-        undated = [r for r in rows if not r["start_date"] and not r["target_date"]]
-        if not undated:
+        targets = [r for r in rows if str(r["id"]) in target_ids]
+        undated_count = sum(1 for r in targets if not r["start_date"] and not r["target_date"])
+        # Only fires when the caller asked for "whatever has no dates". An explicit
+        # selection means these items are the job, dates or no dates.
+        if not explicit and not targets:
             return Response(
                 {
                     "assignments": [],
                     "skipped": [],
                     "notes": "Every work item already has dates.",
                     "undated_count": 0,
+                    "requested_count": 0,
                     # Undated items are selected first, so an empty set here really
                     # does mean the whole project is scheduled, cap or no cap.
                     "truncated": truncated,
@@ -1455,15 +2127,40 @@ class ProjectAiPlanEndpoint(BaseAPIView):
                 status=status.HTTP_200_OK,
             )
 
+        # Who the model may hand work to. Restricted to active project members with at
+        # least MEMBER access because Plane refuses any other assignee: proposing a
+        # roster entry with no Plane account would produce a plan that cannot be applied.
+        candidates = _plan_candidates(project_id, _visible_projects(request, slug))
+        candidate_by_ref = {c["ref"]: c for c in candidates}
+        ref_by_user = {c["user_id"]: c["ref"] for c in candidates}
+
+        # Current owners, read through IssueAssignee and never through the `assignees`
+        # m2m: assignee rows are soft-deleted and the m2m join ignores the through
+        # model's manager, so a removed assignee would still look like the owner.
+        owners = defaultdict(list)
+        for a in IssueAssignee.objects.filter(
+            issue_id__in=list(ref_of.keys()), deleted_at__isnull=True
+        ).values("issue_id", "assignee_id"):
+            ref = ref_by_user.get(str(a["assignee_id"]))
+            if ref:
+                owners[str(a["issue_id"])].append(ref)
+
         def describe(r):
-            ref = ref_of[str(r["id"])]
+            issue_id = str(r["id"])
+            ref = ref_of[issue_id]
             bits = [f'{ref}: "{r["name"][:120]}"', f"priority={r['priority']}", f"state={r['state__group']}"]
             if r["parent_id"] and str(r["parent_id"]) in ref_of:
                 bits.append(f"sub-item of {ref_of[str(r['parent_id'])]}")
             if r["start_date"] or r["target_date"]:
-                bits.append(f"already scheduled {r['start_date']} -> {r['target_date']}")
-            else:
-                bits.append("NO DATES - you must schedule this one")
+                bits.append(f"currently scheduled {r['start_date']} -> {r['target_date']}")
+            if owners.get(issue_id):
+                bits.append(f"currently owned by {', '.join(sorted(owners[issue_id]))}")
+            if issue_id in target_ids:
+                bits.append(
+                    "SELECTED - you must complete this one"
+                    if explicit
+                    else "NO DATES - you must schedule this one"
+                )
             return " | ".join(bits)
 
         prompt = [
@@ -1476,6 +2173,33 @@ class ProjectAiPlanEndpoint(BaseAPIView):
         if context:
             prompt.append(f"Extra context from the project lead: {context[:1500]}")
         prompt.append("")
+        if candidates:
+            prompt.append(f"Team ({len(candidates)}) - the only people you may assign work to:")
+            prompt.extend(
+                " | ".join(
+                    [
+                        f"{c['ref']}: {c['name']}",
+                        f"roles: {', '.join(c['roles']) if c['roles'] else 'not recorded'}",
+                        f"currently {c['assigned']} open item(s), {c['overdue']} overdue",
+                    ]
+                )
+                for c in candidates
+            )
+        else:
+            prompt.append(
+                "Team: nobody on this project can be given work, so return assignee_ref: null "
+                "for every item - and name the discipline each item needs in `role` instead, "
+                "which is the answer that will actually be used."
+            )
+        prompt.append("")
+        # Given even when the team is empty: the discipline is the part of the answer
+        # that survives an instance where almost nobody has an account.
+        role_vocabulary = _role_vocabulary(project_id)
+        prompt.append(
+            f"Disciplines ({len(role_vocabulary)}) - choose `role` from this list: "
+            + ", ".join(role_vocabulary)
+        )
+        prompt.append("")
         prompt.append(f"Work items ({len(rows)}):")
         prompt.extend(describe(r) for r in rows)
         if edges:
@@ -1483,21 +2207,29 @@ class ProjectAiPlanEndpoint(BaseAPIView):
             prompt.append("Dependencies (predecessor -> successor; FS = finish-to-start, SS = start-to-start):")
             prompt.extend(edges[:200])
         prompt.append("")
+        marker = "marked SELECTED" if explicit else "marked NO DATES"
         prompt.append(
-            f"Return dates ONLY for the {len(undated)} item(s) marked NO DATES: "
-            + ", ".join(ref_of[str(r["id"])] for r in undated)
+            f"Return dates, a discipline and an owner ONLY for the {len(targets)} item(s) "
+            f"{marker}: " + ", ".join(ref_of[str(r["id"])] for r in targets)
         )
+        if explicit:
+            # Say why they are in the list, so a model that sees dates already there
+            # does not decide the item needs nothing and drop it from the answer.
+            line = "These were chosen by hand, so plan every one of them even if it already looks scheduled."
+            if undated_count < len(targets):
+                line += " Where an item already has dates, replace them with your best plan for the batch as a whole."
+            prompt.append(line + " Give each of them a discipline, and an owner where you can name one.")
 
-        # The answer grows with the number of items (~40 output tokens per assignment),
-        # so a fixed budget truncates the JSON — and 502s with "did not return usable
-        # JSON" — past roughly a hundred items. Size it from the work being scheduled;
-        # len(undated) is capped by MAX_ITEMS, so the ceiling is never far away.
-        max_tokens = max(2000, min(16000, 1000 + 60 * len(undated)))
+        # The answer grows with the number of items (~60 output tokens per assignment now
+        # that each carries an owner and a discipline), so a fixed budget truncates the
+        # JSON — and 502s with "did not return usable JSON" — past roughly a hundred
+        # items. Size it from the work being planned; len(targets) is capped by MAX_ITEMS.
+        max_tokens = max(2500, min(20000, 1200 + 100 * len(targets)))
         data, error = chat_json(config, self.SYSTEM, "\n".join(prompt), max_tokens=max_tokens)
         if error:
             return Response({"error": error}, status=status.HTTP_502_BAD_GATEWAY)
 
-        allowed = {ref_of[str(r["id"])] for r in undated}
+        allowed = {ref_of[str(r["id"])] for r in targets}
         name_of = {str(r["id"]): r["name"] for r in rows}
         seq_of = {str(r["id"]): r["sequence_id"] for r in rows}
         proposals, skipped = [], []
@@ -1514,6 +2246,13 @@ class ProjectAiPlanEndpoint(BaseAPIView):
                 skipped.append(ref)
                 continue
             issue_id = id_of[ref]
+            # An owner the model made up is dropped rather than rejecting the whole row:
+            # a good set of dates with no owner is still worth reviewing.
+            owner = candidate_by_ref.get(str(item.get("assignee_ref") or "").strip())
+            # The discipline is kept even when it is not one we offered - roles are free
+            # text everywhere else here (see PROJECT_ROLES), and a model answering
+            # "acoustics" on a project that has just hired one is right, not wrong.
+            role = str(item.get("role") or "").strip()[:80] or None
             proposals.append(
                 {
                     "issue_id": issue_id,
@@ -1521,22 +2260,34 @@ class ProjectAiPlanEndpoint(BaseAPIView):
                     "sequence_id": seq_of[issue_id],
                     "start_date": start.isoformat(),
                     "target_date": target.isoformat(),
+                    "assignee_id": owner["user_id"] if owner else None,
+                    "assignee_name": owner["name"] if owner else None,
+                    "role": role,
                     "reason": str(item.get("reason") or "")[:280],
                 }
             )
 
         notes = str(data.get("notes") or "")[:1200]
+        if not candidates:
+            # A silent no-op on owners would read as "the model had no opinion".
+            notes = (
+                "Nobody on this project can be given work yet - an owner must be an "
+                "active project member with member access - so each item was given the "
+                "discipline it needs instead. Those are recorded when you apply, and the "
+                "work is handed over automatically as soon as somebody holding one joins "
+                "the project. " + notes
+            )
         if truncated:
             # Say it out loud: quietly planning a subset of a big project while
-            # reporting a smaller undated count is how a plan goes wrong unnoticed.
+            # reporting a smaller count is how a plan goes wrong unnoticed.
             warning = (
                 f"This project has more work items than one request covers, so only "
                 f"{len(rows)} of them were sent to the model. "
             )
-            if undated_total > len(undated):
+            if target_total > len(targets):
                 warning += (
-                    f"{len(undated)} of {undated_total} undated item(s) were planned - "
-                    "apply these, then re-run to schedule the rest. "
+                    f"{len(targets)} of {target_total} item(s) were planned - "
+                    "apply these, then re-run to finish the rest. "
                 )
             notes = warning + notes
 
@@ -1545,9 +2296,12 @@ class ProjectAiPlanEndpoint(BaseAPIView):
                 "assignments": proposals,
                 "skipped": skipped,
                 "notes": notes,
-                # How many were offered to the model, not how many the project has —
-                # `truncated` and the notes above carry the difference.
-                "undated_count": len(undated),
+                # Both counts are about what was offered to the model, not what the
+                # project holds — `truncated` and the notes above carry the difference.
+                # `undated_count` keeps its old meaning (of these, how many had no dates)
+                # so the setup flow reads the same as before.
+                "undated_count": undated_count,
+                "requested_count": len(targets),
                 "truncated": truncated,
                 "provider": config["provider"],
                 "model": config["model"],
@@ -1557,16 +2311,31 @@ class ProjectAiPlanEndpoint(BaseAPIView):
 
 
 class ProjectApplyPlanEndpoint(BaseAPIView):
-    """Write an approved set of dates onto a project's work items.
+    """Write an approved set of dates - owners, and the disciplines the work needs -
+    onto a project's work items.
 
     Deliberately dumb and explicit: it takes exactly the rows the user reviewed and
-    accepted. Same trade-off as auto-schedule - a bulk .update() skips the activity
-    feed and webhooks, because one reflow should not generate eighty notifications.
+    accepted. Dates go in through a bulk .update(), same trade-off as auto-schedule -
+    it skips the activity feed and webhooks, because one reflow should not generate
+    eighty notifications.
+
+    Owners are the opposite case and are noisy on purpose: an assignment nobody is told
+    about is not an assignment. Each issue that gains one gets an issue_activity, which
+    is what writes the feed entry, the subscriber row and the notification.
+
+    A `roles` list on a row is the durable half of the answer: it is recorded whether or
+    not anybody currently holds the discipline, and it is re-materialised at the end of
+    this call - so a plan applied against a roster of two accounts is not lost work, it
+    is work waiting for the person who will do it.
     """
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def post(self, request, slug, project_id):
-        if not _visible_projects(request, slug).filter(id=project_id).exists():
+        from plane.bgtasks.issue_activities_task import issue_activity
+        from plane.utils.host import base_host
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
         rows = request.data.get("issues") or []
@@ -1579,16 +2348,148 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
                 project_id=project_id, workspace__slug=slug
             ).values_list("id", flat=True)
         }
+
+        # Every proposed owner in the batch checked in one query, against exactly the
+        # rule Plane's own issue serializer applies (active project member, role >= 15).
+        # Per-row queries would mean one round trip per work item for the same answer.
+        wanted_assignees, touched_ids = set(), set()
+        for row in rows:
+            if isinstance(row, dict):
+                wanted_assignees.update(_uuid_list(row.get("assignee_ids")))
+                touched_ids.update(_uuid_list([row.get("issue_id")]))
+        allowed_assignees = (
+            _assignable_member_ids(project_id, wanted_assignees) if wanted_assignees else set()
+        )
+        assignees_rejected = sorted(wanted_assignees - allowed_assignees)
+
+        # The owners the reviewed items already have, so the write below only adds what
+        # is missing. Read through IssueAssignee (never the `assignees` m2m): assignee
+        # rows are soft-deleted and a m2m join does not apply the through model's manager.
+        current = defaultdict(set)
+        if touched_ids:
+            for a in IssueAssignee.objects.filter(
+                issue__project_id=project_id, issue_id__in=list(touched_ids), deleted_at__isnull=True
+            ).values("issue_id", "assignee_id"):
+                current[str(a["issue_id"])].add(str(a["assignee_id"]))
+
         applied, rejected = 0, []
+        new_links, gained = [], {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             issue_id = str(row.get("issue_id") or "")
-            start = _parse_date(row.get("start_date"))
-            target = _parse_date(row.get("target_date"))
-            if issue_id not in valid_ids or not start or not target or target < start:
+            if issue_id not in valid_ids:
                 rejected.append(issue_id or "?")
                 continue
-            Issue.objects.filter(id=issue_id).update(start_date=start, target_date=target)
-            applied += 1
-        return Response({"applied": applied, "rejected": rejected}, status=status.HTTP_200_OK)
+            start = _parse_date(row.get("start_date"))
+            target = _parse_date(row.get("target_date"))
+            row_assignees = _uuid_list(row.get("assignee_ids"))
+            if start and target and target >= start:
+                Issue.objects.filter(id=issue_id).update(start_date=start, target_date=target)
+                applied += 1
+            elif row.get("start_date") or row.get("target_date") or not row_assignees:
+                # Dates were offered but unusable (or the row says nothing at all).
+                # Report it, and still honour the owners - they are an independent fact.
+                rejected.append(issue_id)
+
+            to_add = {a for a in row_assignees if a in allowed_assignees}
+            to_add -= current[issue_id]
+            if not to_add:
+                continue
+            # Add, never replace: a human may already have picked an owner, and this
+            # action is called "complete", not "overwrite".
+            gained[issue_id] = to_add
+            for assignee_id in sorted(to_add):
+                # bulk_create bypasses save(), so the denormalised project/workspace
+                # columns and the audit user have to be set here or the rows land with
+                # NULLs — same construction as IssueSerializer.create upstream.
+                new_links.append(
+                    IssueAssignee(
+                        issue_id=issue_id,
+                        assignee_id=assignee_id,
+                        project_id=project_id,
+                        workspace_id=project.workspace_id,
+                        created_by_id=request.user.id,
+                    )
+                )
+
+        # The disciplines each reviewed item needs. Recorded before the owners are
+        # materialised below, so an item whose role does have a holder gets pointed at
+        # them in the same call the user clicked Apply in.
+        existing_roles = defaultdict(set)
+        if touched_ids:
+            for issue_id, role in IssueRole.objects.filter(
+                issue__project_id=project_id, issue_id__in=list(touched_ids)
+            ).values_list("issue_id", "role"):
+                existing_roles[str(issue_id)].add(role.strip().lower())
+        new_roles, roles_set = [], set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            issue_id = str(row.get("issue_id") or "")
+            if issue_id not in valid_ids:
+                continue
+            roles = _clean_roles(row.get("roles"))
+            if not roles:
+                continue
+            roles_set.add(issue_id)
+            # Provenance, not policy: both kinds of row arrive through this endpoint
+            # (the assistant's proposal, and whatever the reviewer typed over it), and
+            # only the caller knows which is which.
+            source = IssueRole.AI if str(row.get("source") or "ai") == "ai" else IssueRole.MANUAL
+            for role in roles:
+                if role.lower() in existing_roles[issue_id]:
+                    continue
+                new_roles.append(IssueRole(issue_id=issue_id, role=role, source=source))
+        if new_roles:
+            # Same race as the assignee write below: two reviewers applying overlapping
+            # plans must not turn into a 500 on the unique index.
+            IssueRole.objects.bulk_create(new_roles, batch_size=100, ignore_conflicts=True)
+
+        if new_links:
+            # ignore_conflicts covers the race with someone assigning by hand in the UI
+            # between the read above and this write.
+            IssueAssignee.objects.bulk_create(new_links, batch_size=100, ignore_conflicts=True)
+
+        for issue_id, added in gained.items():
+            # Writing IssueAssignee rows notifies nobody on its own; track_assignees
+            # inside this task is what creates the activity, subscribes the new owner
+            # and sends the notification. Dates keep their deliberate silence above.
+            issue_activity.delay(
+                type="issue.activity.updated",
+                requested_data=json.dumps({"assignee_ids": sorted(current[issue_id] | added)}),
+                actor_id=str(request.user.id),
+                issue_id=str(issue_id),
+                project_id=str(project_id),
+                current_instance=json.dumps({"assignee_ids": sorted(current[issue_id])}),
+                epoch=int(timezone.now().timestamp()),
+                notification=True,
+                origin=base_host(request=request, is_app=True),
+            )
+
+        # Runs after both writes, so it reads the owners just added and only fires for an
+        # item whose discipline points somewhere the explicit owner did not. On the usual
+        # plan the model names the same person twice and this is a no-op.
+        repointed = _materialise_issue_roles(
+            project,
+            request.user.id,
+            issue_ids=roles_set,
+            origin=base_host(request=request, is_app=True),
+        )
+
+        return Response(
+            {
+                "applied": applied,
+                "rejected": rejected,
+                # Issues that gained at least one owner, and the proposed owners this
+                # project would not accept — an empty screen deserves an explanation.
+                # The two writes can touch the same item, so the union, not the sum.
+                "assigned": len(set(gained.keys()) | repointed),
+                "assignees_rejected": assignees_rejected,
+                # Issues that now carry a discipline. Deliberately independent of
+                # `assigned`: recording one when nobody holds it is the expected
+                # outcome here, not a half-failure.
+                "roles_set": len(roles_set),
+            },
+            status=status.HTTP_200_OK,
+        )

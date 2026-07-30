@@ -24,9 +24,14 @@ import { OverviewJumpBar } from "./jump-bar";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewLinksBlock } from "./links-block";
 import { OverviewProgressSections } from "./progress-sections";
+import { OverviewTeamBlock } from "./team-block";
 import { OverviewWarnings } from "./warnings-block";
 
 const LINKS_ANCHOR = "arribada-project-links";
+
+// Stable identity: the team block treats a new array as "the roster changed",
+// so an inline `?? []` fallback would churn it on every render.
+const EMPTY_TEAM = [] as TProjectOverview["team"];
 
 export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   const { workspaceSlug, projectId } = useParams();
@@ -133,6 +138,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       <OverviewKpiTiles items={data.items} />
       <OverviewWarnings warnings={data.warnings} onConfigureLinks={openLinksEditor} />
       <OverviewProgressSections overview={data} />
+      <OverviewTeamBlock projectId={data.project.id} team={data.team ?? EMPTY_TEAM} onSaved={refresh} />
       <OverviewLinksBlock
         anchorId={LINKS_ANCHOR}
         overview={data}

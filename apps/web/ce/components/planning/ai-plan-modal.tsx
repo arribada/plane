@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * "Give the undated work items dates": describe the project window, ask the
+ * "Give work items dates and an owner": describe the project window, ask the
  * assistant for a proposal, then review every row before anything is written.
+ * With no `issueIds` it plans the project's undated items; with them it completes
+ * exactly that selection, dated or not.
  * The deterministic dependency reflow sits next to it on purpose — it needs no
  * model, no key and no review, and it is the honest answer when the AI is not
  * configured or its suggestion is not trusted.
@@ -12,7 +14,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { GitBranch, Loader2, Sparkles, X } from "lucide-react";
+import { GitBranch, Loader2, Sparkles, Tag, UserX, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TAiPlan } from "@/plane-web/types/arribada";
@@ -23,6 +25,9 @@ import { useAiSettings } from "./use-ai-settings";
 type Props = {
   projectId: string | null;
   projectName?: string;
+  // The exact work items to complete. Absent = the project's undated items.
+  issueIds?: string[];
+  title?: string;
   onClose: () => void;
   onApplied?: (applied: number) => void;
   // The reflow writes without closing the modal, so it cannot share onApplied:
@@ -33,7 +38,7 @@ type Props = {
 const errorMessage = (e: unknown, fallback: string) => (e as { error?: string })?.error ?? fallback;
 
 export const AiPlanModal = observer(function AiPlanModal(props: Props) {
-  const { projectId, projectName, onClose, onApplied, onReflowed } = props;
+  const { projectId, projectName, issueIds, title, onClose, onApplied, onReflowed } = props;
   const { workspaceSlug } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
   const { settings, refresh: refreshSettings } = useAiSettings();
@@ -52,7 +57,12 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
   const [reflowed, setReflowed] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // A value, not an identity: callers pass `issueIds={[...]}` inline, so the raw
+  // array is a new object on every render and would restart the effect forever.
+  const selectionKey = useMemo(() => (issueIds ?? []).join(","), [issueIds]);
+
   // The project's own planned window is nearly always the window to plan inside.
+  // A different selection invalidates any proposal already on screen.
   useEffect(() => {
     if (!projectId || !workspaceSlug) return;
     setPlan(null);
@@ -66,12 +76,30 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
         return undefined;
       })
       .catch(() => {});
-  }, [projectId, workspaceSlug, service]);
+  }, [projectId, workspaceSlug, selectionKey, service]);
 
   if (!projectId) return null;
 
   const slug = workspaceSlug?.toString() ?? "";
   const aiAvailable = settings?.configured !== false;
+  const selectedCount = issueIds?.length ?? 0;
+  const completing = selectedCount > 0;
+  const heading =
+    title ??
+    (completing
+      ? `Complete ${selectedCount} selected work item${selectedCount === 1 ? "" : "s"}`
+      : `Plan dates · ${projectName ?? "Project"}`);
+  // Rows the assistant could not give a person: with two accounts on this
+  // instance that is the normal outcome, and it has to be said out loud. The two
+  // halves read very differently though — a row tagged with a discipline is a
+  // result, a row with nothing is a gap — so they are counted apart.
+  const unowned = plan ? plan.assignments.filter((a) => !a.assignee_id) : [];
+  const roleTagged = unowned.filter((a) => !!a.role);
+  const untagged = unowned.filter((a) => !a.role);
+  const roleNames = Array.from(new Set(roleTagged.flatMap((a) => (a.role ? [a.role] : []))));
+  // The icon carries the tone of the note: a missing owner is a gap, a discipline
+  // tag is not.
+  const OwnerNoteIcon = untagged.length > 0 ? UserX : Tag;
 
   const suggest = async () => {
     if (!slug || busy) return;
@@ -85,6 +113,7 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
           target_date: targetDate || null,
           default_duration_days: Number(durationDays) || 5,
           context: context.trim(),
+          ...(completing ? { issue_ids: issueIds } : {}),
         })
       );
     } catch (e) {
@@ -140,11 +169,20 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
         />
         <div className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1">
           <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
-            <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
-              <Sparkles className="size-4 text-secondary" />
-              Plan dates · {projectName ?? "Project"}
-            </h3>
-            <button type="button" onClick={onClose} disabled={!!busy} className="text-secondary hover:text-primary">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
+                <Sparkles className="size-4 text-secondary" />
+                <span className="truncate">{heading}</span>
+              </h3>
+              {completing && projectName && <p className="text-11 text-tertiary">{projectName}</p>}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={!!busy}
+              aria-label="Close"
+              className="shrink-0 text-secondary hover:text-primary"
+            >
               <X className="size-4" />
             </button>
           </div>
@@ -152,6 +190,12 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
             {aiAvailable ? (
               <>
+                {completing && (
+                  <p className="text-12 text-secondary">
+                    The {selectedCount} work item{selectedCount === 1 ? "" : "s"} you selected get a window and an
+                    owner, whether or not they already have dates.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label className={label} htmlFor={`${uid}-start`}>
@@ -230,6 +274,33 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
                 </div>
 
                 {plan && <PlanReviewTable plan={plan} review={review} />}
+
+                {plan && unowned.length > 0 && (
+                  <div className="flex items-start gap-2 rounded border border-subtle bg-layer-2 px-3 py-2">
+                    <OwnerNoteIcon className="mt-0.5 size-3.5 shrink-0 text-tertiary" />
+                    <div className="space-y-1.5 text-12 text-secondary">
+                      {roleTagged.length > 0 && (
+                        <p>
+                          The assistant named a discipline rather than a person on {roleTagged.length} of{" "}
+                          {plan.assignments.length} row{roleTagged.length === 1 ? "" : "s"}
+                          {roleNames.length > 0 ? ` (${roleNames.join(", ")})` : ""}. That work is tagged for the
+                          discipline and will be assigned automatically as soon as someone holding it joins this project
+                          — the dates apply now either way.
+                        </p>
+                      )}
+                      {untagged.length > 0 && (
+                        <p>
+                          {untagged.length} row{untagged.length === 1 ? "" : "s"} got neither a person nor a discipline
+                          {untagged.length === plan.assignments.length
+                            ? ": nobody on this project's roster is an assignable Plane member."
+                            : ": no assignable Plane member on the roster fitted them."}{" "}
+                          Someone can only receive a work item once they have a Plane account that is an active member
+                          of this project — until then the dates still apply and the owner stays empty.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex flex-wrap items-center gap-3">
@@ -295,7 +366,9 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
               )}
             >
               {busy === "apply" && <Loader2 className="size-3.5 animate-spin" />}
-              Apply {review.approved.length} date{review.approved.length === 1 ? "" : "s"}
+              {completing
+                ? `Apply to ${review.approved.length} work item${review.approved.length === 1 ? "" : "s"}`
+                : `Apply ${review.approved.length} date${review.approved.length === 1 ? "" : "s"}`}
             </button>
           </div>
         </div>

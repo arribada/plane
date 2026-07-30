@@ -26,7 +26,7 @@ const STEPS = [
   "When does this project run?",
   "How long does a typical task take?",
   "Dependencies",
-  "Dates for the undated work",
+  "Dates and owners for the undated work",
   "Where does the rest of the project live?",
 ];
 
@@ -94,6 +94,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [plan, setPlan] = useState<TAiPlan | null>(null);
   const review = usePlanReview(plan?.assignments);
   const [applied, setApplied] = useState<number | null>(null);
+  // Owners actually written: the API refuses anyone who is not an assignable
+  // member of the project, so this is usually lower than the rows applied.
+  const [assigned, setAssigned] = useState(0);
   // 5 — links
   const [docId, setDocId] = useState("");
   const [docTitle, setDocTitle] = useState("");
@@ -112,6 +115,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setError(null);
     setPlan(null);
     setApplied(null);
+    setAssigned(0);
     setReflowed(null);
     setScheduleBase(null);
     setLinksBase(null);
@@ -129,20 +133,20 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       .then((r) => setUndatedCount(r?.length ?? 0))
       .catch(() => setUndatedCount(null));
     service
-      .getAffineDoc(slug, projectId)
+      .getWikiDoc(slug, projectId)
       .then((d) => {
         setLinksBase({
           doc_id: d?.doc_id ?? null,
           workspace_id: d?.workspace_id ?? null,
           title: d?.title ?? null,
           google_drive_url: d?.google_drive_url ?? null,
-          mattermost_channel_url: d?.mattermost_channel_url ?? null,
+          chat_url: d?.chat_url ?? null,
           github_repo_urls: d?.github_repo_urls ?? [],
         });
         setDocId(d?.doc_id ?? "");
         setDocTitle(d?.title ?? "");
         setDriveUrl(d?.google_drive_url ?? "");
-        setChatUrl(d?.mattermost_channel_url ?? "");
+        setChatUrl(d?.chat_url ?? "");
         setRepos(d?.github_repo_urls ?? []);
         return undefined;
       })
@@ -190,14 +194,14 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         }
         // An empty key means "clear this link" server-side, so untouched fields
         // stay out of the payload entirely.
-        const payload: Parameters<ArribadaService["setAffineDoc"]>[2] = {};
+        const payload: Parameters<ArribadaService["setWikiDoc"]>[2] = {};
         const chat = chatUrl.trim();
         if (docId.trim() !== (linksBase.doc_id ?? "")) payload.doc_id = docId.trim();
         if (docTitle.trim() !== (linksBase.title ?? "")) payload.title = docTitle.trim();
         if (driveUrl.trim() !== (linksBase.google_drive_url ?? "")) payload.google_drive_url = driveUrl.trim();
-        if (chat !== (linksBase.mattermost_channel_url ?? "")) payload.mattermost_channel_url = chat;
+        if (chat !== (linksBase.chat_url ?? "")) payload.chat_url = chat;
         if (repos.join("\n") !== (linksBase.github_repo_urls ?? []).join("\n")) payload.github_repo_urls = repos;
-        if (Object.keys(payload).length > 0) await service.setAffineDoc(slug, projectId, payload);
+        if (Object.keys(payload).length > 0) await service.setWikiDoc(slug, projectId, payload);
         finish();
         return;
       }
@@ -240,8 +244,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setBusy("apply");
     setError(null);
     try {
+      // review.approved already carries the owners the user kept on each row.
       const res = await service.applyPlan(slug, projectId, review.approved);
       setApplied(res.applied);
+      setAssigned(res.assigned ?? 0);
       setPlan(null);
       await recountUndated();
     } catch (e) {
@@ -422,7 +428,12 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
             )}
             {applied !== null && (
               <p className="flex items-center gap-1.5 text-12 text-secondary">
-                <Check className="size-3.5" /> Wrote dates onto {applied} work item(s).
+                <Check className="size-3.5" /> Wrote dates onto {applied} work item(s)
+                {applied > 0 &&
+                  (assigned > 0
+                    ? `, and an owner onto ${assigned} of them`
+                    : " — no owner was set, nobody proposed is an assignable member of this project")}
+                .
               </p>
             )}
           </div>

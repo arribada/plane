@@ -18,8 +18,9 @@ import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectDocs, TProjectOverview } from "@/plane-web/types/arribada";
 
-// Same deep-link grammar the Pages panel uses: a doc id is only addressable
-// together with the wiki workspace it belongs to.
+// Same deep-link grammar the Pages panel uses: Colanode addresses a doc as
+// /<workspace>/<doc>, so a doc id is only addressable together with the wiki
+// workspace it belongs to, and any extra segment 404s.
 const WIKI_BASE = "https://docs.arribada.org";
 
 type Props = {
@@ -40,7 +41,7 @@ const EMPTY_DOCS: TProjectDocs = {
   workspace_id: null,
   title: null,
   google_drive_url: null,
-  mattermost_channel_url: null,
+  chat_url: null,
   github_repo_urls: [],
 };
 
@@ -98,7 +99,7 @@ export const OverviewLinksBlock = observer(function OverviewLinksBlock(props: Pr
       setFetchState("loading");
       setBaseline(null);
       service
-        .getAffineDoc(workspaceSlug.toString(), projectId.toString())
+        .getWikiDoc(workspaceSlug.toString(), projectId.toString())
         .then((r) => {
           if (cancelled) return;
           const current = r ?? EMPTY_DOCS;
@@ -107,7 +108,7 @@ export const OverviewLinksBlock = observer(function OverviewLinksBlock(props: Pr
           setDraftDoc(current.doc_id ?? "");
           setDraftTitle(current.title ?? "");
           setDraftDrive(current.google_drive_url ?? "");
-          setDraftChat(current.mattermost_channel_url ?? "");
+          setDraftChat(current.chat_url ?? "");
           setDraftRepos((current.github_repo_urls ?? []).join("\n"));
           setFetchState("loaded");
           return undefined;
@@ -129,11 +130,11 @@ export const OverviewLinksBlock = observer(function OverviewLinksBlock(props: Pr
       .filter(Boolean);
     // Only the keys the user actually changed travel: an untouched key left out
     // of the payload is the only way to say "leave this link alone".
-    const payload: Parameters<ArribadaService["setAffineDoc"]>[2] = {};
+    const payload: Parameters<ArribadaService["setWikiDoc"]>[2] = {};
     if (draftDoc.trim() !== (baseline.doc_id ?? "")) payload.doc_id = draftDoc.trim();
     if (draftTitle.trim() !== (baseline.title ?? "")) payload.title = draftTitle.trim();
     if (draftDrive.trim() !== (baseline.google_drive_url ?? "")) payload.google_drive_url = draftDrive.trim();
-    if (draftChat.trim() !== (baseline.mattermost_channel_url ?? "")) payload.mattermost_channel_url = draftChat.trim();
+    if (draftChat.trim() !== (baseline.chat_url ?? "")) payload.chat_url = draftChat.trim();
     if (repos.join("\n") !== (baseline.github_repo_urls ?? []).join("\n")) payload.github_repo_urls = repos;
 
     if (Object.keys(payload).length === 0) {
@@ -143,7 +144,7 @@ export const OverviewLinksBlock = observer(function OverviewLinksBlock(props: Pr
 
     setSaving(true);
     try {
-      const r = await service.setAffineDoc(workspaceSlug.toString(), projectId.toString(), payload);
+      const r = await service.setWikiDoc(workspaceSlug.toString(), projectId.toString(), payload);
       setDocs(r);
       setBaseline(r);
       onEditorOpenChange(false);
@@ -163,11 +164,11 @@ export const OverviewLinksBlock = observer(function OverviewLinksBlock(props: Pr
   // Once saved, the freshly returned docs win over the (now stale) overview payload.
   const wikiUrl = docs
     ? docs.doc_id && docs.workspace_id
-      ? `${WIKI_BASE}/workspace/${docs.workspace_id}/${docs.doc_id}`
+      ? `${WIKI_BASE}/${docs.workspace_id}/${docs.doc_id}`
       : null
     : overview.links.wiki_url;
   const driveUrl = docs ? docs.google_drive_url : overview.links.drive_url;
-  const chatUrl = docs ? docs.mattermost_channel_url : overview.links.chat_url;
+  const chatUrl = docs ? docs.chat_url : overview.links.chat_url;
   const repos = (docs ? docs.github_repo_urls : overview.links.github_repo_urls) ?? [];
 
   const base = `/${workspaceSlug}/projects/${projectId}`;

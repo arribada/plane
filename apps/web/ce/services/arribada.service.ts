@@ -19,7 +19,12 @@ import type {
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
+  TTeamMember,
 } from "@/plane-web/types/arribada";
+
+// The roster endpoint answers with the vocabulary too, so the editor can offer
+// the same disciplines the server accepts instead of hardcoding a second list.
+export type TProjectTeamResponse = { roles_vocabulary: { value: string; label: string }[]; team: TTeamMember[] };
 
 // Talks to the fork-only /api/arribada/ endpoints (plane.arribada Django app).
 // Same origin + session cookie: no auth wiring beyond what APIService already does.
@@ -106,28 +111,28 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // A project's documentation pointers: AFFiNE wiki doc + Google Drive URL.
-  async getAffineDoc(workspaceSlug: string, projectId: string): Promise<TProjectDocs> {
-    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`)
+  // A project's documentation pointers: wiki doc + Google Drive URL.
+  async getWikiDoc(workspaceSlug: string, projectId: string): Promise<TProjectDocs> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-doc/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
       });
   }
 
-  // Partial update: only the keys you pass are changed (AFFiNE and Drive edit independently).
-  async setAffineDoc(
+  // Partial update: only the keys you pass are changed (each link edits independently).
+  async setWikiDoc(
     workspaceSlug: string,
     projectId: string,
     data: {
       doc_id?: string;
       title?: string;
       google_drive_url?: string;
-      mattermost_channel_url?: string;
+      chat_url?: string;
       github_repo_urls?: string[];
     }
   ): Promise<TProjectDocs> {
-    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/affine-doc/`, data)
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-doc/`, data)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
@@ -312,6 +317,36 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Who works on this project and on what — the discipline roster, which is not
+  // Plane's permission-level membership.
+  async getProjectTeam(workspaceSlug: string, projectId: string): Promise<TProjectTeamResponse> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Full replace of the roster: whatever is not in `team` is dropped.
+  async setProjectTeam(
+    workspaceSlug: string,
+    projectId: string,
+    team: {
+      id?: string;
+      member_id?: string | null;
+      name: string;
+      email?: string;
+      roles: string[];
+      is_lead?: boolean;
+    }[]
+  ): Promise<TProjectTeamResponse> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`, { team })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   // Which LLM the planning assistant uses. The key is never returned.
   async getAiSettings(workspaceSlug: string): Promise<TAiSettings> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/ai-settings/`)
@@ -333,8 +368,10 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // Ask the model to place the project's undated work items. Proposes only — the
-  // caller reviews the rows and then calls applyPlan.
+  // Ask the model to place work items and pick an owner for each. Without
+  // issue_ids it plans the project's undated items; with them it plans exactly
+  // those, dated or not. Proposes only — the caller reviews the rows and then
+  // calls applyPlan.
   async aiPlan(
     workspaceSlug: string,
     projectId: string,
@@ -343,6 +380,7 @@ export class ArribadaService extends APIService {
       target_date?: string | null;
       default_duration_days?: number;
       context?: string;
+      issue_ids?: string[];
     }
   ): Promise<TAiPlan> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-plan/`, data)
@@ -352,12 +390,14 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // Write an approved set of dates onto work items.
+  // Write an approved set of dates — and owners, when the row carries any —
+  // onto work items. `assignees_rejected` lists the people the API refused
+  // because they are not assignable members of the project.
   async applyPlan(
     workspaceSlug: string,
     projectId: string,
-    issues: { issue_id: string; start_date: string; target_date: string }[]
-  ): Promise<{ applied: number; rejected: string[] }> {
+    issues: { issue_id: string; start_date: string; target_date: string; assignee_ids?: string[] }[]
+  ): Promise<{ applied: number; rejected: string[]; assigned?: number; assignees_rejected?: string[] }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/apply-plan/`, { issues })
       .then((response) => response?.data)
       .catch((error) => {

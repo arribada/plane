@@ -52,14 +52,31 @@ export type TMyWorkItem = {
   project_name: string;
 };
 
-// Where a project's documentation lives: an AFFiNE wiki doc + a Google Drive URL.
+// Where a project's documentation lives: a wiki doc + a Google Drive URL.
 export type TProjectDocs = {
   doc_id: string | null;
   workspace_id: string | null;
   title: string | null;
   google_drive_url: string | null;
-  mattermost_channel_url: string | null;
+  chat_url: string | null;
   github_repo_urls: string[];
+};
+
+// Someone on a project's roster, with the disciplines they cover. Plane's own
+// ProjectMember.role is a permission level (admin/member/guest), never a job
+// function, so the roster is a separate list that can also hold people who have
+// no Plane account at all. `in_plane` = an account is linked; `assignable` = that
+// account is an active member of this project and may receive work items.
+export type TTeamMember = {
+  id: string;
+  member_id: string | null;
+  name: string;
+  email: string;
+  roles: string[];
+  is_lead: boolean;
+  source: "manual" | "wiki";
+  in_plane: boolean;
+  assignable: boolean;
 };
 
 export type TProjectStatus = "on_track" | "at_risk" | "off_track";
@@ -134,7 +151,11 @@ export type TProjectOverview = {
     github_repo_urls: string[];
   };
   status: TProjectStatusUpdate | null;
+  team: TTeamMember[];
   member_count: number;
+  // How many roster entries still have no discipline set. Optional so an older
+  // API, which never sends the key, still parses.
+  roles_pending?: number;
   warnings: { code: string; message: string; severity: "info" | "warning" | "error" }[];
 };
 
@@ -153,7 +174,10 @@ export type TAiSettings = {
   provider_defaults?: Record<string, string>;
 };
 
-// One suggested placement for a work item that currently has no dates.
+// One suggested placement for a work item: a window, and the person the
+// assistant picked for it. `assignee_id` is null whenever nobody on the roster
+// could take it (no Plane account, or not an assignable member of the project) —
+// the row is still worth applying for its dates.
 export type TPlanAssignment = {
   issue_id: string;
   name: string;
@@ -161,6 +185,11 @@ export type TPlanAssignment = {
   start_date: string;
   target_date: string;
   reason: string;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  // The discipline the assistant matched the item to, null when it picked
+  // someone without leaning on the roster's roles.
+  role: string | null;
 };
 
 export type TAiPlan = {
@@ -168,6 +197,9 @@ export type TAiPlan = {
   skipped: string[];
   notes: string;
   undated_count: number;
+  // How many items were actually in scope: the selection when one was sent,
+  // the undated items otherwise. Optional so an older API still parses.
+  requested_count?: number;
   provider: string;
   model: string;
 };

@@ -204,6 +204,88 @@ export type TAiPlan = {
   model: string;
 };
 
+// ---------------------------------------------------------------------------
+// Project setup: the generic V-cycle catalogue, and a plan built from it
+// ---------------------------------------------------------------------------
+
+// One generic task the wizard offers to create. `after` names the keys it waits
+// on, which is what makes the proposed schedule a graph rather than a list.
+export type TBlueprintTask = {
+  key: string;
+  name: string;
+  phase: string;
+  phase_label: string;
+  role: string;
+  days: number;
+  optional: boolean;
+  after: string[];
+};
+
+export type TBlueprintTrack = {
+  key: string;
+  label: string;
+  hint: string;
+  tasks: TBlueprintTask[];
+};
+
+export type TBlueprintCatalogue = {
+  tracks: TBlueprintTrack[];
+  phases: { key: string; label: string }[];
+};
+
+// A task once the scheduler has placed it: dates, the person its discipline
+// resolves to today, and the sprint its start falls in.
+export type TPlannedTask = {
+  key: string;
+  name: string;
+  track: string;
+  phase: string;
+  role: string;
+  days: number;
+  after: string[];
+  start_date: string;
+  target_date: string;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  sprint: number | null;
+  // Set on tasks the assistant added on top of the catalogue.
+  added?: boolean;
+};
+
+export type TPlannedSprint = {
+  index: number;
+  name: string;
+  start_date: string;
+  end_date: string;
+  task_count: number;
+};
+
+export type TSetupPlan = {
+  start_date: string;
+  end_date: string;
+  tasks: TPlannedTask[];
+  sprints: TPlannedSprint[];
+  capacity: Record<string, number>;
+  role_counts: Record<string, number>;
+  // Disciplines this plan needs that nobody on the roster holds. Not an error —
+  // the requirement is recorded on the item and resolves when someone picks it up.
+  missing_roles: string[];
+  warnings: string[];
+  notes: string;
+  provider: string | null;
+  model: string | null;
+};
+
+export type TSetupApplyResult = {
+  created: number;
+  skipped: string[];
+  relations: number;
+  roles_set: number;
+  assigned: number;
+  modules_created: number;
+  cycles_created: number;
+};
+
 export type TPortfolioColorBy = "project" | "priority";
 export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated" | "manual";
 

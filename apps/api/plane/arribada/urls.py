@@ -7,6 +7,9 @@ from django.urls import path
 from .views import (
     AdoptIssuesEndpoint,
     GithubInboxEndpoint,
+    ProjectBlueprintEndpoint,
+    ProjectSetupApplyEndpoint,
+    ProjectSetupPlanEndpoint,
     HubProjectsEndpoint,
     MyWorkEndpoint,
     ProjectAiPlanEndpoint,
@@ -154,6 +157,21 @@ urlpatterns = [
         "workspaces/<str:slug>/ai-settings/",
         WorkspaceAiSettingsEndpoint.as_view(),
         name="arribada-ai-settings",
+    ),
+    path(
+        "workspaces/<str:slug>/task-blueprints/",
+        ProjectBlueprintEndpoint.as_view(),
+        name="arribada-task-blueprints",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/setup-plan/",
+        ProjectSetupPlanEndpoint.as_view(),
+        name="arribada-project-setup-plan",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/setup-apply/",
+        ProjectSetupApplyEndpoint.as_view(),
+        name="arribada-project-setup-apply",
     ),
     path(
         "workspaces/<str:slug>/project-folders/",

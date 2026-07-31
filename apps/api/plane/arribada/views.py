@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q, Sum
@@ -2492,4 +2492,479 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
                 "roles_set": len(roles_set),
             },
             status=status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Project setup: from an empty project to a dated, owned, sprint-cut plan
+# ---------------------------------------------------------------------------
+
+
+def _capacity_from_roster(project_id):
+    """{discipline: how many people hold it} — the default width of each track.
+
+    Counts the roster, not Plane accounts: two firmware engineers who have never
+    signed in still mean firmware work can run two-abreast, and that is the fact the
+    schedule needs. Whether either of them can be *assigned* is a different question,
+    answered by _role_holders.
+    """
+    counts = defaultdict(int)
+    for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list("roles", flat=True):
+        for role in _clean_roles(roles):
+            counts[role.strip().lower()] += 1
+    return dict(counts)
+
+
+class ProjectBlueprintEndpoint(BaseAPIView):
+    """The generic task catalogue the setup wizard ticks through.
+
+    Served rather than duplicated in the frontend so the two cannot drift: the same
+    list is what the planner schedules and what apply writes.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        from .blueprints import catalogue
+
+        return Response(catalogue(), status=status.HTTP_200_OK)
+
+
+class ProjectSetupPlanEndpoint(BaseAPIView):
+    """Turn the wizard's answers into a dated, owned, sprint-cut plan. Writes nothing.
+
+    The split matters: **dates are computed here, never by the model**. A deterministic
+    pass walks the dependency graph in topological order, counts in working days, and
+    lets each discipline run as many tasks side by side as it has people — which is why
+    the proposed end date moves when the lead says they have two firmware engineers
+    rather than one. Ask a language model for eighty consistent dates and some of them
+    will be wrong; nobody will notice which.
+
+    The model, when one is configured, is asked the question it is actually good at:
+    what does *this* project need that the generic list misses, and are these durations
+    plausible. Its answer feeds back through the same scheduler.
+    """
+
+    SYSTEM = (
+        "You are an engineering project manager for a conservation-technology team that "
+        "builds wildlife tracking devices (GPS/satellite tags, cameras, sensors). You are "
+        "given a project and the generic V-cycle task list chosen for it. Your job is to "
+        "adapt it: adjust durations that are clearly wrong for this project, and add the "
+        "tasks this specific project needs that a generic list cannot know about. "
+        "Rules: never remove a task; never renumber or rename an existing key; keep added "
+        "tasks few (at most 8) and concrete; every added task must name a role from the "
+        "Disciplines list and may only depend on keys that exist. Durations are working "
+        "days, between 1 and 120. "
+        "Reply with JSON only, no prose, in exactly this shape: "
+        '{"durations":{"hw.layout":12},"extra":[{"key":"hw.antenna","name":"Antenna tuning '
+        'and range test","track":"hardware","phase":"verification","role":"hardware engineer",'
+        '"days":5,"after":["hw.bringup"]}],"notes":"one short paragraph"}'
+    )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        from .blueprints import (
+            TASK_BY_KEY,
+            assign_sprints,
+            build_tasks,
+            default_selection,
+            schedule,
+            split_into_sprints,
+        )
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        tracks = [str(t).strip() for t in (request.data.get("tracks") or []) if str(t).strip()]
+        raw_keys = request.data.get("task_keys")
+        keys = (
+            [str(k).strip() for k in raw_keys if str(k).strip() in TASK_BY_KEY]
+            if isinstance(raw_keys, list)
+            else default_selection(tracks)
+        )
+        if not keys:
+            return Response(
+                {"error": "Pick at least one component, or one task."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+        start = (
+            _parse_date(request.data.get("start_date"))
+            or (schedule_row.start_date if schedule_row else None)
+            or timezone.now().date()
+        )
+
+        def _positive(value, ceiling):
+            try:
+                return max(1, min(ceiling, int(value)))
+            except (TypeError, ValueError):
+                return None
+
+        field_days = _positive(request.data.get("field_days"), 365)
+        production_days = _positive(request.data.get("production_days"), 365)
+
+        overrides = {}
+        for key, value in (request.data.get("duration_overrides") or {}).items():
+            days = _positive(value, 365)
+            if days and str(key) in TASK_BY_KEY:
+                overrides[str(key)] = days
+
+        # Roster width first, then whatever the lead typed over it.
+        capacity = _capacity_from_roster(project_id)
+        for role, value in (request.data.get("capacity") or {}).items():
+            seats = _positive(value, 50)
+            if seats:
+                capacity[str(role).strip().lower()] = seats
+
+        notes, provider, model_name = "", None, None
+        extra, ai_durations = [], {}
+        if request.data.get("use_ai"):
+            from .ai import chat_json, resolve_config
+
+            config = resolve_config(project.workspace_id)
+            if config:
+                provider, model_name = config["provider"], config["model"]
+                vocabulary = _role_vocabulary(project_id)
+                context = (request.data.get("context") or "").strip()[:1500]
+                prompt = [
+                    f'Project: "{project.name}" ({project.identifier}).',
+                    f"Components: {', '.join(tracks) or 'not stated'}.",
+                    f"Starts {start.isoformat()}.",
+                ]
+                if field_days:
+                    prompt.append(f"A field mission of about {field_days} working days is planned.")
+                if production_days:
+                    prompt.append(f"A production run of about {production_days} working days is planned.")
+                if context:
+                    prompt.append(f"Extra context from the project lead: {context}")
+                prompt.append("")
+                prompt.append(f"Disciplines available: {', '.join(vocabulary)}")
+                prompt.append("")
+                prompt.append(f"Chosen tasks ({len(keys)}) — key | name | role | days:")
+                prompt.extend(
+                    f"{k} | {TASK_BY_KEY[k]['name']} | {TASK_BY_KEY[k]['role']} | "
+                    f"{overrides.get(k, TASK_BY_KEY[k]['days'])}"
+                    for k in keys
+                )
+                data, error = chat_json(config, self.SYSTEM, "\n".join(prompt), max_tokens=3000)
+                if error:
+                    # A plan without the model is still a plan — say so and carry on
+                    # rather than failing the whole step.
+                    notes = f"The assistant could not be reached ({error}); this is the generic plan."
+                else:
+                    for key, value in (data.get("durations") or {}).items():
+                        days = _positive(value, 120)
+                        if days and str(key) in TASK_BY_KEY:
+                            ai_durations[str(key)] = days
+                    extra = [e for e in (data.get("extra") or []) if isinstance(e, dict)][:8]
+                    notes = str(data.get("notes") or "")[:1200]
+
+        # The lead's own overrides outrank the model's.
+        merged = {**ai_durations, **overrides}
+        tasks = build_tasks(
+            keys,
+            field_days=field_days,
+            production_days=production_days,
+            duration_overrides=merged,
+            extra=extra,
+        )
+        placed, warnings = schedule(tasks, start, capacity)
+        end = max((v["target"] for v in placed.values()), default=start)
+
+        sprint_cfg = request.data.get("sprints") or {}
+        sprints = []
+        if str(sprint_cfg.get("mode") or "flow") == "sprints":
+            sprints = split_into_sprints(
+                start,
+                end,
+                length_days=_positive(sprint_cfg.get("length_days"), 90) or 14,
+                count=_positive(sprint_cfg.get("count"), 52),
+            )
+        sprint_of = assign_sprints(placed, sprints)
+
+        holders = _role_holders(project_id)
+        names = {
+            str(u.id): (u.display_name or u.first_name or u.email)
+            for u in User.objects.filter(id__in=list(set(holders.values())))
+        }
+        counts = _capacity_from_roster(project_id)
+        missing = sorted(
+            {
+                t["role"]
+                for t in tasks
+                if t.get("role") and not counts.get(t["role"].strip().lower())
+            }
+        )
+
+        rows = []
+        for task in tasks:
+            dates = placed[task["key"]]
+            owner = holders.get((task.get("role") or "").strip().lower())
+            rows.append(
+                {
+                    **task,
+                    "start_date": dates["start"].isoformat(),
+                    "target_date": dates["target"].isoformat(),
+                    "assignee_id": owner,
+                    "assignee_name": names.get(owner) if owner else None,
+                    "sprint": sprint_of.get(task["key"]),
+                }
+            )
+        rows.sort(key=lambda r: (r["start_date"], r["target_date"], r["key"]))
+
+        return Response(
+            {
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+                "tasks": rows,
+                "sprints": [
+                    {
+                        "index": s["index"],
+                        "name": s["name"],
+                        "start_date": s["start"].isoformat(),
+                        "end_date": s["end"].isoformat(),
+                        "task_count": sum(1 for k in sprint_of.values() if k == s["index"]),
+                    }
+                    for s in sprints
+                ],
+                "capacity": capacity,
+                "role_counts": counts,
+                # The disciplines this plan needs and nobody on the roster holds. Not an
+                # error: the requirement is recorded on the item either way, and the work
+                # is handed over the day somebody picks the discipline up.
+                "missing_roles": missing,
+                "warnings": warnings,
+                "notes": notes,
+                "provider": provider,
+                "model": model_name,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProjectSetupApplyEndpoint(BaseAPIView):
+    """Write an approved plan into the project: work items, dependencies, disciplines,
+    owners, modules per component and cycles per sprint.
+
+    Re-runnable on purpose. A task whose name already exists in the project is skipped
+    rather than duplicated, so a double click — or a lead running the wizard again after
+    adding a track — extends the plan instead of doubling it.
+
+    Owners are not written directly: the discipline goes on the item and
+    _materialise_issue_roles resolves it, which is also what fires the activity, the
+    subscription and the notification. An assignment nobody is told about is not one.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
+        from plane.utils.host import base_host
+
+        from .blueprints import TRACKS
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = [r for r in (request.data.get("tasks") or []) if isinstance(r, dict)]
+        if not rows:
+            return Response({"error": "Nothing to apply."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(rows) > 400:
+            return Response(
+                {"error": "That is more work items than one plan should create at once."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        state = (
+            State.objects.filter(project_id=project_id, default=True).first()
+            or State.objects.filter(project_id=project_id, group="backlog").order_by("sequence").first()
+            or State.objects.filter(project_id=project_id).order_by("sequence").first()
+        )
+        if not state:
+            return Response(
+                {"error": "This project has no states to create work items in."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing = {
+            name.strip().lower()
+            for name in Issue.issue_objects.filter(project_id=project_id).values_list("name", flat=True)
+        }
+        track_labels = {t["key"]: t["label"] for t in TRACKS}
+        track_labels["pm"] = "Project management"
+
+        created, skipped = {}, []
+        issue_track, issue_role, issue_sprint = {}, {}, {}
+        with transaction.atomic():
+            for row in rows:
+                name = str(row.get("name") or "").strip()[:255]
+                key = str(row.get("key") or "").strip()[:60]
+                if not name or not key:
+                    continue
+                if name.lower() in existing:
+                    skipped.append(name)
+                    continue
+                existing.add(name.lower())
+                issue = Issue.objects.create(
+                    name=name,
+                    state=state,
+                    start_date=_parse_date(row.get("start_date")),
+                    target_date=_parse_date(row.get("target_date")),
+                    project=project,
+                    workspace_id=project.workspace_id,
+                    created_by=request.user,
+                )
+                created[key] = issue
+                issue_track[key] = str(row.get("track") or "pm")
+                role = str(row.get("role") or "").strip()[:80]
+                if role:
+                    issue_role[key] = role
+                sprint = row.get("sprint")
+                if isinstance(sprint, int):
+                    issue_sprint[key] = sprint
+
+            # Dependencies. blocked_by reads (issue = the one that waits,
+            # related_issue = the one it waits on) — see _EDGE in scheduling.py.
+            links = []
+            for row in rows:
+                key = str(row.get("key") or "").strip()
+                successor = created.get(key)
+                if not successor:
+                    continue
+                for pred_key in row.get("after") or []:
+                    predecessor = created.get(str(pred_key))
+                    if predecessor and predecessor.id != successor.id:
+                        links.append(
+                            IssueRelation(
+                                issue=successor,
+                                related_issue=predecessor,
+                                relation_type="blocked_by",
+                                project=project,
+                                workspace_id=project.workspace_id,
+                                created_by=request.user,
+                            )
+                        )
+            if links:
+                IssueRelation.objects.bulk_create(links, batch_size=100, ignore_conflicts=True)
+
+            if issue_role:
+                IssueRole.objects.bulk_create(
+                    [
+                        IssueRole(issue_id=created[key].id, role=role, source=IssueRole.AI)
+                        for key, role in issue_role.items()
+                    ],
+                    batch_size=100,
+                    ignore_conflicts=True,
+                )
+
+            # One module per component, so the Overview's progress bars line up with the
+            # way the work was actually chosen.
+            modules_created = 0
+            if request.data.get("create_modules") and created:
+                by_track = defaultdict(list)
+                for key, issue in created.items():
+                    by_track[issue_track.get(key, "pm")].append(issue)
+                for track, issues in by_track.items():
+                    label = track_labels.get(track, track.title())
+                    module = Module.objects.filter(project_id=project_id, name=label).first()
+                    if not module:
+                        starts = [i.start_date for i in issues if i.start_date]
+                        targets = [i.target_date for i in issues if i.target_date]
+                        module = Module.objects.create(
+                            name=label,
+                            project=project,
+                            workspace_id=project.workspace_id,
+                            start_date=min(starts) if starts else None,
+                            target_date=max(targets) if targets else None,
+                            created_by=request.user,
+                        )
+                        modules_created += 1
+                    ModuleIssue.objects.bulk_create(
+                        [
+                            ModuleIssue(
+                                module=module,
+                                issue=issue,
+                                project=project,
+                                workspace_id=project.workspace_id,
+                                created_by=request.user,
+                            )
+                            for issue in issues
+                        ],
+                        batch_size=100,
+                        ignore_conflicts=True,
+                    )
+
+            cycles_created = 0
+            sprint_rows = [s for s in (request.data.get("sprints") or []) if isinstance(s, dict)][:52]
+            if sprint_rows and issue_sprint:
+                cycle_by_index = {}
+                for sprint in sprint_rows:
+                    index = sprint.get("index")
+                    start = _parse_date(sprint.get("start_date"))
+                    end = _parse_date(sprint.get("end_date"))
+                    if not isinstance(index, int) or not start or not end:
+                        continue
+                    name = str(sprint.get("name") or f"Sprint {index}").strip()[:255]
+                    cycle = Cycle.objects.filter(project_id=project_id, name=name).first()
+                    if not cycle:
+                        # Cycle stores datetimes where everything else here stores dates;
+                        # naive values would land as a warning and a wrong day near midnight.
+                        cycle = Cycle.objects.create(
+                            name=name,
+                            project=project,
+                            workspace_id=project.workspace_id,
+                            owned_by=request.user,
+                            start_date=timezone.make_aware(datetime.combine(start, time.min)),
+                            end_date=timezone.make_aware(datetime.combine(end, time.max)),
+                            created_by=request.user,
+                        )
+                        cycles_created += 1
+                    cycle_by_index[index] = cycle
+                CycleIssue.objects.bulk_create(
+                    [
+                        CycleIssue(
+                            cycle=cycle_by_index[index],
+                            issue=created[key],
+                            project=project,
+                            workspace_id=project.workspace_id,
+                            created_by=request.user,
+                        )
+                        for key, index in issue_sprint.items()
+                        if index in cycle_by_index and key in created
+                    ],
+                    batch_size=100,
+                    ignore_conflicts=True,
+                )
+
+            # The window the gantt and the Overview draw against.
+            if request.data.get("set_project_window") and created:
+                starts = [i.start_date for i in created.values() if i.start_date]
+                targets = [i.target_date for i in created.values() if i.target_date]
+                if starts and targets:
+                    ProjectSchedule.objects.update_or_create(
+                        project_id=project_id,
+                        defaults={"start_date": min(starts), "target_date": max(targets)},
+                    )
+
+        # Outside the transaction: this fans out notifications, and a slow mail server
+        # should not hold a write lock over the whole plan.
+        assigned = _materialise_issue_roles(
+            project,
+            request.user.id,
+            issue_ids=[i.id for i in created.values()],
+            origin=base_host(request=request, is_app=True),
+        )
+
+        return Response(
+            {
+                "created": len(created),
+                "skipped": skipped,
+                "relations": len(links),
+                "roles_set": len(issue_role),
+                "assigned": len(assigned),
+                "modules_created": modules_created,
+                "cycles_created": cycles_created,
+            },
+            status=status.HTTP_201_CREATED,
         )

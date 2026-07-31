@@ -9,7 +9,12 @@ import { APIService } from "@/services/api.service";
 import type {
   TAiPlan,
   TAiSettings,
+  TBlueprintCatalogue,
   TGithubInboxItem,
+  TPlannedSprint,
+  TPlannedTask,
+  TSetupApplyResult,
+  TSetupPlan,
   TIssueRelationEdge,
   TProjectOverview,
   TMyWorkItem,
@@ -399,6 +404,63 @@ export class ArribadaService extends APIService {
     issues: { issue_id: string; start_date: string; target_date: string; assignee_ids?: string[] }[]
   ): Promise<{ applied: number; rejected: string[]; assigned?: number; assignees_rejected?: string[] }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/apply-plan/`, { issues })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // The generic V-cycle catalogue the setup wizard ticks through. Served rather
+  // than hardcoded here so the list the user picks from is the list the server
+  // schedules and writes.
+  async getTaskBlueprints(workspaceSlug: string): Promise<TBlueprintCatalogue> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/task-blueprints/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Turn the wizard's answers into a dated, owned, sprint-cut plan. Writes
+  // nothing: dates come from a deterministic pass over the dependency graph, and
+  // the model — when use_ai is set — only adjusts durations and adds tasks.
+  async setupPlan(
+    workspaceSlug: string,
+    projectId: string,
+    data: {
+      tracks: string[];
+      task_keys?: string[];
+      start_date?: string | null;
+      capacity?: Record<string, number>;
+      duration_overrides?: Record<string, number>;
+      field_days?: number | null;
+      production_days?: number | null;
+      sprints?: { mode: "sprints" | "flow"; length_days?: number | null; count?: number | null };
+      use_ai?: boolean;
+      context?: string;
+    }
+  ): Promise<TSetupPlan> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-plan/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Write an approved plan: work items, their dependencies, the discipline each
+  // needs, a module per component and a cycle per sprint. Re-runnable — a task
+  // whose name already exists is skipped rather than duplicated.
+  async setupApply(
+    workspaceSlug: string,
+    projectId: string,
+    data: {
+      tasks: TPlannedTask[];
+      sprints?: TPlannedSprint[];
+      create_modules?: boolean;
+      set_project_window?: boolean;
+    }
+  ): Promise<TSetupApplyResult> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-apply/`, data)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

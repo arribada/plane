@@ -19,6 +19,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { Loader, Tooltip } from "@plane/ui";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
@@ -283,8 +284,16 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
         projectName={undatedProjectName}
         onClose={() => setUndatedProjectId(null)}
         onChanged={() => {
-          if (workspaceSlug && undatedProjectId)
-            void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId);
+          if (!workspaceSlug || !undatedProjectId) return;
+          void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId).then((ok) => {
+            if (!ok)
+              setToast({
+                type: TOAST_TYPE.WARNING,
+                title: "The dates were saved",
+                message: "The timeline couldn't be refreshed, so it may still show them as undated. Reload the page.",
+              });
+            return undefined;
+          });
         }}
       />
     </div>

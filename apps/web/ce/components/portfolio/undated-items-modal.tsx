@@ -110,7 +110,12 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
         return undefined;
       })
       .catch(() => {
-        if (!cancelled) setItems([]);
+        // An empty list here would read as "this project has nothing without
+        // dates" — the opposite of the amber badge that opened this modal.
+        if (!cancelled) {
+          setItems([]);
+          setError("Couldn't load this project's undated work items. Close and try again.");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

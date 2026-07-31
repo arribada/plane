@@ -23,6 +23,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
@@ -493,8 +494,16 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         projectName={undatedProjectId ? portfolio.getProject(undatedProjectId)?.name : undefined}
         onClose={() => setUndatedProjectId(null)}
         onChanged={() => {
-          if (workspaceSlug && undatedProjectId)
-            void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId);
+          if (!workspaceSlug || !undatedProjectId) return;
+          void portfolio.refreshProjectItems(workspaceSlug.toString(), undatedProjectId).then((ok) => {
+            if (!ok)
+              setToast({
+                type: TOAST_TYPE.WARNING,
+                title: "The dates were saved",
+                message: "The timeline couldn't be refreshed, so it may still show them as undated. Reload the page.",
+              });
+            return undefined;
+          });
         }}
       />
 

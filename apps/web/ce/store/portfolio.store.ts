@@ -53,7 +53,8 @@ export interface IPortfolioStore {
   fetchPortfolio: (workspaceSlug: string) => Promise<void>;
   toggleProjectExpansion: (workspaceSlug: string, projectId: string) => Promise<void>;
   applyItemDates: (itemId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
-  refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<void>;
+  /** false when the reload failed and the board is showing stale rows. */
+  refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<boolean>;
   setDisplayedProjectIds: (ids: string[]) => void;
   setColorBy: (value: TPortfolioColorBy) => void;
   setSortBy: (value: TPortfolioSortBy) => void;
@@ -429,7 +430,7 @@ export class PortfolioStore implements IPortfolioStore {
   // Reload one project's items and its own row counts. Deliberately NOT
   // fetchPortfolio(): that resets displayedProjectIds and force-switches sortBy to
   // "manual" whenever a saved order exists, visibly reshuffling the board.
-  refreshProjectItems = async (workspaceSlug: string, projectId: string): Promise<void> => {
+  refreshProjectItems = async (workspaceSlug: string, projectId: string): Promise<boolean> => {
     runInAction(() => {
       const loaded = new Set(this.loadedItemProjects);
       loaded.delete(projectId);
@@ -459,8 +460,13 @@ export class PortfolioStore implements IPortfolioStore {
         const fresh = projects.find((p) => p.id === projectId);
         if (fresh) set(this.projectMap, [projectId], fresh);
       });
+      return true;
     } catch {
-      // leave the prior rows in place; the next expand re-fetches this project
+      // The prior rows stay on screen and the project stays marked unloaded, so
+      // the next expand re-fetches it. Until then the board is out of date, and
+      // the caller is the only one that can say so — hence the boolean rather
+      // than a swallowed rejection.
+      return false;
     }
   };
 

@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef } from "react";
 import { observer } from "mobx-react";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
@@ -56,7 +57,16 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
   // create "target depends on source" (source runs first) unless it would self-link
   const link = (target: string, from: string) => {
     if (!target || target === from) return;
-    createCurrentRelation(target, "blocked_by", from).catch(() => {});
+    // A dependency the server refused — a cycle, a cross-project link, a lost
+    // connection — used to disappear without a word: the line the user had just
+    // drawn was simply gone at the next refresh, with nothing to explain it.
+    createCurrentRelation(target, "blocked_by", from).catch(() => {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't link these two",
+        message: "The dependency wasn't saved. It may create a loop, or the connection dropped.",
+      });
+    });
   };
 
   const onPointerDown = (e: React.PointerEvent) => {

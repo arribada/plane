@@ -75,7 +75,10 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
         setTargetDate(s?.target_date ?? "");
         return undefined;
       })
-      .catch(() => {});
+      // These two dates are the window the plan is built inside. Swallowing the
+      // failure left them blank, which reads exactly like "this project has no
+      // dates" — so the plan came back spread over a window nobody had chosen.
+      .catch(() => setError("Couldn't read this project's dates — check the window below before generating."));
   }, [projectId, workspaceSlug, selectionKey, service]);
 
   if (!projectId) return null;

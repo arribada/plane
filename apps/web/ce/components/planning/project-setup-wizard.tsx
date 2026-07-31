@@ -370,7 +370,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     service
       .getProjectTeam(slug, projectId)
       .then((r) => setTeam(r?.team ?? []))
-      .catch(() => {});
+      // A refresh that fails leaves the list showing the roster from before the
+      // edit. Silently, that reads as "the change didn't take" — and the lead
+      // makes it a second time.
+      .catch(() => setError("Couldn't refresh the team list — reopen this step to see the change."));
 
   // `reflow` is a re-plan after the lead changed who does what: it keeps the tasks
   // the assistant already added and does not call it again, so only the dates and

@@ -111,6 +111,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [created, setCreated] = useState<TSetupApplyResult | null>(null);
   // 6 — work already in the project
   const [undatedCount, setUndatedCount] = useState<number | null>(null);
+  // Latched when the wizard opens. The step list must not change shape underneath
+  // someone: dating the leftover items would otherwise drop the step they are
+  // standing on, and the confirmation with it.
+  const [hasExistingWork, setHasExistingWork] = useState(false);
   const [aiPlan, setAiPlan] = useState<TAiPlan | null>(null);
   const review = usePlanReview(aiPlan?.assignments);
   const [applied, setApplied] = useState<number | null>(null);
@@ -152,7 +156,11 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       .catch(() => {});
     service
       .getProjectItems(slug, projectId, true)
-      .then((r) => setUndatedCount(r?.length ?? 0))
+      .then((r) => {
+        setUndatedCount(r?.length ?? 0);
+        setHasExistingWork((r?.length ?? 0) > 0);
+        return undefined;
+      })
       .catch(() => setUndatedCount(null));
     service
       .getWikiDoc(slug, projectId)
@@ -268,10 +276,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       { key: "cadence", title: "How do you want to run it?" },
       { key: "plan", title: "The plan" },
     ];
-    if ((undatedCount ?? 0) > 0) list.push({ key: "existing", title: "Work already in this project" });
+    if (hasExistingWork) list.push({ key: "existing", title: "Work already in this project" });
     list.push({ key: "links", title: "Where does the rest of the project live?" });
     return list;
-  }, [undatedCount]);
+  }, [hasExistingWork]);
 
   const step = steps[Math.min(index, steps.length - 1)];
   const isLast = index >= steps.length - 1;

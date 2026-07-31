@@ -110,3 +110,7 @@ build/
 .react-router/
 temp/
 scripts/
+
+# arribada: operational build helpers + logs (kept on the deploy host, not source)
+/build-*.sh
+/build-*.log

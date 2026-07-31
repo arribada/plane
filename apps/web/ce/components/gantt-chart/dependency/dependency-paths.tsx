@@ -15,6 +15,7 @@ import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
 
 const R = 6; // corner radius
@@ -77,7 +78,8 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
     issue: { getIssueById },
   } = useIssueDetail();
   const service = useMemo(() => new ArribadaService(), []);
-  const [edges, setEdges] = useState<TIssueRelationEdge[]>([]);
+  // Shared with the row ordering: one fetch of the graph, one answer about it.
+  const edges = useProjectRelations(workspaceSlug?.toString(), projectId?.toString());
   const [critical, setCritical] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -85,15 +87,6 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
     if (workspaceSlug && projectId) {
       const ws = workspaceSlug.toString();
       const pid = projectId.toString();
-      service
-        .getProjectRelations(ws, pid)
-        .then((rows) => {
-          if (!cancelled) setEdges(rows || []);
-          return undefined;
-        })
-        .catch(() => {
-          if (!cancelled) setEdges([]);
-        });
       service
         .getCriticalPath(ws, pid)
         .then((res) => {

@@ -71,6 +71,29 @@ export const GanttGroupBy = observer(function GanttGroupBy() {
                 )}
               </button>
             ))}
+            {/* Row order sits here rather than in Plane's own "order by": that list is
+                a field sort the API applies, and walking the dependency graph is
+                neither a field nor something the API knows how to do. */}
+            <div className="mt-1 border-t border-subtle pt-1">
+              <span className="block px-2 py-0.5 text-11 text-tertiary">Row order</span>
+              <button
+                type="button"
+                onClick={() => {
+                  ganttDisplay.setRowOrder(ganttDisplay.rowOrder === "graph" ? "default" : "graph");
+                  setOpen(false);
+                }}
+                className="flex w-full items-start justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-layer-2"
+              >
+                <span className="min-w-0">
+                  <span className="block text-13 text-primary">Follow dependencies</span>
+                  <span className="block text-11 text-tertiary">Everything a task waits on sits above it</span>
+                </span>
+                {ganttDisplay.rowOrder === "graph" && (
+                  <Check className="mt-0.5 size-3.5 flex-shrink-0 text-accent-primary" />
+                )}
+              </button>
+            </div>
+
             {grouping && keys.length > 0 && (
               <div className="mt-1 flex gap-1 border-t border-subtle pt-1">
                 {/* Folding every band is how you get from 37 rows to six and read the

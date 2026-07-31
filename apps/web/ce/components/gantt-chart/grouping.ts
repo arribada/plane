@@ -62,7 +62,7 @@ export type TGanttGroupResolver = {
   getModule: (id: string) => { name: string } | undefined | null;
   getLabel: (id: string) => { name: string; color?: string | null } | undefined | null;
   getMemberName: (id: string) => string | undefined | null;
-  getState: (id: string) => { name: string; color?: string | null } | undefined | null;
+  getState: (id: string) => { name: string; color?: string | null; group?: string | null } | undefined | null;
   getCycle: (id: string) => { name: string } | undefined | null;
 };
 
@@ -71,6 +71,23 @@ export type TGanttGroup = {
   label: string;
   color?: string;
   ids: string[];
+  /** What the band is worth at a glance, so folding it away loses nothing:
+   *  when it runs, how long it lasts, and how much of it is finished. */
+  start: Date | null;
+  end: Date | null;
+  /** Calendar days from the group's first start to its last end, inclusive. Not a
+   *  sum of durations — the tasks in a band overlap, and adding them up would say a
+   *  fortnight of parallel work takes a month. */
+  days: number;
+  done: number;
+};
+
+const DAY_MS = 86_400_000;
+
+const parseDate = (value: string | null | undefined): Date | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 };
 
 /** The lowest-named of the values an id list resolves to — the tie-break that keeps
@@ -161,7 +178,32 @@ export const buildGroups = (
       : { key: UNSET, label: UNSET_LABEL[groupBy], color: undefined };
     const existing = byKey.get(key);
     if (existing) existing.ids.push(id);
-    else byKey.set(key, { key, label, color, ids: [id] });
+    else byKey.set(key, { key, label, color, ids: [id], start: null, end: null, days: 0, done: 0 });
+  }
+
+  // Second pass for the numbers: the membership has to be settled first, and this
+  // keeps the grouping itself readable.
+  for (const group of byKey.values()) {
+    let first: number | null = null;
+    let last: number | null = null;
+    for (const id of group.ids) {
+      const issue = resolve.getIssue(id);
+      if (!issue) continue;
+      const state = issue.state_id ? resolve.getState(issue.state_id) : null;
+      if (state?.group === "completed" || state?.group === "cancelled") group.done += 1;
+      for (const value of [issue.start_date, issue.target_date]) {
+        const date = parseDate(value);
+        if (!date) continue;
+        const time = date.getTime();
+        if (first === null || time < first) first = time;
+        if (last === null || time > last) last = time;
+      }
+    }
+    if (first !== null && last !== null) {
+      group.start = new Date(first);
+      group.end = new Date(last);
+      group.days = Math.round((last - first) / DAY_MS) + 1;
+    }
   }
 
   const groups = [...byKey.values()];

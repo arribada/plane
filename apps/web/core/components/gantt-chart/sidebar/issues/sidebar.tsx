@@ -98,6 +98,10 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                   label={group.label}
                   color={group.color}
                   count={group.ids.length}
+                  start={group.start}
+                  end={group.end}
+                  days={group.days}
+                  done={group.done}
                   collapsed={groups.isCollapsed(key)}
                   onToggle={() => groups.toggle(key)}
                 />

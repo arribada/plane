@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
@@ -20,8 +20,14 @@ import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
 import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
 import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
+import { orderByDependency } from "@/plane-web/components/gantt-chart/dependency-order";
+import { GanttExportButton } from "@/plane-web/components/gantt-chart/export-button";
+import type { TExportEdge, TExportRow } from "@/plane-web/components/gantt-chart/export";
+import { groupKeyFromRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
+import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
+import { useProject } from "@/hooks/store/use-project";
 import { GanttUndoButton } from "@/plane-web/components/gantt-chart/undo-button";
 import { GanttLinkPreview } from "@/plane-web/components/gantt-chart/link-preview";
 import { ganttUndo } from "@/plane-web/store/gantt-undo";
@@ -103,13 +109,23 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const { getLabelById } = useLabel();
   const { getStateById } = useProjectState();
   const { getCycleById } = useCycle();
+  const { getProjectById } = useProject();
+  const projectDetails = projectId ? getProjectById(projectId.toString()) : undefined;
   const { getUserDetails } = useMember();
 
-  const { groupBy, collapsedGroups } = ganttDisplay;
+  const { groupBy, collapsedGroups, rowOrder } = ganttDisplay;
+  const relations = useProjectRelations(workspaceSlug?.toString(), projectId?.toString());
+
+  // Along the graph before anything is grouped, so a band's rows read top-to-bottom
+  // in the order the work actually has to happen.
+  const orderedIds = useMemo(
+    () => (rowOrder === "graph" && relations.length > 0 ? orderByDependency(issuesIds, relations) : issuesIds),
+    [issuesIds, relations, rowOrder]
+  );
 
   const groups = useMemo(
     () =>
-      buildGroups(issuesIds, groupBy, {
+      buildGroups(orderedIds, groupBy, {
         getIssue: getIssueById,
         getModule: getModuleById,
         getLabel: getLabelById,
@@ -117,15 +133,61 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         getState: getStateById,
         getCycle: getCycleById,
       }),
-    [issuesIds, groupBy, getIssueById, getModuleById, getLabelById, getStateById, getCycleById, getUserDetails]
+    [orderedIds, groupBy, getIssueById, getModuleById, getLabelById, getStateById, getCycleById, getUserDetails]
   );
 
   // The id list both panes walk: unchanged when grouping is off, so nothing about
   // the ungrouped chart moves.
   const rowIds = useMemo(
-    () => (groupBy === "none" ? issuesIds : flattenGroups(groups, collapsedGroups)),
-    [issuesIds, groups, groupBy, collapsedGroups]
+    () => (groupBy === "none" ? orderedIds : flattenGroups(groups, collapsedGroups)),
+    [orderedIds, groups, groupBy, collapsedGroups]
   );
+
+  // Built at click time, not kept in state: the export must be the chart as it is
+  // at that instant — same order, same bands, same filters — and nothing here is
+  // worth recomputing on every render for a button that is rarely pressed.
+  const collectForExport = useCallback(() => {
+    const parsed = (value: string | null | undefined) => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const exportRows: TExportRow[] = rowIds.map((id) => {
+      if (isGroupRowId(id)) {
+        const group = groups.find((g) => g.key === groupKeyFromRowId(id));
+        return { id, kind: "group" as const, label: group?.label ?? "", start: null, end: null };
+      }
+      const issue = getIssueById(id);
+      const state = issue?.state_id ? getStateById(issue.state_id) : null;
+      const owner = issue?.assignee_ids?.[0];
+      return {
+        id,
+        kind: "item" as const,
+        label: issue?.name ?? "",
+        identifier: issue?.sequence_id ? `${projectDetails?.identifier ?? ""}-${issue.sequence_id}` : undefined,
+        start: parsed(issue?.start_date),
+        end: parsed(issue?.target_date),
+        color: state?.color ?? undefined,
+        assignee: owner ? (getUserDetails(owner)?.display_name ?? undefined) : undefined,
+        state: state?.name,
+      };
+    });
+    const visible = new Set(rowIds);
+    const exportEdges: TExportEdge[] = relations
+      .map((edge) =>
+        edge.relation_type === "blocked_by"
+          ? { from: edge.related_issue_id, to: edge.issue_id }
+          : { from: edge.issue_id, to: edge.related_issue_id }
+      )
+      .filter((edge) => visible.has(edge.from) && visible.has(edge.to));
+
+    return {
+      rows: exportRows,
+      edges: exportEdges,
+      title: projectDetails?.name ?? "Timeline",
+      showWeekends: true,
+    };
+  }, [rowIds, groups, getIssueById, getStateById, getUserDetails, relations, projectDetails]);
 
   const groupContext = useMemo(
     () => ({
@@ -142,6 +204,22 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const loadMoreIssues = useCallback(() => {
     fetchNextIssues();
   }, [fetchNextIssues]);
+
+  // Grouping and dependency order are statements about the whole project, and the
+  // gantt pages a hundred at a time — so a band that really holds forty items would
+  // read as twelve until somebody scrolled. Pull the rest in, one page per pass,
+  // bounded so a runaway page cursor cannot loop forever.
+  const autoPages = useRef(0);
+  const wantsEverything = groupBy !== "none" || rowOrder === "graph";
+  useEffect(() => {
+    if (!wantsEverything) {
+      autoPages.current = 0;
+      return;
+    }
+    if (!nextPageResults || issues.getIssueLoader() || autoPages.current >= 20) return;
+    autoPages.current += 1;
+    fetchNextIssues();
+  }, [wantsEverything, nextPageResults, issuesIds.length, fetchNextIssues, issues]);
 
   const updateIssueBlockStructure = async (issue: TIssue, data: IBlockUpdateData) => {
     if (!workspaceSlug) return;
@@ -231,6 +309,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
             <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
               <GanttColorBy />
               <GanttGroupBy />
+              <GanttExportButton collect={collectForExport} />
               <GanttUndoButton onUndo={handleGanttUndo} />
             </div>
             <GanttChartRoot

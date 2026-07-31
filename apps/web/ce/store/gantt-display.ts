@@ -11,6 +11,10 @@ import { action, makeObservable, observable } from "mobx";
 import type { TIssue } from "@plane/types";
 import type { TGanttGroupBy } from "@/plane-web/components/gantt-chart/grouping";
 
+/** "graph" walks the dependency edges; "default" leaves the display filter's own
+ *  order alone. Separate from Plane's order_by because it is not a field sort. */
+export type TGanttRowOrder = "default" | "graph";
+
 const STORAGE_KEY = "arribada.gantt.display";
 
 export type TGanttColorBy = "state" | "priority" | "assignee" | "label";
@@ -51,6 +55,7 @@ export const ganttBarColor = (
 class GanttDisplayStore {
   colorBy: TGanttColorBy = "state";
   groupBy: TGanttGroupBy = "none";
+  rowOrder: TGanttRowOrder = "default";
   /** Group keys the viewer has folded away. Cleared when the dimension changes,
    *  because a key from one dimension means nothing in another. */
   collapsedGroups = new Set<string>();
@@ -59,9 +64,11 @@ class GanttDisplayStore {
     makeObservable(this, {
       colorBy: observable.ref,
       groupBy: observable.ref,
+      rowOrder: observable.ref,
       collapsedGroups: observable,
       setColorBy: action,
       setGroupBy: action,
+      setRowOrder: action,
       toggleGroupCollapsed: action,
       setAllGroupsCollapsed: action,
     });
@@ -76,6 +83,11 @@ class GanttDisplayStore {
   setGroupBy = (v: TGanttGroupBy): void => {
     this.groupBy = v;
     this.collapsedGroups = new Set();
+    this.persist();
+  };
+
+  setRowOrder = (v: TGanttRowOrder): void => {
+    this.rowOrder = v;
     this.persist();
   };
 
@@ -96,9 +108,14 @@ class GanttDisplayStore {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const { colorBy, groupBy } = JSON.parse(raw) as { colorBy?: TGanttColorBy; groupBy?: TGanttGroupBy };
+      const { colorBy, groupBy, rowOrder } = JSON.parse(raw) as {
+        colorBy?: TGanttColorBy;
+        groupBy?: TGanttGroupBy;
+        rowOrder?: TGanttRowOrder;
+      };
       if (colorBy) this.colorBy = colorBy;
       if (groupBy) this.groupBy = groupBy;
+      if (rowOrder) this.rowOrder = rowOrder;
     } catch {
       // keep the defaults
     }
@@ -106,7 +123,10 @@ class GanttDisplayStore {
 
   private persist() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ colorBy: this.colorBy, groupBy: this.groupBy }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ colorBy: this.colorBy, groupBy: this.groupBy, rowOrder: this.rowOrder })
+      );
     } catch {
       // session-only
     }

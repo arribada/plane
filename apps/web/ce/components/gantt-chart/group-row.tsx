@@ -19,10 +19,19 @@ type Props = {
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  /** What the band is worth, so folding it away costs nothing. */
+  start: Date | null;
+  end: Date | null;
+  days: number;
+  done: number;
 };
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const short = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+
 export const GanttGroupHeader = observer(function GanttGroupHeader(props: Props) {
-  const { label, color, count, collapsed, onToggle } = props;
+  const { label, color, count, collapsed, onToggle, start, end, days, done } = props;
+  const complete = count > 0 ? Math.round((done / count) * 100) : 0;
   return (
     <button
       type="button"
@@ -39,6 +48,27 @@ export const GanttGroupHeader = observer(function GanttGroupHeader(props: Props)
       {color && <span className="size-2 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden />}
       <span className={cn("truncate text-12 font-semibold text-primary")}>{label}</span>
       <span className="flex-shrink-0 rounded-full bg-layer-1 px-1.5 text-11 text-secondary">{count}</span>
+
+      <span className="flex-grow" />
+
+      {/* The band's own numbers. A collapsed group would otherwise be a name and a
+          count, which is not enough to decide whether to open it again. */}
+      {start && end && (
+        <span className="flex-shrink-0 text-11 whitespace-nowrap text-tertiary" title="When this band runs">
+          {short(start)} – {short(end)}
+          <span className="ml-1 tabular-nums">({days} d)</span>
+        </span>
+      )}
+      <span
+        className="flex w-16 flex-shrink-0 items-center gap-1"
+        title={`${done} of ${count} finished`}
+        aria-label={`${complete}% finished`}
+      >
+        <span className="h-1 flex-1 overflow-hidden rounded-full bg-layer-1">
+          <span className="block h-full rounded-full bg-success-primary" style={{ width: `${complete}%` }} />
+        </span>
+        <span className="text-11 text-tertiary tabular-nums">{complete}%</span>
+      </span>
     </button>
   );
 });

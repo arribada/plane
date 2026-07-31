@@ -2827,6 +2827,91 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         )
 
 
+class ProjectCleanEndpoint(BaseAPIView):
+    """Empty a project, one category at a time.
+
+    Setting a project up is now a five-minute job, which makes getting it wrong
+    cheap — but only if starting over is cheap too. Without this, a lead who ran the
+    wizard with the wrong components had forty work items to delete by hand.
+
+    Work items, cycles and modules are **soft**-deleted the way Plane's own delete
+    does, so a mistake is recoverable from the database rather than gone. The
+    fork's own rows (disciplines, the roster, the baseline, the schedule) have no
+    soft-delete and are removed outright — they are small and re-derivable.
+
+    Nothing happens without `confirm` matching the project identifier: a modal that
+    deletes on a single click is one people delete a project with.
+    """
+
+    CATEGORIES = ["work_items", "cycles", "modules", "roles", "team", "schedule", "links"]
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN], level="PROJECT")
+    def post(self, request, slug, project_id):
+        from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        confirm = str(request.data.get("confirm") or "").strip()
+        if confirm.upper() != (project.identifier or "").upper():
+            return Response(
+                {"error": f"Type the project identifier ({project.identifier}) to confirm."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        wanted = {c for c in self.CATEGORIES if request.data.get(c)}
+        if not wanted:
+            return Response({"error": "Nothing selected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        removed = {}
+        with transaction.atomic():
+            if "work_items" in wanted:
+                issue_ids = list(
+                    Issue.issue_objects.filter(project_id=project_id).values_list("id", flat=True)
+                )
+                # The links first: a soft-deleted issue still has hard rows pointing at
+                # it, and a dangling relation would draw an arrow to nothing on the gantt.
+                IssueRelation.objects.filter(
+                    Q(issue_id__in=issue_ids) | Q(related_issue_id__in=issue_ids)
+                ).delete()
+                IssueAssignee.objects.filter(issue_id__in=issue_ids).delete()
+                IssueRole.objects.filter(issue_id__in=issue_ids).delete()
+                CycleIssue.objects.filter(issue_id__in=issue_ids).delete()
+                ModuleIssue.objects.filter(issue_id__in=issue_ids).delete()
+                IssueBaseline.objects.filter(issue_id__in=issue_ids).delete()
+                removed["work_items"] = Issue.objects.filter(id__in=issue_ids).update(deleted_at=now)
+            else:
+                # Cleaning cycles or modules without cleaning the work items must not
+                # leave the items pointing at something that no longer exists.
+                if "cycles" in wanted:
+                    CycleIssue.objects.filter(project_id=project_id).delete()
+                if "modules" in wanted:
+                    ModuleIssue.objects.filter(project_id=project_id).delete()
+                if "roles" in wanted:
+                    removed["roles"] = IssueRole.objects.filter(issue__project_id=project_id).delete()[0]
+
+            if "cycles" in wanted:
+                removed["cycles"] = Cycle.objects.filter(project_id=project_id, deleted_at__isnull=True).update(
+                    deleted_at=now
+                )
+            if "modules" in wanted:
+                removed["modules"] = Module.objects.filter(project_id=project_id, deleted_at__isnull=True).update(
+                    deleted_at=now
+                )
+            if "roles" in wanted and "roles" not in removed:
+                removed["roles"] = IssueRole.objects.filter(issue__project_id=project_id).delete()[0]
+            if "team" in wanted:
+                removed["team"] = ProjectTeamMember.objects.filter(project_id=project_id).delete()[0]
+            if "schedule" in wanted:
+                removed["schedule"] = ProjectSchedule.objects.filter(project_id=project_id).delete()[0]
+            if "links" in wanted:
+                removed["links"] = ProjectWikiDoc.objects.filter(project_id=project_id).delete()[0]
+
+        return Response({"removed": removed}, status=status.HTTP_200_OK)
+
+
 class ProjectSetupApplyEndpoint(BaseAPIView):
     """Write an approved plan into the project: work items, dependencies, disciplines,
     owners, modules per component and cycles per sprint.

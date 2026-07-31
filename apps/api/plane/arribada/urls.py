@@ -8,6 +8,7 @@ from .views import (
     AdoptIssuesEndpoint,
     GithubInboxEndpoint,
     ProjectBlueprintEndpoint,
+    ProjectCleanEndpoint,
     ProjectSetupApplyEndpoint,
     ProjectSetupPlanEndpoint,
     HubProjectsEndpoint,
@@ -172,6 +173,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/setup-apply/",
         ProjectSetupApplyEndpoint.as_view(),
         name="arribada-project-setup-apply",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/clean/",
+        ProjectCleanEndpoint.as_view(),
+        name="arribada-project-clean",
     ),
     path(
         "workspaces/<str:slug>/project-folders/",

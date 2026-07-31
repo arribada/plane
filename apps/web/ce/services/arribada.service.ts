@@ -478,6 +478,29 @@ export class ArribadaService extends APIService {
       });
   }
 
+  // Empty a project, one category at a time. `confirm` must be the project
+  // identifier — the server refuses otherwise, so a stray click cannot do this.
+  async cleanProject(
+    workspaceSlug: string,
+    projectId: string,
+    data: {
+      confirm: string;
+      work_items?: boolean;
+      cycles?: boolean;
+      modules?: boolean;
+      roles?: boolean;
+      team?: boolean;
+      schedule?: boolean;
+      links?: boolean;
+    }
+  ): Promise<{ removed: Record<string, number> }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/clean/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)

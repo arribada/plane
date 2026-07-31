@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { Loader2, Settings2, Sparkles, Wand2 } from "lucide-react";
+import { Eraser, Loader2, Settings2, Sparkles, Wand2 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -24,6 +24,7 @@ import { AiSettingsModal } from "@/plane-web/components/planning/ai-settings-mod
 import { ProjectSetupWizard } from "@/plane-web/components/planning/project-setup-wizard";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectOverview } from "@/plane-web/types/arribada";
+import { CleanProjectModal } from "./clean-project-modal";
 import { OverviewJumpBar } from "./jump-bar";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewProgressSections } from "./progress-sections";
@@ -53,6 +54,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [cleanOpen, setCleanOpen] = useState(false);
   // Which project the page already showed, so a post-save refetch swaps the data
   // in place instead of blanking the page behind a spinner.
   const loadedKey = useRef<string | null>(null);
@@ -200,6 +202,15 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           <Sparkles className="size-4 text-accent-primary" />
           AI schedule
         </button>
+        {/* Setting a project up is cheap now, so starting over has to be too. */}
+        <button
+          type="button"
+          onClick={() => setCleanOpen(true)}
+          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-13 font-medium text-secondary hover:bg-layer-2 hover:text-danger-primary"
+        >
+          <Eraser className="size-4" />
+          Clean project
+        </button>
         {canOpenAiSettings && (
           <button
             type="button"
@@ -225,6 +236,14 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
         onReflowed={refresh}
       />
       <AiSettingsModal isOpen={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
+      {cleanOpen && (
+        <CleanProjectModal
+          projectId={pid ?? null}
+          identifier={data.project.identifier}
+          onClose={() => setCleanOpen(false)}
+          onCleaned={refresh}
+        />
+      )}
     </div>
   );
 });

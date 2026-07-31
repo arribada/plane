@@ -414,6 +414,31 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     void buildPlan(next, true);
   };
 
+  // Returns whether the plan was written, so Finish can stop rather than report
+  // success over a failure.
+  const applyPlan = async (): Promise<boolean> => {
+    if (!plan) return true;
+    try {
+      const result = await service.setupApply(slug, projectId, {
+        tasks: plan.tasks,
+        sprints: plan.sprints,
+        create_modules: true,
+        set_project_window: false,
+      });
+      setCreated(result);
+      await service.updateSchedule(slug, projectId, {
+        start_date: plan.start_date,
+        target_date: endOverride || plan.end_date,
+      });
+      await recountUndated();
+      onCompleted?.();
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, "Could not create the work items."));
+      return false;
+    }
+  };
+
   const createPlan = async () => {
     if (busy || !plan) return;
     setBusy("create");
@@ -520,9 +545,16 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     if (isLast) {
       setBusy("step");
       try {
+        // Finishing applies the plan. Someone who walked through every step and
+        // pressed Finish meant "do it" — leaving the work items uncreated because
+        // they did not also press Create on step five is a trap, not a safeguard.
+        if (plan && !created) {
+          const written = await applyPlan();
+          if (!written) return;
+        }
         if (await saveLinks()) finish();
       } catch (e) {
-        setError(errorMessage(e, "Could not save the links."));
+        setError(errorMessage(e, "Could not finish the setup."));
       } finally {
         setBusy(null);
       }

@@ -7,6 +7,7 @@
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
 import type {
+  TAiDraft,
   TAiPlan,
   TAiSettings,
   TBlueprintCatalogue,
@@ -476,6 +477,20 @@ export class ArribadaService extends APIService {
     }
   ): Promise<TSetupApplyResult> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-apply/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Finish a work item from its title: description, effort, discipline and whoever
+  // holds it. Proposes only — the caller drops it into the still-editable form.
+  async aiDraft(
+    workspaceSlug: string,
+    projectId: string,
+    data: { title: string; context?: string }
+  ): Promise<TAiDraft> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-draft/`, data)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

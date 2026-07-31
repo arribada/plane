@@ -312,6 +312,21 @@ export type TSetupApplyResult = {
   cycles_created: number;
 };
 
+// What the assistant proposes for a work item being written by hand. Every field
+// lands in an editable form control — nothing here is written on its own.
+export type TAiDraft = {
+  description_html: string | null;
+  role: string | null;
+  days: number;
+  start_date: string;
+  target_date: string;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  reason: string;
+  provider: string;
+  model: string;
+};
+
 export type TPortfolioColorBy = "project" | "priority";
 export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated" | "manual";
 

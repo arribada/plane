@@ -2846,6 +2846,126 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         )
 
 
+class ProjectAiDraftEndpoint(BaseAPIView):
+    """Fill in a work item from the one line somebody typed into the title box.
+
+    Creating a task by hand means writing a title, then a description, then guessing
+    a duration, then picking a discipline, then finding whoever covers it — and most
+    people stop after the title. This answers the rest from the title plus what the
+    project already knows: its window, the disciplines its roster holds, and how the
+    existing items are written.
+
+    It proposes. Nothing is written, and every field lands in a form the person can
+    still edit before saving — which is the only reason it is safe to be wrong.
+    """
+
+    SYSTEM = (
+        "You help an engineer finish writing a work item for a conservation-technology "
+        "team that builds wildlife tracking devices (GPS/satellite tags, cameras, "
+        "sensors). Given a short title, write the item out. Rules: the description is "
+        "two or three sentences of plain HTML (<p> only) saying what has to be done and "
+        "what done looks like — no headings, no lists, no restating the title. Estimate "
+        "the working days honestly; most items are 1 to 10. Choose the discipline from "
+        "the Disciplines list you are given, and only from it. Reply with JSON only, no "
+        "prose, in exactly this shape: "
+        '{"description_html":"<p>...</p>","role":"embedded firmware","days":5,'
+        '"reason":"one short sentence"}'
+    )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        from .ai import chat_json, resolve_config
+        from .blueprints import add_working_days, next_working_day
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        title = (request.data.get("title") or "").strip()
+        if len(title) < 3:
+            return Response(
+                {"error": "Give the item a title first — that is what this works from."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        config = resolve_config(project.workspace_id)
+        if not config:
+            return Response(
+                {"error": "No AI provider is configured for this workspace."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vocabulary = _role_vocabulary(project_id)
+        schedule = ProjectSchedule.objects.filter(project_id=project_id).first()
+
+        # A handful of existing titles so the draft matches how this project writes,
+        # rather than how a language model writes. Cheap, and it is what makes the
+        # output feel like it belongs.
+        samples = list(
+            Issue.issue_objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("name", flat=True)[:8]
+        )
+
+        prompt = [
+            f'Project: "{project.name}" ({project.identifier}).',
+            f"Title the engineer typed: {title[:300]}",
+        ]
+        context = (request.data.get("context") or "").strip()
+        if context:
+            prompt.append(f"Extra context: {context[:1000]}")
+        if schedule and (schedule.start_date or schedule.target_date):
+            prompt.append(f"Project window: {schedule.start_date} to {schedule.target_date}.")
+        if samples:
+            prompt.append("")
+            prompt.append("How work items are named on this project:")
+            prompt.extend(f"- {name[:120]}" for name in samples)
+        prompt.append("")
+        prompt.append(f"Disciplines — choose `role` from this list: {', '.join(vocabulary)}")
+
+        data, error = chat_json(config, self.SYSTEM, "\n".join(prompt), max_tokens=900)
+        if error:
+            return Response({"error": error}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            days = max(1, min(120, int(data.get("days") or 5)))
+        except (TypeError, ValueError):
+            days = 5
+
+        # Dates are computed, not asked for — the same rule as the planner. The model
+        # estimates an effort; turning that into a window is arithmetic.
+        start = next_working_day(timezone.now().date())
+        if schedule and schedule.start_date and schedule.start_date > start:
+            start = next_working_day(schedule.start_date)
+        target = add_working_days(start, days)
+
+        role = str(data.get("role") or "").strip()[:80] or None
+        # Whoever holds the discipline, if anyone does. Same resolution the planner
+        # uses, so a draft and a plan never disagree about who owns what.
+        owner = _role_holders(project_id).get(role.lower()) if role else None
+        owner_name = None
+        if owner:
+            user = User.objects.filter(id=owner).first()
+            owner_name = (user.display_name or user.first_name or user.email) if user else None
+
+        description = str(data.get("description_html") or "").strip()[:4000]
+        return Response(
+            {
+                "description_html": description or None,
+                "role": role,
+                "days": days,
+                "start_date": start.isoformat(),
+                "target_date": target.isoformat(),
+                "assignee_id": owner,
+                "assignee_name": owner_name,
+                "reason": str(data.get("reason") or "")[:280],
+                "provider": config["provider"],
+                "model": config["model"],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class ProjectCleanEndpoint(BaseAPIView):
     """Empty a project, one category at a time.
 

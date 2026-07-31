@@ -7,6 +7,7 @@ from django.urls import path
 from .views import (
     AdoptIssuesEndpoint,
     GithubInboxEndpoint,
+    ProjectAiDraftEndpoint,
     ProjectBlueprintEndpoint,
     ProjectCleanEndpoint,
     ProjectSetupApplyEndpoint,
@@ -178,6 +179,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/clean/",
         ProjectCleanEndpoint.as_view(),
         name="arribada-project-clean",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/ai-draft/",
+        ProjectAiDraftEndpoint.as_view(),
+        name="arribada-project-ai-draft",
     ),
     path(
         "workspaces/<str:slug>/project-folders/",

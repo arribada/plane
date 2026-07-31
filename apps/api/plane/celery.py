@@ -89,6 +89,13 @@ app.conf.beat_schedule = {
         "task": "plane.arribada.github_sync_task.github_plane_sync",
         "schedule": crontab(minute="*/30"),  # every 30 min — no-op until GITHUB_PAT is set
     },
+    "arribada-notification-forward": {
+        "task": "plane.arribada.notify_forward.forward_notifications",
+        # Every 10 min, re-sending a 45-minute window. The dashboard drops what it
+        # already holds, so overlap is the point: a missed tick costs a delay, not a
+        # notification. No-op until ARRIBADA_NOTIFY_URL and _SECRET are set.
+        "schedule": crontab(minute="*/10"),
+    },
 }
 
 

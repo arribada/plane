@@ -15,3 +15,4 @@ class ArribadaConfig(AppConfig):
         from . import reminder_task  # noqa: F401
         from . import github_classification_task  # noqa: F401
         from . import github_sync_task  # noqa: F401
+        from . import notify_forward  # noqa: F401

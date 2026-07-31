@@ -88,13 +88,15 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
     }
   };
 
+  // Both bulk actions act on scopedProjectIds, NOT displayedProjectIds: the timeline
+  // draws the scoped set, and a button acts on what you can see. With a folder in
+  // focus the two differ, and using the wider list rewrote dates across every project
+  // in the workspace — through .update(), so it left no activity trail to find it by.
   const captureBaselines = async () => {
     if (!workspaceSlug || capturing) return;
     setCapturing(true);
     try {
-      await Promise.all(
-        portfolio.displayedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id))
-      );
+      await Promise.all(portfolio.scopedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id)));
       setCapturedAt(new Date().toLocaleTimeString());
     } finally {
       setCapturing(false);
@@ -106,7 +108,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
     setReflowing(true);
     try {
       const results = await Promise.all(
-        portfolio.displayedProjectIds.map((id) => service.autoSchedule(workspaceSlug.toString(), id))
+        portfolio.scopedProjectIds.map((id) => service.autoSchedule(workspaceSlug.toString(), id))
       );
       setReflowResult(results.reduce((sum, r) => sum + (r?.rescheduled ?? 0), 0));
       await portfolio.fetchPortfolio(workspaceSlug.toString());

@@ -951,8 +951,18 @@ class MyWorkEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
+        # Through IssueAssignee, never the `assignees` m2m. Django does not apply a
+        # through model's manager to an m2m join, so `assignees=request.user` matches
+        # SOFT-DELETED assignment rows too — and upstream's issue serializer deletes
+        # and re-inserts every assignee row on each edit, so they pile up. The m2m
+        # version returned an item once per historical assignment and kept returning
+        # it long after the person was taken off, until the [:150] slice was full of
+        # work nobody owned.
+        assigned_ids = IssueAssignee.objects.filter(
+            assignee=request.user, deleted_at__isnull=True
+        ).values_list("issue_id", flat=True)
         issues = (
-            Issue.issue_objects.filter(workspace__slug=slug, assignees=request.user, deleted_at__isnull=True)
+            Issue.issue_objects.filter(workspace__slug=slug, id__in=assigned_ids, deleted_at__isnull=True)
             .exclude(state__group__in=["completed", "cancelled"])
             .select_related("project")
             .values(

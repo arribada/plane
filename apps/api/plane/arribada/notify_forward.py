@@ -75,24 +75,45 @@ def forward_notifications():
         email = (row.receiver.email or "").strip() if row.receiver else ""
         if not email:
             continue
-        # Deep link back to the work item the notification is about, when we can
-        # build one — a notification you cannot act on is only half a notification.
-        url = None
-        if web_url and row.project and row.entity_identifier:
-            url = f"{web_url}/{row.workspace.slug}/projects/{row.project_id}/issues/{row.entity_identifier}"
-        items.append(
-            {
-                "source": "plane",
-                "email": email,
-                "title": (row.title or "Plane")[:200],
-                "message": (row.message_stripped or "")[:1000],
-                "url": url,
-                # The Plane notification id — what the dashboard dedupes on, and why
-                # re-sending the same window every run is harmless.
-                "external_id": str(row.id),
-                "kind": row.entity_name or None,
-            }
-        )
+
+        # Plane stores the readable part under `data.issue` and a sentence in
+        # `message`. `message_stripped` is declared on the model and written by
+        # nothing, so reading it produced an empty body on every forwarded item.
+        payload = row.data if isinstance(row.data, dict) else {}
+        issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
+        identifier = issue.get("identifier")
+        sequence = issue.get("sequence_id")
+        issue_name = (issue.get("name") or "").strip()
+
+        ref = f"{identifier}-{sequence}" if identifier and sequence is not None else ""
+        title = " · ".join(part for part in (ref, issue_name) if part) or (row.title or "Plane")
+
+        body = row.message if isinstance(row.message, str) else ""
+        if not body:
+            body = (row.title or "").strip()
+
+        item = {
+            "source": "plane",
+            "email": email,
+            "title": title[:200],
+            "message": body[:1000],
+            # The Plane notification id — what the dashboard dedupes on, and why
+            # re-sending the same window every run is harmless.
+            "external_id": str(row.id),
+            "kind": row.entity_name or None,
+        }
+
+        # A deep link back to the work item, when one can be built. The key is
+        # OMITTED rather than sent as null: the receiving schema treats an absent
+        # url as "none given", and a null used to fail validation for the whole
+        # batch — which silently dropped every notification alongside it.
+        issue_id = issue.get("id") or (str(row.entity_identifier) if row.entity_identifier else None)
+        if web_url and issue_id and row.project_id and row.workspace_id:
+            slug = row.workspace.slug if row.workspace else None
+            if slug:
+                item["url"] = f"{web_url}/{slug}/projects/{row.project_id}/issues/{issue_id}"
+
+        items.append(item)
 
     if not items:
         return "nothing to forward"

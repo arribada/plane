@@ -35,6 +35,9 @@ export interface IPortfolioStore {
   isLoading: boolean;
   // computed
   allProjects: TPortfolioProject[];
+  // What the timeline actually draws: displayedProjectIds narrowed to the folder in
+  // focus. Anything acting on "what you can see" must read this, not the wider list.
+  scopedProjectIds: string[];
   sortedProjectIds: string[];
   ganttBlockIds: string[];
   totalUndatedCount: number;

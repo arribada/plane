@@ -3,9 +3,13 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * The page a project opens on: the plan window, the numbers that matter, what
- * needs attention, and the way out to everything else. One aggregate endpoint
- * feeds the whole tree, so opening a project stays a single round trip.
+ * The page a project opens on. It answers, in this order: where is this project,
+ * where does its knowledge live, and how do I get to the rest. Everything the
+ * first version stacked open — tiles, cycles, modules, roster — is one fold down,
+ * because a page you have to scan is a page nobody reads.
+ *
+ * One aggregate endpoint feeds the whole tree, so opening a project stays a
+ * single round trip.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
@@ -14,16 +18,18 @@ import { Loader2, Settings2, Sparkles, Wand2 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { useUserPermissions } from "@/hooks/store/user";
+import { WikiLinksPanel } from "@/plane-web/components/pages/wiki-links-panel";
 import { AiPlanModal } from "@/plane-web/components/planning/ai-plan-modal";
 import { AiSettingsModal } from "@/plane-web/components/planning/ai-settings-modal";
 import { ProjectSetupWizard } from "@/plane-web/components/planning/project-setup-wizard";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectOverview } from "@/plane-web/types/arribada";
-import { OverviewHeaderBlock } from "./header-block";
 import { OverviewJumpBar } from "./jump-bar";
 import { OverviewKpiTiles } from "./kpi-tiles";
-import { OverviewLinksBlock } from "./links-block";
 import { OverviewProgressSections } from "./progress-sections";
+import { OverviewRecentPages } from "./recent-pages";
+import { OverviewSection } from "./section";
+import { OverviewSummary } from "./summary";
 import { OverviewTeamBlock } from "./team-block";
 import { OverviewWarnings } from "./warnings-block";
 
@@ -44,7 +50,6 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   const [loading, setLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
   const [savingSchedule, setSavingSchedule] = useState(false);
-  const [linksEditorOpen, setLinksEditorOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -111,8 +116,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
     [service, slug, pid, refresh]
   );
 
-  const openLinksEditor = useCallback(() => {
-    setLinksEditorOpen(true);
+  const scrollToLinks = useCallback(() => {
     document.getElementById(LINKS_ANCHOR)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
 
@@ -132,20 +136,51 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
     );
   }
 
+  const needsAttention = data.warnings.filter((w) => w.severity !== "info");
+  const sprintCount = data.cycles.length + data.modules.length;
+
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 md:px-6">
-      <OverviewHeaderBlock overview={data} saving={savingSchedule} onScheduleChange={handleScheduleChange} />
-      <OverviewKpiTiles items={data.items} />
-      <OverviewWarnings warnings={data.warnings} onConfigureLinks={openLinksEditor} />
-      <OverviewProgressSections overview={data} />
-      <OverviewTeamBlock projectId={data.project.id} team={data.team ?? EMPTY_TEAM} onSaved={refresh} />
-      <OverviewLinksBlock
-        anchorId={LINKS_ANCHOR}
-        overview={data}
-        editorOpen={linksEditorOpen}
-        onEditorOpenChange={setLinksEditorOpen}
-        onSaved={refresh}
-      />
+    <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-6 md:px-6">
+      <OverviewSummary overview={data} saving={savingSchedule} onScheduleChange={handleScheduleChange} />
+
+      {/* The same panel the Pages view shows — one row per link, each editable in
+          place. Reused rather than reimplemented so the two never drift apart. */}
+      <div id={LINKS_ANCHOR}>
+        <WikiLinksPanel />
+      </div>
+
+      {needsAttention.length > 0 && (
+        <OverviewSection title="Needs attention" badge={needsAttention.length} defaultOpen>
+          <div className="px-4 py-3">
+            <OverviewWarnings warnings={needsAttention} onConfigureLinks={scrollToLinks} />
+          </div>
+        </OverviewSection>
+      )}
+
+      <OverviewSection title="The numbers">
+        <div className="px-4 py-3">
+          <OverviewKpiTiles items={data.items} />
+        </div>
+      </OverviewSection>
+
+      {sprintCount > 0 && (
+        <OverviewSection title="Sprints & modules" badge={sprintCount}>
+          <div className="px-4 py-3">
+            <OverviewProgressSections overview={data} />
+          </div>
+        </OverviewSection>
+      )}
+
+      <OverviewSection title="Team & roles" badge={data.team?.length || undefined}>
+        <OverviewTeamBlock projectId={data.project.id} team={data.team ?? EMPTY_TEAM} onSaved={refresh} />
+      </OverviewSection>
+
+      {data.project.page_view && (
+        <OverviewSection title="Pages" badge={data.pages.count}>
+          <OverviewRecentPages pages={data.pages} />
+        </OverviewSection>
+      )}
+
       <OverviewJumpBar project={data.project} />
 
       <div className="flex flex-wrap items-center gap-2 border-t border-subtle pt-4">

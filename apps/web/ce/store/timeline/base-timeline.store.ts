@@ -40,6 +40,10 @@ type BlockData = {
 type TSidebarPreferences = {
   width: number;
   collapsed: boolean;
+  // Display choices that belong to the person, not to the view: they survive a
+  // reload the same way the sidebar width does.
+  showWeekends?: boolean;
+  dimDependencies?: boolean;
 };
 
 const SIDEBAR_STORAGE_KEY = "arribada.gantt.sidebar";
@@ -59,6 +63,12 @@ export interface IBaseTimelineStore {
   linkingSourceId: string | null;
   sidebarWidth: number;
   isSidebarCollapsed: boolean;
+  /** Shade Saturdays and Sundays. On by default — a bar that spans a weekend is
+   *  not two days of work, and hiding that makes every estimate read long. */
+  showWeekends: boolean;
+  /** Draw the dependency arrows faintly until a block is touched, so a dense
+   *  graph stops being a wall of red over the bars it is describing. */
+  dimDependencies: boolean;
   //
   setBlockIds: (ids: string[]) => void;
   setLinkingSource: (id: string | null) => void;
@@ -83,6 +93,8 @@ export interface IBaseTimelineStore {
   setSidebarWidth: (width: number) => void;
   commitSidebarPreferences: () => void;
   toggleSidebarCollapsed: (value?: boolean) => void;
+  toggleShowWeekends: (value?: boolean) => void;
+  toggleDimDependencies: (value?: boolean) => void;
   initGantt: () => void;
 
   getDateFromPositionOnGantt: (position: number, offsetDays: number) => Date | undefined;
@@ -95,6 +107,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
 
   isDragging: boolean = false;
   currentView: TGanttViews = "week";
+  showWeekends = true;
+  dimDependencies = true;
   currentViewData: ChartDataType | undefined = undefined;
   activeBlockId: string | null = null;
   renderView: any = [];
@@ -123,6 +137,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       linkingSourceId: observable.ref,
       sidebarWidth: observable.ref,
       isSidebarCollapsed: observable.ref,
+      showWeekends: observable.ref,
+      dimDependencies: observable.ref,
       // actions
       setIsDragging: action,
       setBlockIds: action.bound,
@@ -134,6 +150,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       setLinkingSource: action.bound,
       setSidebarWidth: action.bound,
       toggleSidebarCollapsed: action.bound,
+      toggleShowWeekends: action.bound,
+      toggleDimDependencies: action.bound,
     });
 
     this.initGantt();
@@ -189,15 +207,31 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
     this.persistSidebarPreferences();
   };
 
+  toggleShowWeekends = (value?: boolean) => {
+    runInAction(() => {
+      this.showWeekends = value ?? !this.showWeekends;
+    });
+    this.persistSidebarPreferences();
+  };
+
+  toggleDimDependencies = (value?: boolean) => {
+    runInAction(() => {
+      this.dimDependencies = value ?? !this.dimDependencies;
+    });
+    this.persistSidebarPreferences();
+  };
+
   /** localStorage is unavailable in some browsers/privacy modes, so both sides are best-effort */
   private restoreSidebarPreferences() {
     try {
       const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
       if (!stored) return;
 
-      const { width, collapsed } = JSON.parse(stored) as Partial<TSidebarPreferences>;
+      const { width, collapsed, showWeekends, dimDependencies } = JSON.parse(stored) as Partial<TSidebarPreferences>;
       if (typeof width === "number" && Number.isFinite(width)) this.sidebarWidth = clampSidebarWidth(width);
       if (typeof collapsed === "boolean") this.isSidebarCollapsed = collapsed;
+      if (typeof showWeekends === "boolean") this.showWeekends = showWeekends;
+      if (typeof dimDependencies === "boolean") this.dimDependencies = dimDependencies;
     } catch {
       // keep the defaults
     }
@@ -205,7 +239,12 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
 
   private persistSidebarPreferences() {
     try {
-      const preferences: TSidebarPreferences = { width: this.sidebarWidth, collapsed: this.isSidebarCollapsed };
+      const preferences: TSidebarPreferences = {
+        width: this.sidebarWidth,
+        collapsed: this.isSidebarCollapsed,
+        showWeekends: this.showWeekends,
+        dimDependencies: this.dimDependencies,
+      };
       localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(preferences));
     } catch {
       // width stays session-only

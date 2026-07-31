@@ -14,7 +14,7 @@ import { GANTT_SIDEBAR_COLLAPSED_WIDTH, HEADER_HEIGHT } from "../../constants";
 import type { IWeekBlock } from "../../views";
 
 export const WeekChartView = observer(function WeekChartView(_props: any) {
-  const { currentViewData, renderView, sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
+  const { currentViewData, renderView, sidebarWidth, isSidebarCollapsed, showWeekends } = useTimeLineChartStore();
   const weekBlocks: IWeekBlock[] = renderView;
   const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
@@ -84,7 +84,7 @@ export const WeekChartView = observer(function WeekChartView(_props: any) {
                   })}
                   style={{ width: `${currentViewData?.data.dayWidth}px` }}
                 >
-                  {["sat", "sun"].includes(weekDay?.dayData?.shortTitle) && (
+                  {showWeekends && ["sat", "sun"].includes(weekDay?.dayData?.shortTitle) && (
                     <div className="h-full bg-surface-2 outline-[0.25px] outline-strong" />
                   )}
                 </div>

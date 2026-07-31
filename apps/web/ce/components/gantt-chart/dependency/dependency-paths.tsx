@@ -20,6 +20,15 @@ import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
 const R = 6; // corner radius
 const HEAD = 6; // arrowhead half-size
 const PARENT_COLOR = "#94a3b8"; // muted slate — hierarchy links, distinct from the coloured dependency arrows
+const CRITICAL_COLOR = "#dc2626";
+
+// How loud the arrows are when nothing is being pointed at. The bars are the
+// subject of this chart; the arrows explain them. A dense plan drew ~40 of them at
+// near-full strength over the bars, which is how a legible schedule turns into a
+// ball of wool.
+const RESTING = { opacity: 0.28, width: 1 };
+const LOUD = { opacity: 0.95, width: 2 };
+const MUTED = { opacity: 0.06, width: 1 };
 
 // Left-side bracket connecting a parent bar's start to a child bar's start (hierarchy,
 // not a temporal dependency), so it reads as "belongs to" without cluttering the arrows.
@@ -29,10 +38,15 @@ function parentElbow(x1: number, y1: number, x2: number, y2: number): string {
 }
 
 // Arrow points predecessor -> successor. blocked_by is drawn reversed.
+//
+// blocked_by used to be red, and it is the relation everything actually uses — the
+// planner writes every generated dependency as one — so a normal plan came out as a
+// wall of red over its own bars. Red now means one thing only: the critical path,
+// where a day lost is a day lost on the whole project.
 const COLOR: Record<string, string> = {
   finish_before: "#3f76ff",
   start_before: "#eab308",
-  blocked_by: "#dc2626",
+  blocked_by: "#64748b",
 };
 
 function edgeEndpoints(rel: TIssueRelationEdge): { from: string; to: string } {
@@ -75,6 +89,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         .getProjectRelations(ws, pid)
         .then((rows) => {
           if (!cancelled) setEdges(rows || []);
+          return undefined;
         })
         .catch(() => {
           if (!cancelled) setEdges([]);
@@ -83,6 +98,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         .getCriticalPath(ws, pid)
         .then((res) => {
           if (!cancelled) setCritical(new Set(res?.issue_ids || []));
+          return undefined;
         })
         .catch(() => {
           if (!cancelled) setCritical(new Set());
@@ -100,6 +116,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
 
   const indexById = new Map<string, number>(blockIds.map((id, i): [string, number] => [id, i]));
   const active = store.activeBlockId;
+  const { dimDependencies } = store;
 
   // parent -> child hierarchy connectors (both must be visible + dated to have bars)
   const parentPaths = blockIds
@@ -115,7 +132,14 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       const y1 = pi * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
       const x2 = child.position.marginLeft;
       const y2 = ci * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      return { key: `pc-${parentId}-${childId}`, d: parentElbow(x1, y1, x2, y2), cx: x2, cy: y2, from: parentId, to: childId };
+      return {
+        key: `pc-${parentId}-${childId}`,
+        d: parentElbow(x1, y1, x2, y2),
+        cx: x2,
+        cy: y2,
+        from: parentId,
+        to: childId,
+      };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
 
@@ -146,7 +170,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
 
   return (
     <svg
-      className="absolute left-0 top-0"
+      className="absolute top-0 left-0"
       style={{
         width: "100%",
         height: blockIds.length * BLOCK_HEIGHT,
@@ -156,7 +180,9 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       }}
     >
       <defs>
-        {Object.entries(COLOR).map(([t, c]) => (
+        {/* One marker per colour actually drawn, critical included — an arrowhead
+            left in the relation's colour on a red line reads as a different arrow. */}
+        {Object.entries({ ...COLOR, critical: CRITICAL_COLOR }).map(([t, c]) => (
           <marker
             key={t}
             id={`arw-${t}`}
@@ -174,29 +200,37 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       {/* parent -> child hierarchy: muted dashed bracket + a small ring on the child */}
       {parentPaths.map((p) => {
         const related = active && (p.from === active || p.to === active);
-        const dimmed = active && !related;
+        const tone = related ? LOUD : active ? MUTED : RESTING;
         return (
-          <g key={p.key} opacity={dimmed ? 0.1 : related ? 0.9 : 0.45}>
-            <path d={p.d} fill="none" stroke={PARENT_COLOR} strokeWidth={related ? 1.5 : 1} strokeDasharray="2 2" />
+          <g key={p.key} opacity={dimDependencies ? tone.opacity : Math.max(tone.opacity, related ? 0.9 : 0.6)}>
+            <path d={p.d} fill="none" stroke={PARENT_COLOR} strokeWidth={tone.width} strokeDasharray="2 2" />
             <circle cx={p.cx} cy={p.cy} r={2.5} fill="none" stroke={PARENT_COLOR} strokeWidth={1} />
           </g>
         );
       })}
       {paths.map((p) => {
         const related = active && (p.from === active || p.to === active);
-        const dimmed = active && !related;
-        const markerType = Object.keys(COLOR).find((t) => COLOR[t] === p.color) ?? "finish_before";
-        const stroke = p.isCritical ? "#dc2626" : p.color;
+        // Three states, not two. An arrow touching the block under the cursor is
+        // the answer to "what does this wait on"; everything else is context that
+        // should get out of its way; and with nothing pointed at, all of it sits
+        // back far enough to read the bars through.
+        const tone = related ? LOUD : active ? MUTED : RESTING;
+        const stroke = p.isCritical ? CRITICAL_COLOR : p.color;
+        const markerType = p.isCritical
+          ? "critical"
+          : (Object.keys(COLOR).find((t) => COLOR[t] === p.color) ?? "finish_before");
         return (
           <path
             key={p.key}
             d={p.d}
             fill="none"
             stroke={stroke}
-            strokeWidth={p.isCritical ? 2.5 : related ? 2 : 1.5}
+            // The critical chain stays one step louder in every state: it is the
+            // one set of links where slipping a day slips the delivery date.
+            strokeWidth={p.isCritical ? tone.width + 0.75 : tone.width}
             markerEnd={`url(#arw-${markerType})`}
-            opacity={dimmed ? 0.15 : 0.9}
-            style={{ pointerEvents: "stroke", transition: "opacity .12s" }}
+            opacity={dimDependencies ? tone.opacity : Math.max(tone.opacity, related ? 0.95 : 0.75)}
+            style={{ pointerEvents: "stroke", transition: "opacity .12s, stroke-width .12s" }}
             onMouseEnter={() => store.updateActiveBlockId(p.from)}
             onMouseLeave={() => store.updateActiveBlockId(null)}
           />

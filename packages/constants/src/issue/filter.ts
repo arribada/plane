@@ -267,7 +267,11 @@ export const ISSUE_DISPLAY_FILTERS_BY_PAGE: TIssueFiltersToDisplayByPageType = {
       gantt_chart: {
         display_properties: ["key", "issue_type"],
         display_filters: {
-          order_by: ["sort_order", "-created_at", "-updated_at", "start_date", "-priority"],
+          // target_date belongs here more than anywhere: on a timeline the question
+          // is usually "what lands next", and every other layout could already be
+          // ordered by it. On a scheduled plan it also reads as dependency order,
+          // since a successor cannot finish before what it waits on.
+          order_by: ["sort_order", "-created_at", "-updated_at", "start_date", "target_date", "-priority"],
           type: ["active", "backlog"],
         },
         extra_options: {
@@ -353,6 +357,7 @@ export const filterActivityOnSelectedFilters = (
   activity: TIssueActivityComment[],
   filters: TActivityFilters[]
 ): TIssueActivityComment[] =>
+  // oxlint-disable-next-line no-shadow -- upstream shape, untouched by this change
   activity.filter((activity) => {
     if (activity.activity_type === EActivityFilterType.DEFAULT) return true;
     return filters.includes(activity.activity_type as TActivityFilters);

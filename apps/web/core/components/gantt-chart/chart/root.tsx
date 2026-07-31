@@ -17,6 +17,12 @@ import { GanttChartHeader, GanttChartMainContent } from "@/components/gantt-char
 import { useUserProfile } from "@/hooks/store/user";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 //
+import {
+  scrollLeftForSpan,
+  spanOfBlocks,
+  VIEW_DAY_WIDTH,
+  viewThatFits,
+} from "@/plane-web/components/gantt-chart/fit-to-blocks";
 import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../constants";
 import { currentViewDataWithView } from "../data";
 import type { IMonthBlock, IMonthView, IWeekBlock } from "../views";
@@ -100,6 +106,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     updateAllBlocksOnChartChangeWhileDragging,
     sidebarWidth,
     isSidebarCollapsed,
+    getBlockById,
   } = useTimeLineChartStore();
   const { data } = useUserProfile();
   const startOfWeek = data?.start_of_the_week;
@@ -151,6 +158,38 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
 
   const handleToday = () => updateCurrentViewRenderPayload(null, currentView);
 
+  /**
+   * Frame the whole plan: switch to the finest scale on which every dated block
+   * fits, re-centre the chart on the work rather than on today, and scroll to its
+   * first day. Without this, a project starting three months out opens on an empty
+   * stretch of calendar with the bars somewhere off to the right.
+   */
+  const handleFitToBlocks = () => {
+    const span = spanOfBlocks((blockIds ?? []).map((id) => getBlockById(id)));
+    if (!span) return;
+
+    const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement | null;
+    const available = Math.max(240, (scrollContainer?.clientWidth ?? 0) - sidebarPaneWidth);
+    const view = viewThatFits(span.days, available);
+
+    // Rebuild the chart around the span's midpoint so the generated window
+    // contains it — generating around today would put a distant project outside
+    // the rendered range, and no amount of scrolling would reach it.
+    const middle = new Date((span.start.getTime() + span.end.getTime()) / 2);
+    const state = updateCurrentViewRenderPayload(null, view, middle);
+    if (!state) return;
+
+    // After the payload lands: put the span's first day at the left edge. The
+    // generator schedules its own centring scroll on a 50ms timeout, so this has
+    // to run after it or it would be overwritten.
+    setTimeout(() => {
+      const container = document.querySelector("#gantt-container") as HTMLDivElement | null;
+      if (!container) return;
+      const offset = getNumberOfDaysBetweenTwoDates(state.data.startDate, span.start);
+      container.scrollLeft = scrollLeftForSpan(offset, VIEW_DAY_WIDTH[view]);
+    }, 80);
+  };
+
   // handling the scroll positioning from left and right
   useEffect(() => {
     handleToday();
@@ -195,6 +234,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
         toggleFullScreenMode={() => setFullScreenMode((prevData) => !prevData)}
         handleChartView={(key) => updateCurrentViewRenderPayload(null, key)}
         handleToday={handleToday}
+        handleFitToBlocks={handleFitToBlocks}
         loaderTitle={loaderTitle}
         showToday={showToday}
       />

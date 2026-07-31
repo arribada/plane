@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { Expand, Shrink } from "lucide-react";
+import { Expand, Maximize2, Settings2, Shrink } from "lucide-react";
 import { useTranslation } from "@plane/i18n";
 // plane
 import type { TGanttViews } from "@plane/types";
@@ -24,17 +24,31 @@ type Props = {
   fullScreenMode: boolean;
   handleChartView: (view: TGanttViews) => void;
   handleToday: () => void;
+  /** Frame every dated block at once. Absent on charts that have no blocks to frame. */
+  handleFitToBlocks?: () => void;
   loaderTitle: string;
   toggleFullScreenMode: () => void;
   showToday: boolean;
 };
 
+const toolButton =
+  "flex items-center gap-1 rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover";
+
 export const GanttChartHeader = observer(function GanttChartHeader(props: Props) {
   const { t } = useTranslation();
-  const { blockIds, fullScreenMode, handleChartView, handleToday, loaderTitle, toggleFullScreenMode, showToday } =
-    props;
+  const {
+    blockIds,
+    fullScreenMode,
+    handleChartView,
+    handleToday,
+    handleFitToBlocks,
+    loaderTitle,
+    toggleFullScreenMode,
+    showToday,
+  } = props;
   // chart hook
-  const { currentView } = useTimeLineChartStore();
+  const { currentView, showWeekends, toggleShowWeekends, dimDependencies, toggleDimDependencies } =
+    useTimeLineChartStore();
 
   return (
     <Row
@@ -48,9 +62,13 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        {/* Buttons, not clickable divs: this is how the chart's scale is steered, and
+            it was unreachable without a mouse. aria-pressed says which one is on. */}
         {VIEWS_LIST.map((chartView: any) => (
-          <div
+          <button
             key={chartView?.key}
+            type="button"
+            aria-pressed={currentView === chartView?.key}
             className={cn(
               "cursor-pointer rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover",
               {
@@ -60,19 +78,66 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
             onClick={() => handleChartView(chartView?.key)}
           >
             {t(chartView?.i18n_title)}
-          </div>
+          </button>
         ))}
       </div>
 
       {showToday && (
-        <button
-          type="button"
-          className="rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover"
-          onClick={handleToday}
-        >
+        <button type="button" className={toolButton} onClick={handleToday}>
           {t("common.today")}
         </button>
       )}
+
+      {handleFitToBlocks && (
+        <button
+          type="button"
+          className={toolButton}
+          onClick={handleFitToBlocks}
+          title="Frame the whole plan: pick the closest scale on which every dated item fits, and scroll to its first day"
+        >
+          <Maximize2 className="size-3.5" />
+          Fit
+        </button>
+      )}
+
+      {/* Display switches. A <details> rather than a popover library: it closes on
+          Escape and on an outside click for free, and it is one element to style. */}
+      <details className="group relative">
+        <summary className={cn(toolButton, "cursor-pointer list-none [&::-webkit-details-marker]:hidden")}>
+          <Settings2 className="size-3.5" />
+          Display
+        </summary>
+        <div className="shadow-lg absolute right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-surface-1 p-1">
+          <label className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-layer-transparent-hover">
+            <input
+              type="checkbox"
+              checked={showWeekends}
+              onChange={() => toggleShowWeekends()}
+              className="mt-0.5 size-3.5 flex-shrink-0 text-accent-primary accent-current"
+            />
+            <span className="text-12 text-primary">
+              Shade weekends
+              <span className="block text-11 text-tertiary">
+                A bar crossing a weekend is not two more days of work.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-layer-transparent-hover">
+            <input
+              type="checkbox"
+              checked={dimDependencies}
+              onChange={() => toggleDimDependencies()}
+              className="mt-0.5 size-3.5 flex-shrink-0 text-accent-primary accent-current"
+            />
+            <span className="text-12 text-primary">
+              Fade dependency arrows
+              <span className="block text-11 text-tertiary">
+                Keeps them out of the way until you point at an item, then lights up only the ones touching it.
+              </span>
+            </span>
+          </label>
+        </div>
+      </details>
 
       <button
         type="button"

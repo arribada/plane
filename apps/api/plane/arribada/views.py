@@ -2664,6 +2664,22 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             if seats:
                 capacity[str(role).strip().lower()] = seats
 
+        # Dates a human typed on the review table, and dependencies they redrew.
+        # Both outrank the generated plan; everything else reflows around them.
+        pinned_dates = {}
+        for key, value in (request.data.get("fixed_dates") or {}).items():
+            if not isinstance(value, dict):
+                continue
+            begins = _parse_date(value.get("start_date"))
+            ends = _parse_date(value.get("target_date"))
+            if begins and ends and ends >= begins:
+                pinned_dates[str(key)] = (begins, ends)
+
+        dependency_overrides = {}
+        for key, value in (request.data.get("dependencies") or {}).items():
+            if isinstance(value, list):
+                dependency_overrides[str(key)] = [str(v) for v in value if v][:20]
+
         people = _schedulable_people(project_id)
         pinnable = {p["id"] for p in people}
         # Optional, per task: the lead naming who does this one instead of leaving it
@@ -2746,6 +2762,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 duration_overrides=merged,
                 assignees=pinned,
                 extra=extra,
+                dependency_overrides=dependency_overrides,
             )
         else:
             tasks = build_tasks(
@@ -2755,8 +2772,9 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 duration_overrides=merged,
                 extra=extra,
                 assignees=pinned,
+                dependency_overrides=dependency_overrides,
             )
-        placed, warnings = schedule(tasks, start, capacity, people)
+        placed, warnings = schedule(tasks, start, capacity, people, pinned_dates)
         end = max((v["target"] for v in placed.values()), default=start)
 
         sprints = []
@@ -2789,6 +2807,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                     "assignee_id": owner,
                     "assignee_name": names.get(owner) if owner else None,
                     "pinned": task["key"] in pinned,
+                    "date_pinned": task["key"] in pinned_dates,
                     "sprint": sprint_of.get(task["key"]),
                 }
             )

@@ -134,6 +134,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   // {task key: user id} — only the tasks the lead named an owner for. Everything
   // else is left to the schedule, which picks whoever holds the discipline.
   const [assignees, setAssignees] = useState<Record<string, string>>({});
+  // Dates typed on the review table, and dependencies redrawn there. Both outrank
+  // the generated plan: the schedule reflows around them rather than overwriting.
+  const [fixedDates, setFixedDates] = useState<Record<string, { start_date: string; target_date: string }>>({});
+  const [dependencies, setDependencies] = useState<Record<string, string[]>>({});
   const [endOverride, setEndOverride] = useState("");
   const [created, setCreated] = useState<TSetupApplyResult | null>(null);
   // 6 — work already in the project
@@ -163,6 +167,8 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setError(null);
     setPlan(null);
     setAssignees({});
+    setFixedDates({});
+    setDependencies({});
     setCreated(null);
     setApplied(null);
     setReflowed(null);
@@ -369,7 +375,12 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   // `reflow` is a re-plan after the lead changed who does what: it keeps the tasks
   // the assistant already added and does not call it again, so only the dates and
   // the owners move — and the edited target date survives.
-  const buildPlan = async (nextAssignees?: Record<string, string>, reflow = false) => {
+  const buildPlan = async (
+    nextAssignees?: Record<string, string>,
+    reflow = false,
+    nextFixed?: Record<string, { start_date: string; target_date: string }>,
+    nextDeps?: Record<string, string[]>
+  ) => {
     if (busy) return;
     setBusy("plan");
     setError(null);
@@ -392,6 +403,8 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         use_ai: !reflow && useAi && aiAvailable,
         context: context.trim(),
         assignees: nextAssignees ?? assignees,
+        fixed_dates: nextFixed ?? fixedDates,
+        dependencies: nextDeps ?? dependencies,
         extra_tasks: reflow ? plan?.tasks.filter((t) => t.added) : undefined,
       });
       setPlan(result);
@@ -406,6 +419,21 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   // Naming somebody, or handing the task back to whoever holds its discipline.
   // Either way the schedule is recomputed, because who does a task changes when it
   // can happen — especially when that person already covers another discipline.
+  // A typed date becomes fixed. Everything downstream is rescheduled around it —
+  // freezing the whole plan instead would leave an artefact where nothing checks
+  // the dependencies or whether anyone is free.
+  const editDates = (taskKey: string, begins: string, ends: string) => {
+    const next = { ...fixedDates, [taskKey]: { start_date: begins, target_date: ends } };
+    setFixedDates(next);
+    void buildPlan(undefined, true, next, undefined);
+  };
+
+  const editDeps = (taskKey: string, dependsOn: string[]) => {
+    const next = { ...dependencies, [taskKey]: dependsOn };
+    setDependencies(next);
+    void buildPlan(undefined, true, undefined, next);
+  };
+
   const assignTask = (taskKey: string, userId: string | null) => {
     const next = { ...assignees };
     if (userId) next[taskKey] = userId;
@@ -1054,7 +1082,14 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           );
         return (
           <div className="space-y-3">
-            <SetupPlanTable plan={plan} trackLabels={trackLabels} onAssign={assignTask} busy={busy === "plan"} />
+            <SetupPlanTable
+              plan={plan}
+              trackLabels={trackLabels}
+              onAssign={assignTask}
+              onEditDates={editDates}
+              onEditDeps={editDeps}
+              busy={busy === "plan"}
+            />
             <div className="flex flex-wrap items-end gap-4 border-t border-subtle pt-3">
               <div>
                 <label className={label} htmlFor={`${uid}-end`}>

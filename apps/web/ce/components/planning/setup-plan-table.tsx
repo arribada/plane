@@ -7,9 +7,9 @@
  * the same time as what, and who has not been found yet. Grouped by sprint when the
  * project runs in sprints, by component when it runs as a flow.
  */
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { observer } from "mobx-react";
-import { AlertTriangle, CircleUser, Sparkles } from "lucide-react";
+import { AlertTriangle, CircleUser, GitBranch, Pin, Sparkles } from "lucide-react";
 import { cn } from "@plane/utils";
 import type { TSetupPlan } from "@/plane-web/types/arribada";
 
@@ -18,6 +18,10 @@ type Props = {
   trackLabels: Record<string, string>;
   /** Naming an owner, or handing the task back to whoever holds its discipline. */
   onAssign?: (taskKey: string, userId: string | null) => void;
+  /** Typing a date. It is then fixed, and the rest of the plan reflows around it. */
+  onEditDates?: (taskKey: string, startDate: string, targetDate: string) => void;
+  /** Redrawing what a task waits on. Goes back through the scheduler. */
+  onEditDeps?: (taskKey: string, dependsOn: string[]) => void;
   busy?: boolean;
 };
 
@@ -29,7 +33,17 @@ const weeks = (from: string, to: string) => {
   return Math.max(1, Math.round(days / 7));
 };
 
-export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabels, onAssign, busy }: Props) {
+export const SetupPlanTable = observer(function SetupPlanTable({
+  plan,
+  trackLabels,
+  onAssign,
+  onEditDates,
+  onEditDeps,
+  busy,
+}: Props) {
+  // Which row has its dependency picker open. One at a time: the list is every
+  // other task, and two open at once turns the table into a wall.
+  const [openDeps, setOpenDeps] = useState<string | null>(null);
   const bySprint = plan.sprints.length > 0;
 
   // One group per sprint, or one per component — same rendering either way.
@@ -108,6 +122,17 @@ export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabe
                           added
                         </span>
                       )}
+                      {onEditDeps && (
+                        <button
+                          type="button"
+                          onClick={() => setOpenDeps(openDeps === task.key ? null : task.key)}
+                          title="What this waits on"
+                          className="ml-2 inline-flex items-center gap-1 rounded px-1 py-0.5 text-11 text-tertiary hover:bg-layer-2 hover:text-primary"
+                        >
+                          <GitBranch className="size-3" />
+                          {task.after.length}
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-12 whitespace-nowrap">
                       {onAssign && plan.people.length > 0 ? (
@@ -151,11 +176,79 @@ export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabe
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-right text-12 whitespace-nowrap text-secondary">
-                      {day(task.start_date)} → {day(task.target_date)}
-                      <span className="ml-1.5 text-tertiary">{task.days}d</span>
+                      {onEditDates ? (
+                        <span className="flex items-center justify-end gap-1">
+                          {/* A pinned date is a decision the scheduler works around,
+                              so it is worth seeing at a glance which ones are yours. */}
+                          {task.date_pinned && <Pin className="size-3 flex-shrink-0 text-accent-primary" />}
+                          <input
+                            type="date"
+                            aria-label={`Start of ${task.name}`}
+                            disabled={busy}
+                            value={task.start_date}
+                            onChange={(e) => e.target.value && onEditDates(task.key, e.target.value, task.target_date)}
+                            className="rounded border border-transparent bg-transparent px-1 py-0.5 text-12 text-secondary outline-none hover:border-subtle focus:border-accent-strong disabled:opacity-50"
+                          />
+                          <span className="text-tertiary">→</span>
+                          <input
+                            type="date"
+                            aria-label={`Target of ${task.name}`}
+                            disabled={busy}
+                            min={task.start_date}
+                            value={task.target_date}
+                            onChange={(e) => e.target.value && onEditDates(task.key, task.start_date, e.target.value)}
+                            className="rounded border border-transparent bg-transparent px-1 py-0.5 text-12 text-secondary outline-none hover:border-subtle focus:border-accent-strong disabled:opacity-50"
+                          />
+                        </span>
+                      ) : (
+                        <>
+                          {day(task.start_date)} → {day(task.target_date)}
+                          <span className="ml-1.5 text-tertiary">{task.days}d</span>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
+                {onEditDeps &&
+                  group.tasks
+                    .filter((task) => openDeps === task.key)
+                    .map((task) => (
+                      <tr key={`${task.key}-deps`} className="border-t border-subtle bg-layer-2">
+                        <td colSpan={3} className="px-3 py-2">
+                          <p className="mb-1.5 text-11 font-medium tracking-wide text-secondary uppercase">
+                            {task.name} waits on
+                          </p>
+                          <div className="grid max-h-40 grid-cols-1 gap-0.5 overflow-y-auto sm:grid-cols-2">
+                            {plan.tasks
+                              .filter((other) => other.key !== task.key)
+                              .map((other) => (
+                                <label
+                                  key={other.key}
+                                  htmlFor={`dep-${task.key}-${other.key}`}
+                                  className="flex items-center gap-1.5 text-12 text-secondary"
+                                >
+                                  <input
+                                    id={`dep-${task.key}-${other.key}`}
+                                    type="checkbox"
+                                    disabled={busy}
+                                    checked={task.after.includes(other.key)}
+                                    onChange={() =>
+                                      onEditDeps(
+                                        task.key,
+                                        task.after.includes(other.key)
+                                          ? task.after.filter((k) => k !== other.key)
+                                          : [...task.after, other.key]
+                                      )
+                                    }
+                                    className="size-3 flex-shrink-0 text-accent-primary"
+                                  />
+                                  <span className="truncate">{other.name}</span>
+                                </label>
+                              ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                 {group.tasks.length === 0 && (
                   <tr className="border-t border-subtle">
                     <td colSpan={3} className="px-3 py-1.5 text-12 text-tertiary">

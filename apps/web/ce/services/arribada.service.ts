@@ -446,6 +446,10 @@ export class ArribadaService extends APIService {
       // {task key: user id} — naming who does a task instead of leaving it to
       // whoever holds the discipline. Optional, per task.
       assignees?: Record<string, string>;
+      // Dates typed by hand: fixed, with the rest of the plan reflowing around them.
+      fixed_dates?: Record<string, { start_date: string; target_date: string }>;
+      // Redrawn dependencies, replacing what the catalogue wired.
+      dependencies?: Record<string, string[]>;
       // Tasks the assistant added on an earlier pass, handed back so re-planning
       // after a change of owner reuses them instead of paying for another call.
       extra_tasks?: TPlannedTask[];

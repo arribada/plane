@@ -688,6 +688,7 @@ def build_agile_tasks(
     duration_overrides=None,
     assignees=None,
     extra=None,
+    dependency_overrides=None,
 ):
     """Expand the agile blocks into one task list.
 
@@ -697,6 +698,7 @@ def build_agile_tasks(
     """
     duration_overrides = duration_overrides or {}
     assignees = assignees or {}
+    dependency_overrides = dependency_overrides or {}
     wanted = set(ceremonies if ceremonies is not None else [c["key"] for c in AGILE_CEREMONIES])
     chosen_tracks = [t for t in tracks if t in AGILE_INCREMENTS]
     sprint_count = max(1, min(52, int(sprint_count or 1)))
@@ -709,7 +711,9 @@ def build_agile_tasks(
             "phase": phase,
             "role": role,
             "days": max(1, min(365, int(duration_overrides.get(key, days)))),
-            "after": after,
+            # A redrawn dependency replaces the block's own. Self-links are dropped
+            # rather than turned into a one-task cycle.
+            "after": [a for a in dependency_overrides.get(key, after) if a != key],
             "assignee_id": assignees.get(key),
         }
 
@@ -906,7 +910,7 @@ def _earliest_free(busy, capacity, earliest, days):
     return candidate, end
 
 
-def schedule(tasks, start_date, capacity=None, people=None):
+def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
     """Give every task a start, a target and — where somebody can be named — an owner.
 
     `tasks`    [{key, days, after, role, assignee_id?}] — `after` already filtered to
@@ -922,11 +926,19 @@ def schedule(tasks, start_date, capacity=None, people=None):
     per-discipline count got wrong. Where a discipline has several holders the task
     goes to whoever frees up first, so the work spreads without anyone being cloned.
 
-    Returns (by_key, warnings). Dependencies stay hard: a task never starts before the
-    ones it waits on have finished, whoever ends up doing it.
+    `fixed`    {key: (start, target)} — dates a human typed. These are placed exactly
+               as given and everything downstream reflows around them, which is the
+               point: a hand-set date is a decision, not a suggestion, but the rest of
+               the plan still has to hold together around it.
+
+    Returns (by_key, warnings). Dependencies stay hard for everything the scheduler
+    places itself: a task never starts before the ones it waits on have finished,
+    whoever ends up doing it. A pinned date can break that rule — the person who
+    typed it outranks the scheduler — and when it does, it is said out loud.
     """
     capacity = capacity or {}
     people = people or []
+    fixed = fixed or {}
     warnings = []
     keys = [t["key"] for t in tasks]
     by_key = {t["key"]: t for t in tasks}
@@ -970,6 +982,29 @@ def schedule(tasks, start_date, capacity=None, people=None):
             candidates = [person_by_id[pinned]]
         else:
             candidates = holders.get(role, [])
+
+        pin = fixed.get(key)
+        if pin:
+            # A typed date wins over the schedule. Say so when it contradicts the
+            # dependency graph rather than silently drawing an impossible plan.
+            start, end = pin
+            if start < earliest:
+                warnings.append(
+                    f'"{task["name"]}" is pinned to {start.isoformat()}, before the work it waits on finishes.'
+                )
+            owner = candidates[0] if candidates else None
+            if owner:
+                clash = any(b[0] <= end and start <= b[1] for b in busy_by_person[owner["id"]])
+                if clash:
+                    warnings.append(
+                        f'{owner["name"]} is on two things at once around {start.isoformat()} '
+                        f'because "{task["name"]}" is pinned there.'
+                    )
+                busy_by_person[owner["id"]].append((start, end))
+            else:
+                busy_by_role[role].append((start, end))
+            placed[key] = {"start": start, "target": end, "assignee_id": owner["id"] if owner else None}
+            continue
 
         if candidates:
             # Whoever can start soonest. Sorted first so an equal-first tie always
@@ -1049,6 +1084,7 @@ def build_tasks(
     duration_overrides=None,
     extra=None,
     assignees=None,
+    dependency_overrides=None,
 ):
     """Resolve a selection into the task list the scheduler takes.
 
@@ -1060,6 +1096,10 @@ def build_tasks(
     # {task key: user id} — the lead naming who does this one, overriding "whoever
     # holds the discipline". Optional everywhere.
     assignees = assignees or {}
+    # {task key: [predecessor keys]} — a dependency the lead redrew by hand,
+    # replacing the catalogue's. Filtered to keys actually present, same as the
+    # defaults, so pointing at a task that was unticked simply drops the link.
+    dependency_overrides = dependency_overrides or {}
     chosen = [k for k in selected_keys if k in TASK_BY_KEY]
     present = set(chosen)
     lengths = {"field_days": field_days, "production_days": production_days}
@@ -1081,7 +1121,11 @@ def build_tasks(
                 "phase": spec["phase"],
                 "role": spec["role"],
                 "days": max(1, min(365, int(days))),
-                "after": [a for a in spec.get("after") or [] if a in present],
+                "after": [
+                    a
+                    for a in (dependency_overrides.get(key, spec.get("after")) or [])
+                    if a in present and a != key
+                ],
                 "assignee_id": assignees.get(key),
             }
         )

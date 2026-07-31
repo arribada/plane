@@ -261,6 +261,8 @@ export type TPlannedTask = {
   // True when the lead named this task's owner rather than letting the schedule
   // pick whoever holds the discipline.
   pinned?: boolean;
+  // True when its dates were typed by hand. The schedule then works around them.
+  date_pinned?: boolean;
   // Set on tasks the assistant added on top of the catalogue.
   added?: boolean;
 };

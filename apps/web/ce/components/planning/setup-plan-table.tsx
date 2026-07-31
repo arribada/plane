@@ -59,7 +59,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabe
       </div>
 
       {plan.missing_roles.length > 0 && (
-        <p className="bg-amber-500/10 text-amber-700 flex items-start gap-1.5 rounded px-2.5 py-1.5 text-12">
+        <p className="flex items-start gap-1.5 rounded bg-warning-subtle px-2.5 py-1.5 text-12 text-warning-primary">
           <AlertTriangle className="mt-0.5 size-3.5 flex-shrink-0" />
           <span>
             Nobody on the roster holds {plan.missing_roles.join(", ")}. Those work items are still created and carry the
@@ -68,7 +68,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabe
         </p>
       )}
       {plan.warnings.map((warning) => (
-        <p key={warning} className="bg-amber-500/10 text-amber-700 rounded px-2.5 py-1.5 text-12">
+        <p key={warning} className="rounded bg-warning-subtle px-2.5 py-1.5 text-12 text-warning-primary">
           {warning}
         </p>
       ))}

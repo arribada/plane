@@ -18,7 +18,7 @@ export const BlockedByBanner = observer(function BlockedByBanner({ issueId }: { 
   if (blockers.length === 0) return null;
 
   return (
-    <div className="mb-2 flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-13 text-red-600">
+    <div className="mb-2 flex items-center gap-2 rounded-md border border-danger-strong/30 bg-danger-subtle px-3 py-2 text-13 text-danger-primary">
       <Ban className="size-4 flex-shrink-0" />
       <span>
         Blocked by <b>{blockers.length}</b> work item{blockers.length > 1 ? "s" : ""} — finish those first. See the

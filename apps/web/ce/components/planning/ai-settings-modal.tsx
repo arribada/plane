@@ -200,7 +200,7 @@ export const AiSettingsModal = observer(function AiSettingsModal({ isOpen, onClo
                   <button
                     type="button"
                     onClick={() => setKeyMode("remove")}
-                    className="text-red-600 rounded border border-subtle px-2 py-0.5 text-12 hover:bg-layer-2"
+                    className="rounded border border-subtle px-2 py-0.5 text-12 text-danger-primary hover:bg-layer-2"
                   >
                     Remove
                   </button>
@@ -246,7 +246,7 @@ export const AiSettingsModal = observer(function AiSettingsModal({ isOpen, onClo
               )}
             </div>
 
-            {error && <p className="bg-red-500/10 text-red-600 rounded px-2.5 py-1.5 text-12">{error}</p>}
+            {error && <p className="rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>}
             {saved && !error && (
               <p className="flex items-center gap-1.5 text-12 text-secondary">
                 <Check className="size-3.5" /> Saved.

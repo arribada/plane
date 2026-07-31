@@ -165,7 +165,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
               <span className="flex flex-shrink-0 items-center gap-1">
                 <span className="h-1 w-8 overflow-hidden rounded-full bg-layer-2">
                   <span
-                    className="bg-emerald-500 block h-full rounded-full"
+                    className="block h-full rounded-full bg-success-primary"
                     style={{
                       width: `${Math.round(((project.completed_item_count ?? 0) / project.item_count) * 100)}%`,
                     }}
@@ -187,7 +187,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
                   <span
                     className={cn(
                       "flex flex-shrink-0 items-center gap-0.5 rounded px-1 text-11 font-medium",
-                      slipped ? "bg-red-500/15 text-red-600" : "bg-emerald-500/15 text-emerald-600"
+                      slipped ? "bg-danger-subtle text-danger-primary" : "bg-success-subtle text-success-primary"
                     )}
                   >
                     {slipped ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
@@ -204,7 +204,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
               <button
                 type="button"
                 onClick={() => onOpenUndated(blockId)}
-                className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/30 flex flex-shrink-0 items-center gap-0.5 rounded px-1 text-11"
+                className="flex flex-shrink-0 items-center gap-0.5 rounded bg-warning-subtle px-1 text-11 text-warning-primary hover:opacity-80"
               >
                 <AlertTriangle className="size-3" />
                 {project.undated_item_count}

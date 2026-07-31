@@ -588,7 +588,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                     <li key={role} className="flex items-center gap-2">
                       <Users className="size-3.5 flex-shrink-0 text-tertiary" />
                       <span className="min-w-0 flex-1 truncate text-13 text-primary">{role}</span>
-                      <span className={cn("text-11", held ? "text-tertiary" : "text-amber-600")}>
+                      <span className={cn("text-11", held ? "text-tertiary" : "text-warning-primary")}>
                         {held ? `${held} on the roster` : "nobody on the roster"}
                       </span>
                       <input
@@ -612,7 +612,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
               </ul>
             )}
             {unstaffed.size > 0 && (
-              <p className="bg-amber-500/10 text-amber-700 rounded px-2.5 py-1.5 text-12">
+              <p className="rounded bg-warning-subtle px-2.5 py-1.5 text-12 text-warning-primary">
                 {unstaffed.size} discipline(s) have nobody on the roster — add them above, or carry on: the plan is
                 built either way and each work item records the discipline it needs, so the work is handed over
                 automatically the day someone picks it up.
@@ -849,7 +849,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
               </button>
             </div>
             {endOverride && endOverride < plan.end_date && (
-              <p className="bg-amber-500/10 text-amber-700 rounded px-2.5 py-1.5 text-12">
+              <p className="rounded bg-warning-subtle px-2.5 py-1.5 text-12 text-warning-primary">
                 The plan as selected finishes on {plan.end_date}. To hit {endOverride} you need fewer tasks, or more
                 people on the disciplines that carry the longest chain.
               </p>
@@ -973,7 +973,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                     <button
                       type="button"
                       onClick={() => setRepos((list) => list.filter((u) => u !== url))}
-                      className="hover:text-red-600 text-tertiary"
+                      className="text-tertiary hover:text-danger-primary"
                       title="Remove"
                     >
                       <X className="size-3.5" />
@@ -1034,7 +1034,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
 
           <div className="min-h-0 flex-1 overflow-y-auto p-5">
             {renderStep()}
-            {error && <p className="bg-red-500/10 text-red-600 mt-3 rounded px-2.5 py-1.5 text-12">{error}</p>}
+            {error && (
+              <p className="mt-3 rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>
+            )}
           </div>
 
           <div className="flex items-center justify-between border-t border-subtle px-5 py-3">

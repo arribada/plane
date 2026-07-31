@@ -308,7 +308,7 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
                         Set
                       </button>
                       <span className="w-4 flex-shrink-0">
-                        {savedIds.has(item.id) && <Check className="text-emerald-600 size-3.5" />}
+                        {savedIds.has(item.id) && <Check className="size-3.5 text-success-primary" />}
                       </span>
                     </li>
                   );
@@ -317,7 +317,9 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
             )}
           </div>
 
-          {error && <p className="bg-red-500/10 text-red-600 mx-5 mb-2 rounded px-2.5 py-1.5 text-12">{error}</p>}
+          {error && (
+            <p className="mx-5 mb-2 rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>
+          )}
 
           <div className="flex items-center justify-between gap-2 border-t border-subtle px-5 py-3">
             {aiConfigured && items.length > 0 ? (

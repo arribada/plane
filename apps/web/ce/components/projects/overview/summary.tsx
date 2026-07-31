@@ -72,7 +72,7 @@ export const OverviewSummary = observer(function OverviewSummary({ overview, sav
       {items.total > 0 && (
         <div className="mt-3 h-1.5 w-full max-w-3xl overflow-hidden rounded-full bg-layer-2">
           <span
-            className="bg-emerald-500 block h-full rounded-full"
+            className="block h-full rounded-full bg-success-primary"
             style={{ width: `${percent(items.completed, items.total)}%` }}
           />
         </div>

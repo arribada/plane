@@ -104,7 +104,7 @@ function TrackSection({
                         className={cn(
                           "flex-shrink-0 rounded px-1.5 py-0.5 text-11",
                           unstaffed.has(task.role.toLowerCase())
-                            ? "bg-amber-500/10 text-amber-600"
+                            ? "bg-warning-subtle text-warning-primary"
                             : "bg-layer-2 text-secondary"
                         )}
                         title={

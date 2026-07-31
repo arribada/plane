@@ -344,7 +344,7 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
               )}
             </div>
 
-            {error && <p className="bg-red-500/10 text-red-600 rounded px-2.5 py-1.5 text-12">{error}</p>}
+            {error && <p className="rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>}
           </div>
 
           <div className="flex items-center justify-end gap-2 border-t border-subtle px-5 py-3">

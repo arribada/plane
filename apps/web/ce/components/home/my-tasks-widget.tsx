@@ -10,7 +10,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, CalendarClock, CalendarDays, CalendarPlus, CheckCircle2, ChevronRight, LayoutGrid, List } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  CalendarDays,
+  CalendarPlus,
+  CheckCircle2,
+  ChevronRight,
+  LayoutGrid,
+  List,
+} from "lucide-react";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { useUser } from "@/hooks/store/user";
@@ -20,7 +29,7 @@ import type { TMyWorkItem } from "@/plane-web/types/arribada";
 import { MyTasksCalendar } from "./my-tasks-calendar";
 
 const PRIORITY_DOT: Record<TMyWorkItem["priority"], string> = {
-  urgent: "bg-red-500",
+  urgent: "bg-danger-primary",
   high: "bg-orange-500",
   medium: "bg-yellow-500",
   low: "bg-blue-400",
@@ -55,14 +64,16 @@ const issueService = new IssueService();
 const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string | null) => void }) => {
   const [open, setOpen] = useState(false);
   const presets = useMemo(datePresets, []);
+  // The wrapper is presentational: its only job is to keep a click on the date
+  // control from also opening the work item behind it.
   return (
-    <span className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+    <span className="relative shrink-0" role="presentation" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={item.target_date ? `Due ${item.target_date}` : "Set due date"}
         className={cn(
-          "flex items-center gap-1 rounded px-1 py-0.5 text-[11px] hover:bg-neutral-500/10",
+          "hover:bg-neutral-500/10 flex items-center gap-1 rounded px-1 py-0.5 text-[11px]",
           item.target_date ? "text-secondary" : "text-tertiary opacity-0 group-hover:opacity-100"
         )}
       >
@@ -71,8 +82,13 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
       </button>
       {open && (
         <>
-          <span className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <span className="absolute right-0 top-full z-30 mt-1 flex w-36 flex-col rounded-md border border-subtle bg-layer-1 p-1 shadow-lg">
+          <button
+            type="button"
+            aria-label="Close the date picker"
+            className="fixed inset-0 z-20 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <span className="shadow-lg absolute top-full right-0 z-30 mt-1 flex w-36 flex-col rounded-md border border-subtle bg-layer-1 p-1">
             {presets.map((p) => (
               <button
                 key={p.value}
@@ -81,13 +97,13 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
                   onSet(p.value);
                   setOpen(false);
                 }}
-                className="flex justify-between rounded px-2 py-1 text-left text-12 hover:bg-neutral-500/10"
+                className="hover:bg-neutral-500/10 flex justify-between rounded px-2 py-1 text-left text-12"
               >
                 <span>{p.label}</span>
                 <span className="text-tertiary">{p.value.slice(5)}</span>
               </button>
             ))}
-            <label className="mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12 hover:bg-neutral-500/10">
+            <label className="hover:bg-neutral-500/10 mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12">
               Pick…
               <input
                 type="date"
@@ -108,7 +124,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
                   onSet(null);
                   setOpen(false);
                 }}
-                className="rounded px-2 py-1 text-left text-12 text-red-600 hover:bg-red-500/10"
+                className="rounded px-2 py-1 text-left text-12 text-danger-primary hover:bg-danger-subtle-hover"
               >
                 Clear date
               </button>
@@ -134,12 +150,10 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   const setDue = (item: TMyWorkItem, value: string | null) => {
     setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: value } : x)));
     if (workspaceSlug) {
-      issueService
-        .patchIssue(workspaceSlug.toString(), item.project_id, item.id, { target_date: value })
-        .catch(() => {
-          // revert on failure
-          setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: item.target_date } : x)));
-        });
+      issueService.patchIssue(workspaceSlug.toString(), item.project_id, item.id, { target_date: value }).catch(() => {
+        // revert on failure
+        setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: item.target_date } : x)));
+      });
     }
   };
 
@@ -151,6 +165,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       .getMyWork(workspaceSlug.toString())
       .then((r) => {
         if (!cancelled) setItems(r || []);
+        return undefined;
       })
       .catch(() => {
         if (!cancelled) setItems([]);
@@ -186,8 +201,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       else later.push(it);
     }
     return [
-      { key: "overdue", label: "Overdue", icon: AlertTriangle, tone: "text-red-600", items: overdue },
-      { key: "week", label: "This week", icon: CalendarClock, tone: "text-amber-600", items: week },
+      { key: "overdue", label: "Overdue", icon: AlertTriangle, tone: "text-danger-primary", items: overdue },
+      { key: "week", label: "This week", icon: CalendarClock, tone: "text-warning-primary", items: week },
       { key: "later", label: "Later", icon: CalendarDays, tone: "text-secondary", items: later },
       { key: "undated", label: "No date", icon: CalendarDays, tone: "text-secondary", items: undated },
     ].filter((b) => b.items.length > 0);
@@ -215,7 +230,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
-          <span className="rounded-full bg-neutral-500/10 px-2 py-0.5 text-xs font-medium text-secondary">{total}</span>
+          <span className="bg-neutral-500/10 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
         </div>
         <div className="flex items-center gap-2">
           {total > 0 && (
@@ -224,7 +239,10 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                 type="button"
                 onClick={() => setView("list")}
                 title="List"
-                className={cn("rounded p-1", view === "list" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary")}
+                className={cn(
+                  "rounded p-1",
+                  view === "list" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
+                )}
               >
                 <List className="size-3.5" />
               </button>
@@ -232,7 +250,10 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                 type="button"
                 onClick={() => setView("calendar")}
                 title="Calendar"
-                className={cn("rounded p-1", view === "calendar" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary")}
+                className={cn(
+                  "rounded p-1",
+                  view === "calendar" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
+                )}
               >
                 <LayoutGrid className="size-3.5" />
               </button>
@@ -242,7 +263,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             <button
               type="button"
               onClick={() => router.push(`/${workspaceSlug}/profile/${currentUser.id}/assigned`)}
-              className="flex items-center gap-0.5 text-xs font-medium text-secondary hover:text-primary"
+              className="text-xs flex items-center gap-0.5 font-medium text-secondary hover:text-primary"
             >
               View all
               <ChevronRight className="size-3.5" />
@@ -252,8 +273,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       </div>
 
       {total === 0 ? (
-        <div className="flex flex-col items-center gap-1.5 px-4 pb-6 pt-2 text-center">
-          <CheckCircle2 className="size-6 text-green-500" />
+        <div className="flex flex-col items-center gap-1.5 px-4 pt-2 pb-6 text-center">
+          <CheckCircle2 className="size-6 text-success-primary" />
           <p className="text-sm text-secondary">Nothing assigned to you. Enjoy the calm.</p>
         </div>
       ) : view === "calendar" ? (
@@ -264,7 +285,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             const Icon = b.icon;
             return (
               <div key={b.key} className="px-4 py-2">
-                <div className={cn("mb-1 flex items-center gap-1.5 text-xs font-semibold", b.tone)}>
+                <div className={cn("text-xs mb-1 flex items-center gap-1.5 font-semibold", b.tone)}>
                   <Icon className="size-3.5" />
                   {b.label}
                   <span className="text-secondary/70">· {b.items.length}</span>
@@ -273,14 +294,22 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                   {b.items.slice(0, 6).map((it) => (
                     <li
                       key={it.id}
-                      onClick={() => openItem(it)}
-                      className="group flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-neutral-500/5"
+                      className="group hover:bg-neutral-500/5 flex w-full items-center gap-2 rounded-md px-1.5 py-1"
                     >
-                      <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
-                      <span className="truncate text-sm text-primary">{it.name}</span>
+                      {/* The row opens the item, the due-date control does not — so the
+                          clickable part is a real button and the control is its sibling,
+                          rather than a button nested inside a clickable <li>. */}
+                      <button
+                        type="button"
+                        onClick={() => openItem(it)}
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                      >
+                        <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
+                        <span className="text-sm truncate text-primary">{it.name}</span>
+                      </button>
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <DueDateSetter item={it} onSet={(v) => setDue(it, v)} />
-                        <span className="text-[11px] uppercase tracking-wide text-secondary/70">
+                        <span className="text-[11px] tracking-wide text-secondary/70 uppercase">
                           {it.project_identifier}-{it.sequence_id}
                         </span>
                       </span>

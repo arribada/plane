@@ -28,8 +28,8 @@ const Tile = ({ label, value, tone = "neutral", className, children }: TileProps
     <div
       className={cn("mt-1 text-20 font-semibold tabular-nums", {
         "text-primary": tone === "neutral",
-        "text-red-600": tone === "danger",
-        "text-amber-600": tone === "warn",
+        "text-danger-primary": tone === "danger",
+        "text-warning-primary": tone === "warn",
       })}
     >
       {value}

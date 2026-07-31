@@ -311,7 +311,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
                 type="button"
                 onClick={() => removeRepo(url)}
                 disabled={saving}
-                className="hover:text-red-600 text-tertiary"
+                className="text-tertiary hover:text-danger-primary"
                 title="Remove"
               >
                 <X className="size-3.5" />

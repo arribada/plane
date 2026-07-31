@@ -36,7 +36,7 @@ export const ISSUE_RELATION_OPTIONS: Record<TIssueRelationTypes, TRelationObject
   blocking: {
     key: "blocking",
     i18n_label: "issue.relation.blocking",
-    className: "bg-yellow-500/20 text-yellow-700",
+    className: "bg-warning-subtle text-warning-primary",
     icon: (size) => <XCircle size={size} className="text-secondary" />,
     placeholder: "None",
   },
@@ -57,14 +57,14 @@ export const ISSUE_RELATION_OPTIONS: Record<TIssueRelationTypes, TRelationObject
   start_before: {
     key: "start_before",
     i18n_label: "issue.relation.start_before",
-    className: "bg-amber-500/20 text-amber-700",
+    className: "bg-warning-subtle text-warning-primary",
     icon: (size) => <ArrowRightToLine size={size} className="text-secondary" />,
     placeholder: "Must start before",
   },
   start_after: {
     key: "start_after",
     i18n_label: "issue.relation.start_after",
-    className: "bg-amber-500/10 text-amber-600",
+    className: "bg-warning-subtle text-warning-primary",
     icon: (size) => <ArrowRightFromLine size={size} className="text-secondary" />,
     placeholder: "Must start after",
   },

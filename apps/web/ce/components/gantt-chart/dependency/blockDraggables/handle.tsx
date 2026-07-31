@@ -106,7 +106,10 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
       dragCleanup.current = null;
     }
     function onMove(ev: PointerEvent) {
-      if (!moved && (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD || Math.abs(ev.clientY - startY) > DRAG_THRESHOLD)) {
+      if (
+        !moved &&
+        (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD || Math.abs(ev.clientY - startY) > DRAG_THRESHOLD)
+      ) {
         moved = true;
       }
       if (moved) ganttLinking.setLine({ x1: originX, y1: originY, x2: ev.clientX, y2: ev.clientY });
@@ -146,11 +149,11 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
             : "Link: this item depends on the selected one"
       }
       className={cn(
-        "absolute top-1/2 z-20 size-3 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-2 border-white shadow transition-opacity hover:opacity-100",
+        "shadow absolute top-1/2 z-20 size-3 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-2 border-white transition-opacity hover:opacity-100",
         side === "right" ? "-right-1.5" : "-left-1.5",
         {
-          "bg-blue-500 opacity-100 ring-2 ring-blue-300": isSource,
-          "bg-emerald-500 opacity-100": isCandidate,
+          "bg-blue-500 ring-blue-300 opacity-100 ring-2": isSource,
+          "bg-success-primary opacity-100": isCandidate,
           "bg-neutral-400 opacity-50": !source,
         }
       )}

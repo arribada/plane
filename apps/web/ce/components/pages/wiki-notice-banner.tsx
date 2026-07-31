@@ -42,7 +42,7 @@ export const WikiNoticeBanner = observer(function WikiNoticeBanner({ className }
   return (
     <div
       className={cn(
-        "border-amber-500/30 bg-amber-500/10 text-amber-700 mb-3 flex items-start gap-2 rounded-md border px-3 py-2 text-13",
+        "mb-3 flex items-start gap-2 rounded-md border border-warning-strong/30 bg-warning-subtle px-3 py-2 text-13 text-warning-primary",
         className
       )}
     >

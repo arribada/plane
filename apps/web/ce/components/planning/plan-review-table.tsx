@@ -224,7 +224,7 @@ export const PlanReviewTable = observer(function PlanReviewTable({ plan, review 
                         type="date"
                         value={r.start_date}
                         onChange={(e) => setDate(r.issue_id, "start_date", e.target.value)}
-                        className={cn(dateInput, !usable && "border-red-500")}
+                        className={cn(dateInput, !usable && "border-danger-strong")}
                       />
                     </td>
                     <td className="px-2 py-1.5 align-top">
@@ -232,7 +232,7 @@ export const PlanReviewTable = observer(function PlanReviewTable({ plan, review 
                         type="date"
                         value={r.target_date}
                         onChange={(e) => setDate(r.issue_id, "target_date", e.target.value)}
-                        className={cn(dateInput, !usable && "border-red-500")}
+                        className={cn(dateInput, !usable && "border-danger-strong")}
                       />
                     </td>
                     <td className="px-2 py-1.5 align-top">

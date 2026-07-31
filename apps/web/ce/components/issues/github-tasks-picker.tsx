@@ -46,6 +46,7 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
       .listGithubInbox(workspaceSlug)
       .then((rows) => {
         if (!ignore) setItems(rows || []);
+        return undefined;
       })
       .catch(() => {
         if (!ignore) setError("Couldn't load the GitHub inbox.");
@@ -91,8 +92,13 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={busy ? undefined : onClose} />
-      <div className="relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1 shadow-2xl">
+      <button
+        type="button"
+        aria-label="Close"
+        className="absolute inset-0 cursor-default bg-black/40"
+        onClick={busy ? undefined : onClose}
+      />
+      <div className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1">
         <div className="flex items-center justify-between border-b border-subtle px-5 py-4">
           <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Github className="size-4 text-secondary" />
@@ -109,25 +115,29 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
               <Loader2 className="size-4 animate-spin" /> Loading GitHub inbox…
             </div>
           ) : items.length === 0 ? (
-            <div className="py-10 text-center text-13 text-secondary">
-              The GitHub inbox is empty — nothing to link.
-            </div>
+            <div className="py-10 text-center text-13 text-secondary">The GitHub inbox is empty — nothing to link.</div>
           ) : (
             items.map((it) => {
               const checked = selected.has(it.id);
               return (
                 <label
                   key={it.id}
+                  // The item's name sits three levels down, past the depth the
+                  // rule inspects, so the control is tied to the label explicitly
+                  // and the name is repeated as the accessible label.
+                  htmlFor={`github-task-${it.id}`}
+                  aria-label={it.name}
                   className={cn(
                     "flex cursor-pointer items-start gap-3 rounded-md px-2.5 py-2 hover:bg-layer-2",
                     checked && "bg-layer-2"
                   )}
                 >
                   <input
+                    id={`github-task-${it.id}`}
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggle(it.id)}
-                    className="mt-0.5 size-4 shrink-0 accent-blue-500"
+                    className="accent-blue-500 mt-0.5 size-4 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-13 text-primary">{it.name}</div>
@@ -155,14 +165,21 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
           )}
         </div>
 
-        {error && <p className="mx-5 mb-2 rounded bg-red-500/10 px-2.5 py-1.5 text-12 text-red-600">{error}</p>}
+        {error && (
+          <p className="mx-5 mb-2 rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>
+        )}
 
         <div className="flex items-center justify-between border-t border-subtle px-5 py-3">
           <span className="text-12 text-secondary">
             {selected.size > 0 ? `${selected.size} selected` : "Select tasks to attach"}
           </span>
           <div className="flex gap-2">
-            <button type="button" onClick={onClose} disabled={busy} className="rounded px-3 py-1.5 text-13 text-secondary hover:bg-layer-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="rounded px-3 py-1.5 text-13 text-secondary hover:bg-layer-2"
+            >
               Cancel
             </button>
             <button

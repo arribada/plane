@@ -189,7 +189,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   </span>
                   <span className="flex-grow truncate">{p.name}</span>
                   {!!p.undated_item_count && (
-                    <span className="text-amber-600 flex items-center gap-0.5 text-11">
+                    <span className="flex items-center gap-0.5 text-11 text-warning-primary">
                       <AlertTriangle className="size-3" />
                       {p.undated_item_count}
                     </span>
@@ -262,7 +262,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 <button
                   type="button"
                   onClick={() => portfolio.clearFilters()}
-                  className="text-red-600 hover:bg-red-500/10 mt-1 w-full rounded px-1.5 py-1 text-left text-12"
+                  className="mt-1 w-full rounded px-1.5 py-1 text-left text-12 text-danger-primary hover:bg-danger-subtle-hover"
                 >
                   Clear filters
                 </button>
@@ -270,7 +270,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
               <div className="mt-1 border-t border-subtle px-1.5 pt-1 text-10 text-secondary/70">
                 Filters the tasks inside expanded projects.
                 {portfolio.hasActiveFilters && portfolio.expandedProjectIds.size === 0 && (
-                  <span className="text-amber-600 mt-0.5 block">Expand a project to see it take effect.</span>
+                  <span className="mt-0.5 block text-warning-primary">Expand a project to see it take effect.</span>
                 )}
               </div>
             </div>
@@ -354,7 +354,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         }
         title="Highlight the program critical path and cross-project dependency arrows"
         className={cn("flex items-center gap-1.5 rounded border px-2 py-1", {
-          "border-red-500 bg-red-500/10 text-red-600": portfolio.showCriticalPath,
+          "border-danger-strong bg-danger-subtle text-danger-primary": portfolio.showCriticalPath,
           "border-subtle hover:bg-layer-1": !portfolio.showCriticalPath,
         })}
       >
@@ -371,7 +371,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
             type="button"
             onClick={() => toggle("undated")}
             title="Give these work items dates"
-            className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/30 flex items-center gap-1 rounded px-2 py-1"
+            className="flex items-center gap-1 rounded bg-warning-subtle px-2 py-1 text-warning-primary hover:opacity-80"
           >
             <AlertTriangle className="size-3.5" />
             {portfolio.totalUndatedCount} without dates
@@ -395,7 +395,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                     className={menuRow}
                   >
                     <span className="flex-grow truncate">{p.name}</span>
-                    <span className="text-amber-600 flex-shrink-0 text-11">{p.undated_item_count}</span>
+                    <span className="flex-shrink-0 text-11 text-warning-primary">{p.undated_item_count}</span>
                   </button>
                 ))}
               </div>
@@ -500,7 +500,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       {portfolio.showCriticalPath && (
         <div className="flex w-full flex-wrap items-center gap-3 pt-0.5 text-11 text-secondary">
           <span className="flex items-center gap-1.5">
-            <span className="bg-red-500 inline-block h-[3px] w-4 rounded" /> Critical path
+            <span className="inline-block h-[3px] w-4 rounded bg-danger-primary" /> Critical path
           </span>
           <span className="flex items-center gap-1.5">
             <span className="border-violet-500 inline-block h-0 w-4 border-t-2 border-dashed" /> Cross-project link
@@ -509,7 +509,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
             <span className="bg-neutral-400 inline-block h-[2px] w-4 rounded" /> In-project link
           </span>
           {portfolio.crossEdges.length === 0 && (
-            <span className="text-amber-600">
+            <span className="text-warning-primary">
               No task dependencies yet — add “blocked by” links between tasks to see the critical path.
             </span>
           )}

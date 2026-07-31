@@ -176,7 +176,7 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
             />
           </div>
 
-          {error && <p className="bg-red-500/10 text-red-600 rounded px-2.5 py-1.5 text-12">{error}</p>}
+          {error && <p className="rounded bg-danger-subtle px-2.5 py-1.5 text-12 text-danger-primary">{error}</p>}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">

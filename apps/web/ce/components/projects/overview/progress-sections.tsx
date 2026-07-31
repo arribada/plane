@@ -98,7 +98,7 @@ export const OverviewProgressSections = observer(function OverviewProgressSectio
                 href={`${base}/cycles/${c.id}`}
                 chip={
                   c.is_active ? (
-                    <span className={cn(CHIP, "bg-emerald-500/15 text-emerald-600")}>Active</span>
+                    <span className={cn(CHIP, "bg-success-subtle text-success-primary")}>Active</span>
                   ) : c.is_upcoming ? (
                     <span className={cn(CHIP, "bg-accent-primary/15 text-accent-primary")}>Upcoming</span>
                   ) : null

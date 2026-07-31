@@ -23,8 +23,8 @@ type Props = {
 const MISSING_LINK_CODES = new Set(["no_github", "no_wiki", "no_chat"]);
 
 const SEVERITY_STYLE: Record<Warning["severity"], string> = {
-  error: "border-red-500/30 bg-red-500/10 text-red-600",
-  warning: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+  error: "border-danger-strong/30 bg-danger-subtle text-danger-primary",
+  warning: "border-warning-strong/30 bg-warning-subtle text-warning-primary",
   info: "border-subtle bg-layer-2 text-secondary",
 };
 

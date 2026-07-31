@@ -83,7 +83,7 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
       className={cn("relative flex w-full items-center gap-1 overflow-hidden rounded px-2", {
         "shadow-sm h-[26px] font-medium": isProject,
         "h-[18px]": !isProject,
-        "ring-red-500 ring-2": isCritical,
+        "ring-2 ring-danger-strong": isCritical,
       })}
       style={
         isDerived

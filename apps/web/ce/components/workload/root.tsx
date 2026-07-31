@@ -41,6 +41,7 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
         .getWorkload(workspaceSlug.toString())
         .then((r) => {
           if (!cancelled) setRows(r || []);
+          return undefined;
         })
         .catch(() => {
           if (!cancelled) setRows([]);
@@ -71,7 +72,7 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
         <span className="text-13 text-secondary">Active work per person</span>
       </div>
       <div className="overflow-hidden rounded-lg border border-subtle">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle bg-layer-1 px-4 py-2 text-11 font-medium uppercase tracking-wide text-secondary">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle bg-layer-1 px-4 py-2 text-11 font-medium tracking-wide text-secondary uppercase">
           <span>Person</span>
           <span className="text-right">Overdue</span>
           <span className="text-right">Due 7d</span>
@@ -79,13 +80,12 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
         </div>
         {rows.length === 0 && <div className="px-4 py-6 text-center text-13 text-secondary">No members found.</div>}
         {rows.map((r) => (
-          <div
+          <button
             key={r.user_id}
-            role="button"
-            tabIndex={0}
+            type="button"
             onClick={() => router.push(`/${workspaceSlug}/profile/${r.user_id}/assigned`)}
             title={`Open ${r.name}'s assigned work items`}
-            className="grid cursor-pointer grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 last:border-b-0 hover:bg-layer-transparent-hover"
+            className="grid w-full cursor-pointer grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 text-left last:border-b-0 hover:bg-layer-transparent-hover"
           >
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -94,14 +94,14 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
               </div>
               <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-layer-2">
                 <div
-                  className={cn("h-full rounded-full", r.overdue > 0 ? "bg-red-500" : "bg-accent-primary")}
+                  className={cn("h-full rounded-full", r.overdue > 0 ? "bg-danger-primary" : "bg-accent-primary")}
                   style={{ width: `${(r.assigned / maxAssigned) * 100}%` }}
                 />
               </div>
             </div>
             <span className="text-right">
               {r.overdue > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded bg-red-500/15 px-1.5 py-0.5 text-12 text-red-600">
+                <span className="inline-flex items-center gap-1 rounded bg-danger-subtle px-1.5 py-0.5 text-12 text-danger-primary">
                   <AlertTriangle className="size-3" />
                   {r.overdue}
                 </span>
@@ -111,7 +111,7 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
             </span>
             <span className="text-right">
               {r.due_week > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-12 text-amber-600">
+                <span className="inline-flex items-center gap-1 rounded bg-warning-subtle px-1.5 py-0.5 text-12 text-warning-primary">
                   <CalendarClock className="size-3" />
                   {r.due_week}
                 </span>
@@ -119,8 +119,8 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
                 <span className="text-12 text-placeholder">0</span>
               )}
             </span>
-            <span className="text-right text-13 tabular-nums text-secondary">{r.points || "—"}</span>
-          </div>
+            <span className="text-right text-13 text-secondary tabular-nums">{r.points || "—"}</span>
+          </button>
         ))}
       </div>
     </div>

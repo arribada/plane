@@ -15,9 +15,9 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatus, TProjectStatusUpdate } from "@/plane-web/types/arribada";
 
 export const STATUS_META: Record<TProjectStatus, { label: string; color: string; dot: string }> = {
-  on_track: { label: "On track", color: "#10b981", dot: "bg-emerald-500" },
-  at_risk: { label: "At risk", color: "#f59e0b", dot: "bg-amber-500" },
-  off_track: { label: "Off track", color: "#ef4444", dot: "bg-red-500" },
+  on_track: { label: "On track", color: "#10b981", dot: "bg-success-primary" },
+  at_risk: { label: "At risk", color: "#f59e0b", dot: "bg-warning-primary" },
+  off_track: { label: "Off track", color: "#ef4444", dot: "bg-danger-primary" },
 };
 
 type Props = {
@@ -54,7 +54,10 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
     if (!workspaceSlug || posting) return;
     setPosting(true);
     try {
-      const update = await service.postProjectStatus(workspaceSlug.toString(), projectId, { status, message: message.trim() });
+      const update = await service.postProjectStatus(workspaceSlug.toString(), projectId, {
+        status,
+        message: message.trim(),
+      });
       setHistory((h) => [update, ...h]);
       setMessage("");
       onPosted(projectId, update);
@@ -65,8 +68,13 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={posting ? undefined : onClose} />
-      <div className="relative z-10 flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-subtle bg-layer-1 shadow-2xl">
+      <button
+        type="button"
+        aria-label="Close"
+        className="absolute inset-0 cursor-default bg-black/40"
+        onClick={posting ? undefined : onClose}
+      />
+      <div className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-subtle bg-layer-1">
         <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
           <h3 className="text-16 font-semibold text-primary">Status · {projectName ?? "Project"}</h3>
           <button type="button" onClick={onClose} className="text-secondary hover:text-primary">
@@ -133,7 +141,7 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
                         {u.author ?? "—"} · {new Date(u.created_at).toLocaleDateString()}
                       </span>
                     </div>
-                    {u.message && <p className="mt-0.5 whitespace-pre-wrap text-13 text-secondary">{u.message}</p>}
+                    {u.message && <p className="mt-0.5 text-13 whitespace-pre-wrap text-secondary">{u.message}</p>}
                   </div>
                 </li>
               ))}

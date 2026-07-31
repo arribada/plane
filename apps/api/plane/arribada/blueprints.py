@@ -568,6 +568,233 @@ TASKS = [
 
 TASK_BY_KEY = {t["key"]: t for t in TASKS}
 
+# ---------------------------------------------------------------------------
+# The agile shape
+# ---------------------------------------------------------------------------
+#
+# The V is plan-driven: one long descent through requirements and design, then a
+# climb back through the matching tests. It is the right shape for a board that
+# gets fabricated once. It is the wrong shape for a team running fortnights, where
+# the unit of work is an increment that is planned, built, tested and shown inside
+# one sprint, and the next sprint starts from what that taught you.
+#
+# So choosing sprints does not merely cut the V into fortnights — it swaps the task
+# set. A short inception, then one repeating block per sprint, then a release.
+
+AGILE_SETUP = [
+    {
+        "key": "ag.vision",
+        "phase": "analysis",
+        "name": "Product vision and success criteria",
+        "role": "project manager",
+        "days": 2,
+        "after": [],
+    },
+    {
+        "key": "ag.backlog",
+        "phase": "analysis",
+        "name": "Seed and estimate the backlog",
+        "role": "project manager",
+        "days": 3,
+        "after": ["ag.vision"],
+    },
+    {
+        "key": "ag.dod",
+        "phase": "analysis",
+        "name": "Definition of done, toolchain and CI",
+        "role": "QA / test",
+        "days": 2,
+        "after": ["ag.vision"],
+    },
+]
+
+# One architecture spike per component, up front — an iteration cannot discover the
+# power budget of a satellite tag halfway through, and pretending otherwise is how
+# agile gets blamed for a hardware slip.
+AGILE_SPIKES = {
+    "hardware": {
+        "key": "ag.spike.hardware",
+        "name": "Hardware architecture spike",
+        "role": "hardware engineer",
+        "days": 5,
+    },
+    "firmware": {
+        "key": "ag.spike.firmware",
+        "name": "Firmware architecture spike",
+        "role": "embedded firmware",
+        "days": 4,
+    },
+    "software": {
+        "key": "ag.spike.software",
+        "name": "Software architecture spike",
+        "role": "software",
+        "days": 4,
+    },
+}
+
+# The increment each component contributes inside a sprint.
+AGILE_INCREMENTS = {
+    "hardware": {"suffix": "hw", "name": "hardware increment", "role": "hardware engineer"},
+    "firmware": {"suffix": "fw", "name": "firmware increment", "role": "embedded firmware"},
+    "software": {"suffix": "sw", "name": "software increment", "role": "software"},
+}
+
+AGILE_CLOSING = [
+    {
+        "key": "ag.release",
+        "phase": "validation",
+        "name": "Release, documentation and handover",
+        "role": "project manager",
+        "days": 3,
+    },
+]
+
+# What the picker offers for an agile project: the ceremonies are optional, the
+# increment is not — a sprint with no increment is a meeting.
+AGILE_CEREMONIES = [
+    {"key": "plan", "name": "Sprint planning", "role": "project manager", "days": 1, "optional": False},
+    {"key": "test", "name": "Integration and test", "role": "QA / test", "days": 2, "optional": False},
+    {"key": "review", "name": "Review and retrospective", "role": "project manager", "days": 1, "optional": True},
+]
+
+
+def agile_catalogue():
+    """The agile blocks, in the shape the wizard's picker renders.
+
+    The per-sprint block is described once and repeated at build time, so ticking
+    "Review and retrospective" means every sprint gets one — which is the only way
+    a ceremony makes sense.
+    """
+    return {
+        "setup": [
+            {**task, "optional": False, "phase_label": "Inception"}
+            for task in AGILE_SETUP
+        ],
+        "spikes": [
+            {**spec, "phase": "architecture", "phase_label": "Inception", "optional": False, "track": track}
+            for track, spec in AGILE_SPIKES.items()
+        ],
+        "ceremonies": AGILE_CEREMONIES,
+        "closing": [{**task, "optional": False, "phase_label": "Release"} for task in AGILE_CLOSING],
+    }
+
+
+def build_agile_tasks(
+    tracks,
+    *,
+    sprint_count,
+    sprint_working_days=10,
+    ceremonies=None,
+    duration_overrides=None,
+    assignees=None,
+    extra=None,
+):
+    """Expand the agile blocks into one task list.
+
+    `sprint_count` repetitions of the per-sprint block, wired so a sprint's work
+    waits on its planning and the next sprint waits on this one's review — which is
+    what makes the plan iterate rather than run everything at once.
+    """
+    duration_overrides = duration_overrides or {}
+    assignees = assignees or {}
+    wanted = set(ceremonies if ceremonies is not None else [c["key"] for c in AGILE_CEREMONIES])
+    chosen_tracks = [t for t in tracks if t in AGILE_INCREMENTS]
+    sprint_count = max(1, min(52, int(sprint_count or 1)))
+
+    def make(key, name, role, days, after, phase):
+        return {
+            "key": key,
+            "name": name,
+            "track": "pm",
+            "phase": phase,
+            "role": role,
+            "days": max(1, min(365, int(duration_overrides.get(key, days)))),
+            "after": after,
+            "assignee_id": assignees.get(key),
+        }
+
+    tasks = [make(t["key"], t["name"], t["role"], t["days"], list(t["after"]), t["phase"]) for t in AGILE_SETUP]
+    for track in chosen_tracks:
+        spec = AGILE_SPIKES[track]
+        task = make(spec["key"], spec["name"], spec["role"], spec["days"], ["ag.backlog"], "architecture")
+        task["track"] = track
+        tasks.append(task)
+
+    ceremony_by_key = {c["key"]: c for c in AGILE_CEREMONIES}
+    # What is left for building once the ceremonies have taken their share of the
+    # sprint. Never less than a day: a sprint whose ceremonies fill it is a
+    # configuration problem, not a reason to emit a zero-length task.
+    overhead = sum(ceremony_by_key[k]["days"] for k in wanted if k in ceremony_by_key)
+    build_days = max(1, int(sprint_working_days) - overhead)
+
+    previous_review = None
+    for index in range(1, sprint_count + 1):
+        prefix = f"ag.s{index}"
+        entry = [previous_review] if previous_review else [s["key"] for s in AGILE_SPIKES.values() if s["key"] in {t["key"] for t in tasks}]
+        entry = [e for e in entry if e]
+
+        plan_key = f"{prefix}.plan"
+        if "plan" in wanted:
+            tasks.append(make(plan_key, f"Sprint {index} planning", "project manager", 1, entry, "analysis"))
+            increment_after = [plan_key]
+        else:
+            increment_after = entry
+
+        increment_keys = []
+        for track in chosen_tracks or ["pm"]:
+            spec = AGILE_INCREMENTS.get(track)
+            key = f"{prefix}.{spec['suffix']}" if spec else f"{prefix}.work"
+            name = f"Sprint {index} — {spec['name']}" if spec else f"Sprint {index} work"
+            role = spec["role"] if spec else "project manager"
+            task = make(key, name, role, build_days, list(increment_after), "implementation")
+            task["track"] = track
+            tasks.append(task)
+            increment_keys.append(key)
+
+        tail = increment_keys
+        if "test" in wanted:
+            test_key = f"{prefix}.test"
+            tasks.append(
+                make(test_key, f"Sprint {index} integration and test", "QA / test", 2, list(increment_keys), "verification")
+            )
+            tail = [test_key]
+        if "review" in wanted:
+            review_key = f"{prefix}.review"
+            tasks.append(
+                make(review_key, f"Sprint {index} review and retrospective", "project manager", 1, list(tail), "validation")
+            )
+            tail = [review_key]
+        previous_review = tail[0] if tail else plan_key
+
+    for task in AGILE_CLOSING:
+        tasks.append(
+            make(task["key"], task["name"], task["role"], task["days"], [previous_review] if previous_review else [], task["phase"])
+        )
+
+    present = {t["key"] for t in tasks}
+    for item in extra or []:
+        key = str(item.get("key") or "").strip()[:60]
+        name = str(item.get("name") or "").strip()[:255]
+        if not key or not name or key in present:
+            continue
+        after = [a for a in item.get("after") or [] if a in present]
+        present.add(key)
+        tasks.append(
+            {
+                "key": key,
+                "name": name,
+                "track": str(item.get("track") or "pm")[:40],
+                "phase": str(item.get("phase") or "implementation")[:40],
+                "role": str(item.get("role") or "")[:80],
+                "days": max(1, min(365, int(item.get("days") or 5))),
+                "after": after,
+                "assignee_id": assignees.get(key),
+                "added": True,
+            }
+        )
+
+    return tasks
+
 # Tracks that pull in the shared project-management tasks. "pm" is not offered as a
 # choice: a project with no kickoff and no review is not a project.
 ALWAYS_TRACK = "pm"

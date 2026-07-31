@@ -525,26 +525,14 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
             );
           })}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={addBlankRow}
-              className="flex items-center gap-1.5 rounded border border-subtle px-2.5 py-1 text-12 text-secondary hover:bg-layer-2"
-            >
-              <Plus className="size-3.5" />
-              Add person
-            </button>
-            {vocabLoading && (
-              <span className="flex items-center gap-1.5 text-12 text-tertiary">
-                <Loader2 className="size-3.5 animate-spin" />
-                Reading the roster…
-              </span>
-            )}
-          </div>
-
+          {/* Members of this project first: picking one links a real account, which
+              is what lets work actually be assigned. Someone with no Plane account
+              is a normal roster entry too — just the second choice, not the first. */}
           {planeSuggestions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 border-t border-subtle pt-3">
-              <span className="text-11 font-medium tracking-wide text-secondary uppercase">In Plane, not listed</span>
+              <span className="text-11 font-medium tracking-wide text-secondary uppercase">
+                Members of this project
+              </span>
               {planeSuggestions.map((m) => (
                 <button
                   key={m.id}
@@ -560,6 +548,24 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
               ))}
             </div>
           )}
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-subtle pt-3">
+            <span className="text-11 font-medium tracking-wide text-secondary uppercase">Not in Plane</span>
+            <button
+              type="button"
+              onClick={addBlankRow}
+              className="flex items-center gap-1.5 rounded border border-subtle px-2.5 py-1 text-12 text-secondary hover:bg-layer-2"
+            >
+              <Plus className="size-3.5" />
+              Add someone by name
+            </button>
+            {vocabLoading && (
+              <span className="flex items-center gap-1.5 text-12 text-tertiary">
+                <Loader2 className="size-3.5 animate-spin" />
+                Reading the roster…
+              </span>
+            )}
+          </div>
 
           <div>
             <button

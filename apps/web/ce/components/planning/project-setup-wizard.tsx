@@ -45,6 +45,22 @@ type StepKey = "scope" | "team" | "tasks" | "cadence" | "plan" | "existing" | "l
 // the lead picks through.
 const DURATION_TRACKS = new Set(["field", "production"]);
 
+// Offered when adding a discipline by hand. The same vocabulary the roster and the
+// task catalogue use, so a typed one lands on an existing name rather than a
+// near-miss nobody's tasks ask for. Free text is still accepted.
+const ROLE_SUGGESTIONS = [
+  "hardware engineer",
+  "embedded firmware",
+  "software",
+  "mechanical",
+  "designer",
+  "data / science",
+  "field ops",
+  "QA / test",
+  "reviewer",
+  "project manager",
+];
+
 const errorMessage = (e: unknown, fallback: string) => {
   const body = e as { error?: string; start_date?: string[]; target_date?: string[] };
   return body?.error ?? body?.target_date?.[0] ?? body?.start_date?.[0] ?? fallback;
@@ -97,13 +113,20 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   // 2 — team
   const [team, setTeam] = useState<TTeamMember[] | null>(null);
   const [capacity, setCapacity] = useState<Record<string, number>>({});
+  // Disciplines the lead added on top of the ones the chosen tasks imply, and the
+  // ones they took out of the list.
+  const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  const [removedRoles, setRemovedRoles] = useState<Set<string>>(new Set());
+  const [roleDraft, setRoleDraft] = useState("");
   // 3 — tasks
   const [taskKeys, setTaskKeys] = useState<Set<string>>(new Set());
   const [durations, setDurations] = useState<Record<string, number>>({});
-  // 4 — cadence
+  // 2 — cadence. Running in sprints is not a way of slicing the V: it is a different
+  // set of tasks, so this answer is what decides which one the wizard offers.
   const [sprintMode, setSprintMode] = useState<"sprints" | "flow">("flow");
   const [sprintLength, setSprintLength] = useState("14");
-  const [sprintCount, setSprintCount] = useState("");
+  const [sprintCount, setSprintCount] = useState("6");
+  const [ceremonies, setCeremonies] = useState<string[]>(["plan", "test", "review"]);
   // 5 — plan
   const [useAi, setUseAi] = useState(true);
   const [context, setContext] = useState("");
@@ -220,13 +243,40 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       if (!chosen.has(track.key)) continue;
       for (const task of track.tasks) if (taskKeys.has(task.key)) roles.add(task.role);
     }
-    return [...roles];
-  }, [catalogue, tracks, taskKeys]);
+    // Plus the ones the lead added by hand, minus the ones they took out. Removing
+    // a discipline the tasks still need only drops it from this list: those items
+    // keep their discipline and fall back to one pair of hands.
+    for (const role of extraRoles) roles.add(role);
+    return [...roles].filter((role) => !removedRoles.has(role.toLowerCase()));
+  }, [catalogue, tracks, taskKeys, extraRoles, removedRoles]);
+
+  const addRole = useCallback((value: string) => {
+    const role = value.trim().slice(0, 80);
+    if (!role) return;
+    setRemovedRoles((current) => {
+      if (!current.has(role.toLowerCase())) return current;
+      const next = new Set(current);
+      next.delete(role.toLowerCase());
+      return next;
+    });
+    setExtraRoles((current) =>
+      current.some((r) => r.toLowerCase() === role.toLowerCase()) ? current : [...current, role]
+    );
+    setRoleDraft("");
+  }, []);
+
+  const removeRole = useCallback((role: string) => {
+    setExtraRoles((current) => current.filter((r) => r.toLowerCase() !== role.toLowerCase()));
+    setRemovedRoles((current) => new Set(current).add(role.toLowerCase()));
+  }, []);
 
   const unstaffed = useMemo(
     () => new Set(rolesInPlay.filter((r) => !roleCounts[r.toLowerCase()]).map((r) => r.toLowerCase())),
     [rolesInPlay, roleCounts]
   );
+
+  // Sprints mean the iteration blocks; a continuous flow means the V.
+  const agile = sprintMode === "sprints";
 
   const trackLabels = useMemo(() => {
     const labels: Record<string, string> = {};
@@ -274,20 +324,24 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   }, [catalogue, tracks.length]);
 
   const steps = useMemo(() => {
+    // Cadence comes second on purpose: running in sprints is not a way of slicing
+    // the V, it is a different set of tasks, so the answer decides what step 4 can
+    // even offer.
     const list: { key: StepKey; title: string }[] = [
       { key: "scope", title: "What does this project involve?" },
-      { key: "team", title: "Who works on it?" },
-      { key: "tasks", title: "Which tasks?" },
       { key: "cadence", title: "How do you want to run it?" },
+      { key: "team", title: "Who works on it?" },
+      { key: "tasks", title: agile ? "Which ceremonies?" : "Which tasks?" },
       { key: "plan", title: "The plan" },
     ];
     if (hasExistingWork) list.push({ key: "existing", title: "Work already in this project" });
     list.push({ key: "links", title: "Where does the rest of the project live?" });
     return list;
-  }, [hasExistingWork]);
+  }, [hasExistingWork, agile]);
 
   const step = steps[Math.min(index, steps.length - 1)];
   const isLast = index >= steps.length - 1;
+  const agileCatalogue = catalogue?.agile ?? null;
 
   if (!projectId) return null;
 
@@ -333,6 +387,8 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           length_days: sprintCount ? null : Number(sprintLength) || 14,
           count: sprintCount ? Number(sprintCount) : null,
         },
+        method: agile ? "agile" : "vcycle",
+        ceremonies,
         use_ai: !reflow && useAi && aiAvailable,
         context: context.trim(),
         assignees: nextAssignees ?? assignees,
@@ -456,7 +512,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setError(null);
     // Reaching the plan step with nothing computed yet builds it, rather than showing
     // an empty page with a button on it.
-    if (step.key === "cadence") {
+    if (step.key === "tasks") {
       setIndex((i) => i + 1);
       await buildPlan();
       return;
@@ -607,6 +663,15 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                   return (
                     <li key={role} className="flex items-center gap-2">
                       <Users className="size-3.5 flex-shrink-0 text-tertiary" />
+                      <button
+                        type="button"
+                        aria-label={`Remove ${role}`}
+                        title="Remove this discipline from the plan"
+                        onClick={() => removeRole(role)}
+                        className="flex-shrink-0 text-tertiary hover:text-danger-primary"
+                      >
+                        <X className="size-3" />
+                      </button>
                       <span className="min-w-0 flex-1 truncate text-13 text-primary">{role}</span>
                       <span className={cn("text-11", held ? "text-tertiary" : "text-warning-primary")}>
                         {held ? `${held} on the roster` : "nobody on the roster"}
@@ -631,6 +696,34 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                 })}
               </ul>
             )}
+            {/* A discipline the catalogue's tasks do not name — planning for someone
+                you are about to bring in, or a trade this project needs and the
+                generic list has no task for. */}
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id={`${uid}-role-draft`}
+                list={`${uid}-role-options`}
+                className={cn(field, "flex-1")}
+                value={roleDraft}
+                onChange={(e) => setRoleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addRole(roleDraft);
+                  }
+                }}
+                placeholder="Add a discipline"
+              />
+              <datalist id={`${uid}-role-options`}>
+                {ROLE_SUGGESTIONS.filter((r) => !rolesInPlay.some((x) => x.toLowerCase() === r)).map((r) => (
+                  <option key={r} value={r} />
+                ))}
+              </datalist>
+              <button type="button" onClick={() => addRole(roleDraft)} className={actionBtn}>
+                <Plus className="size-3.5" />
+                Add
+              </button>
+            </div>
             {unstaffed.size > 0 && (
               <p className="rounded bg-warning-subtle px-2.5 py-1.5 text-12 text-warning-primary">
                 {unstaffed.size} discipline(s) have nobody on the roster — add them above, or carry on: the plan is
@@ -642,6 +735,95 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         );
 
       case "tasks":
+        // In sprints the unit of work is an iteration, not a phase — so the picker
+        // asks which ceremonies each sprint carries, and the increment repeats by
+        // construction. A sprint with no increment would just be a meeting.
+        if (agile)
+          return (
+            <div className="space-y-4">
+              <p className={hint}>
+                Every sprint plans, builds an increment, tests it and shows it. Below is what each of your{" "}
+                {sprintCount || "6"} sprints will contain — the increment itself is not optional.
+              </p>
+
+              <div className="overflow-hidden rounded-lg border border-subtle">
+                <p className="bg-layer-2 px-3 py-2 text-12 font-semibold text-primary">Before the first sprint</p>
+                <ul className="divide-y divide-subtle">
+                  {[
+                    ...(agileCatalogue?.setup ?? []),
+                    ...(agileCatalogue?.spikes ?? []).filter((sp) => tracks.includes(sp.track)),
+                  ].map((task) => (
+                    <li key={task.key} className="flex items-center gap-2 px-3 py-1.5 text-13">
+                      <span className="min-w-0 flex-1 truncate text-primary">{task.name}</span>
+                      <span className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-11 text-secondary">
+                        {task.role}
+                      </span>
+                      <span className="flex-shrink-0 text-11 text-tertiary">{task.days}d</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-subtle">
+                <p className="bg-layer-2 px-3 py-2 text-12 font-semibold text-primary">In every sprint</p>
+                <ul className="divide-y divide-subtle">
+                  {(agileCatalogue?.ceremonies ?? []).map((ceremony) => (
+                    <li key={ceremony.key} className="flex items-center gap-2 px-3 py-1.5 text-13">
+                      <input
+                        id={`${uid}-ceremony-${ceremony.key}`}
+                        type="checkbox"
+                        checked={ceremonies.includes(ceremony.key)}
+                        onChange={() =>
+                          setCeremonies((current) =>
+                            current.includes(ceremony.key)
+                              ? current.filter((c) => c !== ceremony.key)
+                              : [...current, ceremony.key]
+                          )
+                        }
+                        className="size-3.5 flex-shrink-0 text-accent-primary"
+                      />
+                      <label
+                        htmlFor={`${uid}-ceremony-${ceremony.key}`}
+                        className="min-w-0 flex-1 truncate text-primary"
+                      >
+                        {ceremony.name}
+                      </label>
+                      <span className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-11 text-secondary">
+                        {ceremony.role}
+                      </span>
+                      <span className="flex-shrink-0 text-11 text-tertiary">{ceremony.days}d</span>
+                    </li>
+                  ))}
+                  {tracks
+                    .filter((t) => !DURATION_TRACKS.has(t))
+                    .map((track) => (
+                      <li key={track} className="flex items-center gap-2 px-3 py-1.5 text-13">
+                        <span className="size-3.5 flex-shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-primary">
+                          {trackLabels[track] ?? track} increment
+                        </span>
+                        <span className="flex-shrink-0 text-11 text-tertiary">the rest of the sprint</span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-subtle">
+                <p className="bg-layer-2 px-3 py-2 text-12 font-semibold text-primary">After the last sprint</p>
+                <ul className="divide-y divide-subtle">
+                  {(agileCatalogue?.closing ?? []).map((task) => (
+                    <li key={task.key} className="flex items-center gap-2 px-3 py-1.5 text-13">
+                      <span className="min-w-0 flex-1 truncate text-primary">{task.name}</span>
+                      <span className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-11 text-secondary">
+                        {task.role}
+                      </span>
+                      <span className="flex-shrink-0 text-11 text-tertiary">{task.days}d</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          );
         return (
           <div className="space-y-3">
             <p className={hint}>

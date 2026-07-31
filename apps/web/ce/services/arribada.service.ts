@@ -436,6 +436,11 @@ export class ArribadaService extends APIService {
       field_days?: number | null;
       production_days?: number | null;
       sprints?: { mode: "sprints" | "flow"; length_days?: number | null; count?: number | null };
+      // "agile" swaps the V-cycle task set for iteration blocks. Only consulted
+      // when the project runs in sprints — a continuous flow is the V.
+      method?: "vcycle" | "agile";
+      /** Which per-sprint ceremonies to include; omitted means all of them. */
+      ceremonies?: string[];
       use_ai?: boolean;
       context?: string;
       // {task key: user id} — naming who does a task instead of leaving it to

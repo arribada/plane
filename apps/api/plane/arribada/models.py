@@ -218,8 +218,21 @@ PROJECT_ROLES = [
     ("QA / test", "QA / test"),
     ("reviewer", "Reviewer"),
     ("project manager", "Project manager"),
-    ("project lead", "Project lead"),
 ]
+
+# "project lead" used to be a discipline of its own, which meant the same job could
+# be recorded two ways and neither matched the other. Leading a project is not a
+# discipline anyway — it is ProjectTeamMember.is_lead, a flag on the person. Kept
+# here so anything still writing the old name (the wiki leader sync did) folds into
+# the surviving one instead of inventing a third.
+ROLE_ALIASES = {"project lead": "project manager", "project leader": "project manager"}
+
+
+def canonical_role(value):
+    """The surviving name for a discipline, trimmed. Unknown names pass through —
+    the vocabulary is a suggestion list, not a validator."""
+    role = str(value or "").strip()
+    return ROLE_ALIASES.get(role.lower(), role)
 
 
 class ProjectTeamMember(models.Model):

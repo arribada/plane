@@ -228,9 +228,19 @@ export type TBlueprintTrack = {
   tasks: TBlueprintTask[];
 };
 
+// The blocks an agile project is built from. The per-sprint ceremonies are described
+// once and repeated for every sprint, so ticking one applies to all of them.
+export type TAgileCatalogue = {
+  setup: { key: string; name: string; role: string; days: number }[];
+  spikes: { key: string; name: string; role: string; days: number; track: string }[];
+  ceremonies: { key: string; name: string; role: string; days: number; optional: boolean }[];
+  closing: { key: string; name: string; role: string; days: number }[];
+};
+
 export type TBlueprintCatalogue = {
   tracks: TBlueprintTrack[];
   phases: { key: string; label: string }[];
+  agile: TAgileCatalogue;
 };
 
 // A task once the scheduler has placed it: dates, the person its discipline

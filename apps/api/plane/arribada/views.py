@@ -27,6 +27,7 @@ from plane.db.models import Workspace
 
 from .models import (
     PROJECT_ROLES,
+    canonical_role,
     IssueBaseline,
     IssueRole,
     ProjectFolder,
@@ -134,7 +135,10 @@ def _clean_roles(values):
     out = []
     seen = set()
     for value in values or []:
-        role = str(value).strip()[:80]
+        # Folds retired names onto the surviving one, so anything still writing
+        # "project lead" (the wiki leader sync did) lands as "project manager"
+        # instead of creating a second discipline nobody's tasks ask for.
+        role = canonical_role(value)[:80]
         if not role or role.lower() in seen:
             continue
         seen.add(role.lower())
@@ -2561,9 +2565,12 @@ class ProjectBlueprintEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
-        from .blueprints import catalogue
+        from .blueprints import agile_catalogue, catalogue
 
-        return Response(catalogue(), status=status.HTTP_200_OK)
+        # Both shapes in one answer: the V for a project run as a continuous flow,
+        # the iteration blocks for one run in sprints. Which the wizard shows follows
+        # from the cadence the lead picks, and it asks that before the tasks.
+        return Response({**catalogue(), "agile": agile_catalogue()}, status=status.HTTP_200_OK)
 
 
 class ProjectSetupPlanEndpoint(BaseAPIView):
@@ -2602,6 +2609,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         from .blueprints import (
             TASK_BY_KEY,
             assign_sprints,
+            build_agile_tasks,
             build_tasks,
             default_selection,
             schedule,
@@ -2718,26 +2726,42 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
 
         # The lead's own overrides outrank the model's.
         merged = {**ai_durations, **overrides}
-        tasks = build_tasks(
-            keys,
-            field_days=field_days,
-            production_days=production_days,
-            duration_overrides=merged,
-            extra=extra,
-            assignees=pinned,
-        )
+        sprint_cfg = request.data.get("sprints") or {}
+        in_sprints = str(sprint_cfg.get("mode") or "flow") == "sprints"
+        sprint_length = _positive(sprint_cfg.get("length_days"), 90) or 14
+        sprint_count = _positive(sprint_cfg.get("count"), 52)
+
+        if in_sprints and str(request.data.get("method") or "agile") == "agile":
+            # Sprints are not a way of slicing a V — they are a different shape of
+            # work. An iteration plans, builds, tests and shows an increment, and the
+            # next one starts from what that taught you.
+            ceremonies = request.data.get("ceremonies")
+            tasks = build_agile_tasks(
+                tracks,
+                sprint_count=sprint_count or 6,
+                # A fortnight is ten working days; the ceremonies take their share of
+                # it and the increment gets the rest.
+                sprint_working_days=max(2, round(sprint_length * 5 / 7)),
+                ceremonies=ceremonies if isinstance(ceremonies, list) else None,
+                duration_overrides=merged,
+                assignees=pinned,
+                extra=extra,
+            )
+        else:
+            tasks = build_tasks(
+                keys,
+                field_days=field_days,
+                production_days=production_days,
+                duration_overrides=merged,
+                extra=extra,
+                assignees=pinned,
+            )
         placed, warnings = schedule(tasks, start, capacity, people)
         end = max((v["target"] for v in placed.values()), default=start)
 
-        sprint_cfg = request.data.get("sprints") or {}
         sprints = []
-        if str(sprint_cfg.get("mode") or "flow") == "sprints":
-            sprints = split_into_sprints(
-                start,
-                end,
-                length_days=_positive(sprint_cfg.get("length_days"), 90) or 14,
-                count=_positive(sprint_cfg.get("count"), 52),
-            )
+        if in_sprints:
+            sprints = split_into_sprints(start, end, length_days=sprint_length, count=sprint_count)
         sprint_of = assign_sprints(placed, sprints)
 
         # Owners now come out of the schedule itself — it is what decided which of

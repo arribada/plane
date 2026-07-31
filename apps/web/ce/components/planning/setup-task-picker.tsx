@@ -23,10 +23,44 @@ type Props = {
   onDuration: (key: string, days: number) => void;
   /** Disciplines nobody on the roster holds — flagged inline, where the choice is made. */
   unstaffed: Set<string>;
+  /** {task key: discipline the lead moved it to}, replacing the catalogue's. */
+  roleOverrides: Record<string, string>;
+  onRole: (key: string, role: string) => void;
+  /** Every discipline this project can hand a task to, roster first. */
+  roleOptions: string[];
 };
 
 const numberInput =
   "w-14 rounded border border-subtle bg-layer-1 px-1.5 py-0.5 text-12 text-primary outline-none focus:border-accent-strong";
+
+// Working days of the ticked tasks only — an unticked task is not in the plan, so
+// it must not be in the total. Reads the edited duration where the lead set one.
+const sumDays = (tasks: TBlueprintTrack["tasks"], selected: Set<string>, durations: Record<string, number>): number =>
+  tasks.reduce((total, task) => (selected.has(task.key) ? total + (durations[task.key] ?? task.days) : total), 0);
+
+// Case-insensitive dedupe that keeps the first spelling seen, so "Reviewer" and
+// "reviewer" cannot both sit in the list and mean the same discipline.
+const dedupeRoles = (roles: string[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const role of roles) {
+    const trimmed = role.trim();
+    const key = trimmed.toLowerCase();
+    if (!trimmed || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+};
+
+const roleSelect =
+  "max-w-40 flex-shrink-0 cursor-pointer appearance-none truncate rounded px-1.5 py-0.5 text-11 outline-none focus:ring-1 focus:ring-accent-strong disabled:cursor-default";
+
+// Effort, not elapsed time: these tasks run in parallel across whoever holds the
+// discipline, so the schedule step turns this into dates. Saying "d total" rather
+// than a date keeps the lead from reading it as a delivery window.
+const EFFORT_HINT =
+  "Total working days of the ticked tasks — effort, not elapsed time. The plan step decides what runs in parallel.";
 
 function TrackSection({
   track,
@@ -36,10 +70,14 @@ function TrackSection({
   durations,
   onDuration,
   unstaffed,
+  roleOverrides,
+  onRole,
+  roleOptions,
 }: Props & { track: TBlueprintTrack }) {
   const [open, setOpen] = useState(true);
   const chosen = track.tasks.filter((t) => selected.has(t.key));
   const allOn = chosen.length === track.tasks.length && track.tasks.length > 0;
+  const trackDays = sumDays(track.tasks, selected, durations);
 
   // Preserve the catalogue's order inside each phase; the phases themselves are
   // already in V order because the tasks are declared that way.
@@ -68,6 +106,9 @@ function TrackSection({
           <span className="rounded-full bg-layer-1 px-2 py-0.5 text-11 text-secondary">
             {chosen.length}/{track.tasks.length}
           </span>
+          <span className="rounded-full bg-layer-1 px-2 py-0.5 text-11 text-secondary" title={EFFORT_HINT}>
+            {trackDays} d
+          </span>
         </button>
         <button
           type="button"
@@ -81,10 +122,27 @@ function TrackSection({
         <div className="divide-y divide-subtle">
           {phases.map((phase) => (
             <div key={phase.label} className="px-3 py-2">
-              <p className="mb-1.5 text-11 font-medium tracking-wide text-tertiary uppercase">{phase.label}</p>
+              <div className="mb-1.5 flex items-baseline gap-2">
+                <p className="min-w-0 flex-1 truncate text-11 font-medium tracking-wide text-tertiary uppercase">
+                  {phase.label}
+                </p>
+                {/* Flush right, so its "d" lands in the same column as the "d" on
+                    every row below — the total reads as the sum of what it sits over. */}
+                <span className="flex-shrink-0 text-11 font-medium text-secondary" title={EFFORT_HINT}>
+                  {sumDays(phase.tasks, selected, durations)} d
+                </span>
+              </div>
               <ul className="flex flex-col gap-1">
                 {phase.tasks.map((task) => {
                   const on = selected.has(task.key);
+                  const role = roleOverrides[task.key] ?? task.role;
+                  const orphaned = unstaffed.has(role.toLowerCase());
+                  // The catalogue's own discipline always stays offerable, even when
+                  // the lead has taken it off the roster — otherwise a select bound
+                  // to it would render blank and silently reassign on first touch.
+                  const options = dedupeRoles([...roleOptions, task.role, role]);
+                  const staffed = options.filter((r) => !unstaffed.has(r.toLowerCase()));
+                  const vacant = options.filter((r) => unstaffed.has(r.toLowerCase()));
                   return (
                     <li key={task.key} className="flex items-center gap-2">
                       <input
@@ -100,21 +158,45 @@ function TrackSection({
                       >
                         {task.name}
                       </label>
-                      <span
-                        className={cn(
-                          "flex-shrink-0 rounded px-1.5 py-0.5 text-11",
-                          unstaffed.has(task.role.toLowerCase())
-                            ? "bg-warning-subtle text-warning-primary"
-                            : "bg-layer-2 text-secondary"
-                        )}
+                      <select
+                        aria-label={`Discipline for ${task.name}`}
+                        disabled={!on}
+                        value={role}
+                        onChange={(e) => onRole(task.key, e.target.value)}
                         title={
-                          unstaffed.has(task.role.toLowerCase())
-                            ? "Nobody on the roster holds this discipline yet"
-                            : undefined
+                          orphaned
+                            ? "Nobody on the roster holds this discipline — pick one that somebody does"
+                            : "Which discipline does this task, and therefore who it lands on"
                         }
+                        className={cn(
+                          roleSelect,
+                          orphaned
+                            ? "bg-warning-subtle text-warning-primary"
+                            : "bg-layer-2 text-secondary hover:text-primary",
+                          !on && "opacity-40"
+                        )}
                       >
-                        {task.role}
-                      </span>
+                        {/* Staffed first: the whole point of changing a discipline is
+                            usually to move the task onto somebody who exists. */}
+                        {staffed.length > 0 && (
+                          <optgroup label="On this project">
+                            {staffed.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {vacant.length > 0 && (
+                          <optgroup label="Nobody holds this yet">
+                            {vacant.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
                       <input
                         type="number"
                         min={1}

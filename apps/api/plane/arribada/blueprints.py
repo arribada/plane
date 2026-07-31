@@ -686,6 +686,7 @@ def build_agile_tasks(
     sprint_working_days=10,
     ceremonies=None,
     duration_overrides=None,
+    role_overrides=None,
     assignees=None,
     extra=None,
     dependency_overrides=None,
@@ -697,6 +698,9 @@ def build_agile_tasks(
     what makes the plan iterate rather than run everything at once.
     """
     duration_overrides = duration_overrides or {}
+    # {task key: discipline}, replacing the block's own. Applied as a final pass so
+    # it reaches the ceremonies and the spikes alike.
+    role_overrides = role_overrides or {}
     assignees = assignees or {}
     dependency_overrides = dependency_overrides or {}
     wanted = set(ceremonies if ceremonies is not None else [c["key"] for c in AGILE_CEREMONIES])
@@ -796,6 +800,14 @@ def build_agile_tasks(
                 "added": True,
             }
         )
+
+    # One pass at the end rather than at each construction site: a task's discipline
+    # is the lead's answer wherever they gave one, whether the task came from the
+    # catalogue, a ceremony block or the model.
+    for task in tasks:
+        moved = role_overrides.get(task["key"])
+        if moved:
+            task["role"] = moved
 
     return tasks
 
@@ -1082,6 +1094,7 @@ def build_tasks(
     field_days=None,
     production_days=None,
     duration_overrides=None,
+    role_overrides=None,
     extra=None,
     assignees=None,
     dependency_overrides=None,
@@ -1093,6 +1106,10 @@ def build_tasks(
     not wedge the plan.
     """
     duration_overrides = duration_overrides or {}
+    # {task key: discipline} — the lead moving a task onto a different discipline,
+    # typically because nobody on this project holds the one the catalogue named.
+    # Applied as a final pass so it covers the model-proposed additions too.
+    role_overrides = role_overrides or {}
     # {task key: user id} — the lead naming who does this one, overriding "whoever
     # holds the discipline". Optional everywhere.
     assignees = assignees or {}
@@ -1153,4 +1170,13 @@ def build_tasks(
                 "added": True,
             }
         )
+
+    # One pass at the end rather than at each construction site: a task's discipline
+    # is the lead's answer wherever they gave one, whether the task came from the
+    # catalogue, a ceremony block or the model.
+    for task in tasks:
+        moved = role_overrides.get(task["key"])
+        if moved:
+            task["role"] = moved
+
     return tasks

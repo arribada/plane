@@ -2665,6 +2665,18 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             if days and str(key) in TASK_BY_KEY:
                 overrides[str(key)] = days
 
+        # {task key: discipline}. The lead moving a task off a discipline nobody holds
+        # — take "reviewer" off the roster and the review tasks can be handed to the
+        # hardware engineer instead of falling back to one anonymous pair of hands.
+        # Not filtered against TASK_BY_KEY on purpose: the builders only apply an
+        # override to a key they actually emit, and that covers model-proposed tasks
+        # and the agile blocks too, neither of which is in the V-cycle catalogue.
+        role_overrides = {}
+        for key, value in (request.data.get("role_overrides") or {}).items():
+            role = str(value or "").strip()[:80]
+            if role:
+                role_overrides[str(key)] = role
+
         # Roster width first, then whatever the lead typed over it. Only consulted for
         # disciplines nobody on the roster covers — where somebody is named, the
         # scheduler counts that person's calendar instead.
@@ -2770,6 +2782,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 sprint_working_days=max(2, round(sprint_length * 5 / 7)),
                 ceremonies=ceremonies if isinstance(ceremonies, list) else None,
                 duration_overrides=merged,
+                role_overrides=role_overrides,
                 assignees=pinned,
                 extra=extra,
                 dependency_overrides=dependency_overrides,
@@ -2780,6 +2793,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 field_days=field_days,
                 production_days=production_days,
                 duration_overrides=merged,
+                role_overrides=role_overrides,
                 extra=extra,
                 assignees=pinned,
                 dependency_overrides=dependency_overrides,

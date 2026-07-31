@@ -116,6 +116,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   // Disciplines the lead added on top of the ones the chosen tasks imply, and the
   // ones they took out of the list.
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  // {task key: discipline the lead moved it to}. Only holds real changes — moving a
+  // task back to its catalogue discipline drops the entry rather than pinning it.
+  const [roleOverrides, setRoleOverrides] = useState<Record<string, string>>({});
   const [removedRoles, setRemovedRoles] = useState<Set<string>>(new Set());
   const [roleDraft, setRoleDraft] = useState("");
   // 3 — tasks
@@ -247,14 +250,33 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     const roles = new Set<string>();
     for (const track of catalogue.tracks) {
       if (!chosen.has(track.key)) continue;
-      for (const task of track.tasks) if (taskKeys.has(task.key)) roles.add(task.role);
+      // The discipline the task will actually be done by, which is the lead's
+      // reassignment where there is one. Reading the catalogue's instead would keep
+      // asking the capacity step to staff a discipline no remaining task needs.
+      for (const task of track.tasks) if (taskKeys.has(task.key)) roles.add(roleOverrides[task.key] ?? task.role);
     }
-    // Plus the ones the lead added by hand, minus the ones they took out. Removing
-    // a discipline the tasks still need only drops it from this list: those items
-    // keep their discipline and fall back to one pair of hands.
+    // Plus the ones the lead added by hand, minus the ones they took out. Taking a
+    // discipline off the roster no longer strands the tasks that named it — they can
+    // be moved onto another discipline on the task step.
     for (const role of extraRoles) roles.add(role);
     return [...roles].filter((role) => !removedRoles.has(role.toLowerCase()));
-  }, [catalogue, tracks, taskKeys, extraRoles, removedRoles]);
+  }, [catalogue, tracks, taskKeys, extraRoles, removedRoles, roleOverrides]);
+
+  // What the discipline picker on the task step offers: everything this project is
+  // already staffing, plus every discipline somebody on the roster actually holds
+  // (they may hold one no current task needs — that is exactly what you want to
+  // move an orphaned task onto).
+  const roleOptions = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const role of [...rolesInPlay, ...Object.keys(roleCounts)]) {
+      const key = role.trim().toLowerCase();
+      if (!key || seen.has(key) || removedRoles.has(key)) continue;
+      seen.add(key);
+      out.push(role.trim());
+    }
+    return out;
+  }, [rolesInPlay, roleCounts, removedRoles]);
 
   const addRole = useCallback((value: string) => {
     const role = value.trim().slice(0, 80);
@@ -394,6 +416,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         start_date: startDate || null,
         capacity,
         duration_overrides: durations,
+        role_overrides: roleOverrides,
         field_days: tracks.includes("field") ? Number(fieldDays) || null : null,
         production_days: tracks.includes("production") ? Number(productionDays) || null : null,
         sprints: {
@@ -919,6 +942,19 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                 });
               }}
               onDuration={(key, days) => setDurations((d) => ({ ...d, [key]: Math.max(1, Math.min(365, days || 1)) }))}
+              roleOverrides={roleOverrides}
+              roleOptions={roleOptions}
+              onRole={(key, role) =>
+                setRoleOverrides((current) => {
+                  const original = catalogue?.tracks.flatMap((t) => t.tasks).find((t) => t.key === key)?.role;
+                  const updated = { ...current };
+                  // Back to the catalogue's own discipline is not an override; keeping
+                  // it would freeze this task if the catalogue ever changed.
+                  if (!role.trim() || role.trim().toLowerCase() === original?.trim().toLowerCase()) delete updated[key];
+                  else updated[key] = role.trim().slice(0, 80);
+                  return updated;
+                })
+              }
             />
           </div>
         );

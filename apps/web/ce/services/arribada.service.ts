@@ -434,6 +434,8 @@ export class ArribadaService extends APIService {
       start_date?: string | null;
       capacity?: Record<string, number>;
       duration_overrides?: Record<string, number>;
+      // {task key: discipline the lead moved it to}, replacing the catalogue's.
+      role_overrides?: Record<string, string>;
       field_days?: number | null;
       production_days?: number | null;
       sprints?: { mode: "sprints" | "flow"; length_days?: number | null; count?: number | null };

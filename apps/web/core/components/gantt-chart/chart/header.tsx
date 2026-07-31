@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { Expand, Maximize2, Settings2, Shrink } from "lucide-react";
+import { Expand, Maximize2, Minus, Plus, Settings2, Shrink } from "lucide-react";
 import { useTranslation } from "@plane/i18n";
 // plane
 import type { TGanttViews } from "@plane/types";
@@ -13,6 +13,7 @@ import { Row } from "@plane/ui";
 // components
 import { cn } from "@plane/utils";
 import { VIEWS_LIST } from "@/components/gantt-chart/data";
+import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 // helpers
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
@@ -47,7 +48,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
     showToday,
   } = props;
   // chart hook
-  const { currentView, showWeekends, toggleShowWeekends, dimDependencies, toggleDimDependencies } =
+  const { currentView, showWeekends, toggleShowWeekends, dimDependencies, toggleDimDependencies, zoom, setZoom } =
     useTimeLineChartStore();
 
   return (
@@ -57,7 +58,9 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
     >
       <div className="ml-auto">
         <div className="ml-auto text-11 font-medium text-tertiary">
-          {blockIds ? `${blockIds.length} ${loaderTitle}` : t("common.loading")}
+          {/* Group headers occupy a row but are not work items: counting them turned
+              "37 work items" into 43 the moment grouping was switched on. */}
+          {blockIds ? `${blockIds.filter((id) => !isGroupRowId(id)).length} ${loaderTitle}` : t("common.loading")}
         </div>
       </div>
 
@@ -87,6 +90,38 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
           {t("common.today")}
         </button>
       )}
+
+      {/* Granularity between the three fixed scales. 60, 20 and 5 pixels a day are
+          big steps — a fortnight and a quarter both land badly between two of them —
+          so this stretches whichever scale is on. */}
+      <div className="flex items-center rounded-md bg-layer-transparent">
+        <button
+          type="button"
+          className="rounded-l-md p-1 px-1.5 hover:bg-layer-transparent-hover"
+          onClick={() => setZoom(zoom / 1.25)}
+          aria-label="Zoom out"
+          title="Show more time in the same width"
+        >
+          <Minus className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className="min-w-11 px-1 text-11 text-tertiary tabular-nums hover:text-primary"
+          onClick={() => setZoom(1)}
+          title="Back to this scale's own day width"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          className="rounded-r-md p-1 px-1.5 hover:bg-layer-transparent-hover"
+          onClick={() => setZoom(zoom * 1.25)}
+          aria-label="Zoom in"
+          title="Spread the same time over more width"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </div>
 
       {handleFitToBlocks && (
         <button

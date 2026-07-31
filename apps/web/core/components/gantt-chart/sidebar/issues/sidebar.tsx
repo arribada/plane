@@ -18,6 +18,9 @@ import { GanttLayoutListItemLoader } from "@/components/ui/loader/layouts/gantt-
 import { useIntersectionObserver } from "@/hooks/use-intersection-observer";
 import { useIssuesStore } from "@/hooks/use-issue-layout-store";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
+import { useGanttGroups } from "@/plane-web/components/gantt-chart/group-context";
+import { GanttGroupHeader } from "@/plane-web/components/gantt-chart/group-row";
+import { groupKeyFromRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 // local imports
 import { useTimeLineChart } from "../../../../hooks/use-timeline-chart";
 import { GanttDnDHOC } from "../gantt-dnd-HOC";
@@ -52,6 +55,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
   } = props;
 
   const { getBlockById } = useTimeLineChart(GANTT_TIMELINE_TYPE.ISSUE);
+  const groups = useGanttGroups();
 
   const {
     issues: { getIssueLoader },
@@ -81,6 +85,25 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
       {blockIds ? (
         <>
           {blockIds.map((blockId, index) => {
+            // Group headers are answered first: they have no block behind them, so
+            // the "no dates" guard below would drop them and leave the chart pane
+            // drawing a band with nothing beside it.
+            if (isGroupRowId(blockId)) {
+              const key = groupKeyFromRowId(blockId);
+              const group = groups.byKey.get(key);
+              if (!group) return null;
+              return (
+                <GanttGroupHeader
+                  key={blockId}
+                  label={group.label}
+                  color={group.color}
+                  count={group.ids.length}
+                  collapsed={groups.isCollapsed(key)}
+                  onToggle={() => groups.toggle(key)}
+                />
+              );
+            }
+
             const block = getBlockById(blockId);
             const isBlockVisibleOnSidebar = block?.start_date && block?.target_date;
 

@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
@@ -18,12 +18,22 @@ import { renderFormattedPayloadDate } from "@plane/utils";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
+import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
+import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
+import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
+import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import { GanttUndoButton } from "@/plane-web/components/gantt-chart/undo-button";
 import { GanttLinkPreview } from "@/plane-web/components/gantt-chart/link-preview";
 import { ganttUndo } from "@/plane-web/store/gantt-undo";
 import { IssueGanttSidebar } from "@/components/gantt-chart/sidebar/issues/sidebar";
 // hooks
+import { useCycle } from "@/hooks/store/use-cycle";
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useIssues } from "@/hooks/store/use-issues";
+import { useLabel } from "@/hooks/store/use-label";
+import { useMember } from "@/hooks/store/use-member";
+import { useModule } from "@/hooks/store/use-module";
+import { useProjectState } from "@/hooks/store/use-project-state";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
@@ -47,6 +57,10 @@ export type GanttStoreType =
   | EIssuesStoreType.CYCLE
   | EIssuesStoreType.PROJECT_VIEW
   | EIssuesStoreType.EPIC;
+
+/** Stable identity: `?? []` would mint a new array on every render and defeat every
+ *  memo downstream of it. */
+const NO_IDS: string[] = [];
 
 export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRoot) {
   const { viewId, isCompletedCycle = false, isEpic = false } = props;
@@ -74,9 +88,53 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
 
   useEffect(() => {
     initGantt();
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- once per mount, by design
   }, []);
 
-  const issuesIds = (issues.groupedIssueIds?.[ALL_ISSUES] as string[]) ?? [];
+  const issuesIds = (issues.groupedIssueIds?.[ALL_ISSUES] as string[]) ?? NO_IDS;
+
+  // Optional grouping. The categories are the project's own — the setup wizard
+  // creates one module per component, and labels are whatever the team invented —
+  // so this needs nothing configured to be useful on a generated plan.
+  const {
+    issue: { getIssueById },
+  } = useIssueDetail();
+  const { getModuleById } = useModule();
+  const { getLabelById } = useLabel();
+  const { getStateById } = useProjectState();
+  const { getCycleById } = useCycle();
+  const { getUserDetails } = useMember();
+
+  const { groupBy, collapsedGroups } = ganttDisplay;
+
+  const groups = useMemo(
+    () =>
+      buildGroups(issuesIds, groupBy, {
+        getIssue: getIssueById,
+        getModule: getModuleById,
+        getLabel: getLabelById,
+        getMemberName: (id) => getUserDetails(id)?.display_name,
+        getState: getStateById,
+        getCycle: getCycleById,
+      }),
+    [issuesIds, groupBy, getIssueById, getModuleById, getLabelById, getStateById, getCycleById, getUserDetails]
+  );
+
+  // The id list both panes walk: unchanged when grouping is off, so nothing about
+  // the ungrouped chart moves.
+  const rowIds = useMemo(
+    () => (groupBy === "none" ? issuesIds : flattenGroups(groups, collapsedGroups)),
+    [issuesIds, groups, groupBy, collapsedGroups]
+  );
+
+  const groupContext = useMemo(
+    () => ({
+      byKey: new Map(groups.map((g) => [g.key, g])),
+      isCollapsed: (key: string) => collapsedGroups.has(key),
+      toggle: (key: string) => ganttDisplay.toggleGroupCollapsed(key),
+    }),
+    [groups, collapsedGroups]
+  );
   const nextPageResults = issues.getPaginationData(undefined, undefined)?.nextPageResults;
 
   const { enableIssueCreation } = issues?.viewFlags || {};
@@ -100,7 +158,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     const payload: any = { ...data };
     if (data.sort_order) payload.sort_order = data.sort_order.newSortOrder;
 
-    updateIssue && (await updateIssue(issue.project_id, issue.id, payload));
+    if (updateIssue) await updateIssue(issue.project_id, issue.id, payload);
   };
 
   // revert the last recorded bar date edit
@@ -146,7 +204,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
           message: "Error while updating work item dates, Please try again Later",
         });
       }),
-    [issues, projectId, workspaceSlug]
+    [issues, projectId, workspaceSlug, t]
   );
 
   const quickAdd =
@@ -169,32 +227,39 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
         <div className="relative h-full w-full">
           <GanttLinkPreview />
-          <div className="absolute left-3 top-1.5 z-20 flex items-center gap-2">
-            <GanttColorBy />
-            <GanttUndoButton onUndo={handleGanttUndo} />
-          </div>
-          <GanttChartRoot
-            border={false}
-            title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-            loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-            blockIds={issuesIds}
-            blockUpdateHandler={updateIssueBlockStructure}
-            blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
-            sidebarToRender={(props) => <IssueGanttSidebar {...props} showAllBlocks isEpic={isEpic} />}
-            enableBlockLeftResize={isAllowed}
-            enableBlockRightResize={isAllowed}
-            enableBlockMove={isAllowed}
-            enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed}
-            enableAddBlock={isAllowed}
-            enableSelection={isBulkOperationsEnabled && isAllowed}
-            quickAdd={quickAdd}
-            loadMoreBlocks={loadMoreIssues}
-            canLoadMoreBlocks={nextPageResults}
-            updateBlockDates={updateBlockDates}
-            showAllBlocks
-            enableDependency
-            isEpic={isEpic}
-          />
+          <GanttGroupContext.Provider value={groupContext}>
+            <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
+              <GanttColorBy />
+              <GanttGroupBy />
+              <GanttUndoButton onUndo={handleGanttUndo} />
+            </div>
+            <GanttChartRoot
+              border={false}
+              title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+              loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+              blockIds={rowIds}
+              blockUpdateHandler={updateIssueBlockStructure}
+              blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
+              sidebarToRender={(sidebarProps) => <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />}
+              enableBlockLeftResize={isAllowed}
+              enableBlockRightResize={isAllowed}
+              enableBlockMove={isAllowed}
+              // Dragging to reorder writes a sort_order derived from the rows either
+              // side. With bands on screen those neighbours can be headers, or sit in
+              // another group entirely, so the drag would mean something the user did
+              // not ask for. Grouping and manual order are exclusive.
+              enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed && groupBy === "none"}
+              enableAddBlock={isAllowed}
+              enableSelection={isBulkOperationsEnabled && isAllowed}
+              quickAdd={quickAdd}
+              loadMoreBlocks={loadMoreIssues}
+              canLoadMoreBlocks={nextPageResults}
+              updateBlockDates={updateBlockDates}
+              showAllBlocks
+              enableDependency
+              isEpic={isEpic}
+            />
+          </GanttGroupContext.Provider>
         </div>
       </TimeLineTypeContext.Provider>
     </IssueLayoutHOC>

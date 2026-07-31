@@ -9,6 +9,9 @@
  */
 import { action, makeObservable, observable } from "mobx";
 import type { TIssue } from "@plane/types";
+import type { TGanttGroupBy } from "@/plane-web/components/gantt-chart/grouping";
+
+const STORAGE_KEY = "arribada.gantt.display";
 
 export type TGanttColorBy = "state" | "priority" | "assignee" | "label";
 
@@ -47,14 +50,67 @@ export const ganttBarColor = (
 
 class GanttDisplayStore {
   colorBy: TGanttColorBy = "state";
+  groupBy: TGanttGroupBy = "none";
+  /** Group keys the viewer has folded away. Cleared when the dimension changes,
+   *  because a key from one dimension means nothing in another. */
+  collapsedGroups = new Set<string>();
 
   constructor() {
-    makeObservable(this, { colorBy: observable.ref, setColorBy: action });
+    makeObservable(this, {
+      colorBy: observable.ref,
+      groupBy: observable.ref,
+      collapsedGroups: observable,
+      setColorBy: action,
+      setGroupBy: action,
+      toggleGroupCollapsed: action,
+      setAllGroupsCollapsed: action,
+    });
+    this.restore();
   }
 
   setColorBy = (v: TGanttColorBy): void => {
     this.colorBy = v;
+    this.persist();
   };
+
+  setGroupBy = (v: TGanttGroupBy): void => {
+    this.groupBy = v;
+    this.collapsedGroups = new Set();
+    this.persist();
+  };
+
+  toggleGroupCollapsed = (key: string): void => {
+    const next = new Set(this.collapsedGroups);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    this.collapsedGroups = next;
+  };
+
+  setAllGroupsCollapsed = (keys: string[], collapsed: boolean): void => {
+    this.collapsedGroups = collapsed ? new Set(keys) : new Set();
+  };
+
+  /** Both sides best-effort: localStorage is unavailable in some privacy modes, and
+   *  a display preference is not worth an exception. */
+  private restore() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const { colorBy, groupBy } = JSON.parse(raw) as { colorBy?: TGanttColorBy; groupBy?: TGanttGroupBy };
+      if (colorBy) this.colorBy = colorBy;
+      if (groupBy) this.groupBy = groupBy;
+    } catch {
+      // keep the defaults
+    }
+  }
+
+  private persist() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ colorBy: this.colorBy, groupBy: this.groupBy }));
+    } catch {
+      // session-only
+    }
+  }
 }
 
 export const ganttDisplay = new GanttDisplayStore();

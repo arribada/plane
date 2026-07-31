@@ -65,19 +65,60 @@ export const spanOfBlocks = (blocks: (IGanttBlock | undefined)[]): TBlockSpan | 
   };
 };
 
+/** Mirrors the store's clamp. Kept here so the pure helper can be reasoned about
+ *  — and tested — without importing a MobX store. */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
+
 /**
  * The scale to switch to so `days` fits in `availableWidth`.
  *
- * Falls through to the coarsest scale when even that is too small — a two-year
- * project cannot fit a laptop screen at 5px a day, and showing it at the coarsest
- * scale is still the closest thing to the answer.
+ * Not "the finest one that fits as-is" — that was the right answer before the zoom
+ * existed, and it stopped being right the moment a scale could be stretched. Taking
+ * the first that fits sent a 60-day project to the quarter scale at 300% (15px a
+ * day) when the month scale at 96% gives it 19px a day and a header built for that
+ * density.
+ *
+ * So: among the scales that can actually reach the width, the one needing the least
+ * distortion. Measured on the log of the factor, because halving and doubling are
+ * equally far from leaving it alone.
  */
 export const viewThatFits = (days: number, availableWidth: number): TGanttViews => {
-  const needed = Math.max(1, days);
-  const fits = VIEWS_FINEST_FIRST.find((view) => VIEW_DAY_WIDTH[view] * needed + PADDING_PX * 2 <= availableWidth);
-  return fits ?? "quarter";
+  const usable = Math.max(1, availableWidth - PADDING_PX * 2);
+  const span = Math.max(1, days);
+
+  let best: TGanttViews | null = null;
+  let bestDistance = Infinity;
+  for (const view of VIEWS_FINEST_FIRST) {
+    const raw = usable / span / VIEW_DAY_WIDTH[view];
+    // Below the floor this scale cannot be squeezed far enough to fit at all.
+    if (raw < ZOOM_MIN) continue;
+    const distance = Math.abs(Math.log(Math.min(raw, ZOOM_MAX)));
+    // Strictly less, walked finest-first, so a tie keeps the finer scale.
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = view;
+    }
+  }
+  // Nothing can hold it — a decade at 5px a day is 18,000px. The coarsest scale is
+  // still the closest thing to an answer, and it will scroll.
+  return best ?? "quarter";
 };
 
 /** Where the scroll should land: the span's start, less the padding, never past 0. */
 export const scrollLeftForSpan = (daysFromChartStart: number, dayWidth: number): number =>
   Math.max(0, daysFromChartStart * dayWidth - PADDING_PX);
+
+/**
+ * The zoom that makes `days` exactly fill `availableWidth` at the given scale.
+ *
+ * The three scales are coarse steps — 60, 20 and 5 pixels a day — so picking the
+ * nearest one left a 20-day project drawn across a third of the screen. With a
+ * multiplier on top, "fit" can mean fit. Clamped: a project of a single day would
+ * otherwise ask for a 20x zoom and a header cell wider than the window.
+ */
+export const zoomToFill = (days: number, availableWidth: number, view: TGanttViews): number => {
+  const usable = Math.max(1, availableWidth - PADDING_PX * 2);
+  const wanted = usable / Math.max(1, days) / VIEW_DAY_WIDTH[view];
+  return Math.min(Math.max(Number.isFinite(wanted) ? wanted : 1, ZOOM_MIN), ZOOM_MAX);
+};

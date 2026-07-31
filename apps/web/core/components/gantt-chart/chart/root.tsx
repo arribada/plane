@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { createPortal } from "react-dom";
 // plane imports
@@ -22,6 +22,7 @@ import {
   spanOfBlocks,
   VIEW_DAY_WIDTH,
   viewThatFits,
+  zoomToFill,
 } from "@/plane-web/components/gantt-chart/fit-to-blocks";
 import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../constants";
 import { currentViewDataWithView } from "../data";
@@ -107,19 +108,36 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     sidebarWidth,
     isSidebarCollapsed,
     getBlockById,
+    zoom,
+    setZoom,
   } = useTimeLineChartStore();
   const { data } = useUserProfile();
   const startOfWeek = data?.start_of_the_week;
   const sidebarPaneWidth = isSidebarCollapsed ? GANTT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
-  const updateCurrentViewRenderPayload = (side: null | "left" | "right", view: TGanttViews, targetDate?: Date) => {
+  const updateCurrentViewRenderPayload = (
+    side: null | "left" | "right",
+    view: TGanttViews,
+    targetDate?: Date,
+    zoomOverride?: number
+  ) => {
     const selectedCurrentView: TGanttViews = view;
-    const selectedCurrentViewData: ChartDataType | undefined =
+    const base: ChartDataType | undefined =
       selectedCurrentView && selectedCurrentView === currentViewData?.key
         ? currentViewData
         : currentViewDataWithView(view);
 
-    if (selectedCurrentViewData === undefined) return;
+    if (base === undefined) return;
+
+    // Always derived from the scale's own pixels-per-day rather than from whatever
+    // is on screen, so applying the zoom twice cannot compound. The generators only
+    // read dayWidth to multiply a width, and they copy rather than mutate, so a
+    // scaled clone is all a continuous zoom needs.
+    const factor = zoomOverride ?? zoom;
+    const selectedCurrentViewData: ChartDataType = {
+      ...base,
+      data: { ...base.data, dayWidth: Math.max(1, Math.round(VIEW_DAY_WIDTH[view] * factor * 100) / 100) },
+    };
 
     const currentViewHelpers = timelineViewHelpers[selectedCurrentView];
     const currentRender = currentViewHelpers.generateChart(selectedCurrentViewData, side, targetDate, startOfWeek);
@@ -171,12 +189,16 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement | null;
     const available = Math.max(240, (scrollContainer?.clientWidth ?? 0) - sidebarPaneWidth);
     const view = viewThatFits(span.days, available);
+    // With a continuous zoom, "fit" can mean fit — fill the width rather than
+    // settle for whichever of the three fixed steps happened to be closest.
+    const factor = zoomToFill(span.days, available, view);
+    setZoom(factor);
 
     // Rebuild the chart around the span's midpoint so the generated window
     // contains it — generating around today would put a distant project outside
     // the rendered range, and no amount of scrolling would reach it.
     const middle = new Date((span.start.getTime() + span.end.getTime()) / 2);
-    const state = updateCurrentViewRenderPayload(null, view, middle);
+    const state = updateCurrentViewRenderPayload(null, view, middle, factor);
     if (!state) return;
 
     // After the payload lands: put the span's first day at the left edge. The
@@ -186,7 +208,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
       const container = document.querySelector("#gantt-container") as HTMLDivElement | null;
       if (!container) return;
       const offset = getNumberOfDaysBetweenTwoDates(state.data.startDate, span.start);
-      container.scrollLeft = scrollLeftForSpan(offset, VIEW_DAY_WIDTH[view]);
+      container.scrollLeft = scrollLeftForSpan(offset, VIEW_DAY_WIDTH[view] * factor);
     }, 80);
   };
 
@@ -195,6 +217,18 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     handleToday();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A zoom change is a re-render of the whole chart at a new pixels-per-day; the
+  // block positions are all derived from it, so nothing else has to be told.
+  const firstZoom = useRef(true);
+  useEffect(() => {
+    if (firstZoom.current) {
+      firstZoom.current = false;
+      return;
+    }
+    updateCurrentViewRenderPayload(null, currentView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom]);
 
   const updateItemsContainerWidth = (width: number) => {
     const scrollContainer = document.querySelector("#gantt-container") as HTMLDivElement;

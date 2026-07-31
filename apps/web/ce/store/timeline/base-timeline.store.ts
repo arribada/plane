@@ -44,7 +44,16 @@ type TSidebarPreferences = {
   // reload the same way the sidebar width does.
   showWeekends?: boolean;
   dimDependencies?: boolean;
+  zoom?: number;
 };
+
+/** How far the day width can be stretched or squeezed either side of a scale's own.
+ *  Beyond this the header cells stop being legible in one direction and the chart
+ *  stops being scrollable in the other. */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
+export const clampZoom = (value: number): number =>
+  Math.min(Math.max(Number.isFinite(value) ? value : 1, ZOOM_MIN), ZOOM_MAX);
 
 const SIDEBAR_STORAGE_KEY = "arribada.gantt.sidebar";
 
@@ -69,6 +78,9 @@ export interface IBaseTimelineStore {
   /** Draw the dependency arrows faintly until a block is touched, so a dense
    *  graph stops being a wall of red over the bars it is describing. */
   dimDependencies: boolean;
+  /** Multiplier on the current scale's pixels-per-day. The three scales are coarse
+   *  steps — 60, 20 and 5 — so this is what makes the granularity continuous. */
+  zoom: number;
   //
   setBlockIds: (ids: string[]) => void;
   setLinkingSource: (id: string | null) => void;
@@ -95,6 +107,7 @@ export interface IBaseTimelineStore {
   toggleSidebarCollapsed: (value?: boolean) => void;
   toggleShowWeekends: (value?: boolean) => void;
   toggleDimDependencies: (value?: boolean) => void;
+  setZoom: (value: number) => void;
   initGantt: () => void;
 
   getDateFromPositionOnGantt: (position: number, offsetDays: number) => Date | undefined;
@@ -109,6 +122,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   currentView: TGanttViews = "week";
   showWeekends = true;
   dimDependencies = true;
+  zoom = 1;
   currentViewData: ChartDataType | undefined = undefined;
   activeBlockId: string | null = null;
   renderView: any = [];
@@ -139,6 +153,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       isSidebarCollapsed: observable.ref,
       showWeekends: observable.ref,
       dimDependencies: observable.ref,
+      zoom: observable.ref,
       // actions
       setIsDragging: action,
       setBlockIds: action.bound,
@@ -152,6 +167,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       toggleSidebarCollapsed: action.bound,
       toggleShowWeekends: action.bound,
       toggleDimDependencies: action.bound,
+      setZoom: action.bound,
     });
 
     this.initGantt();
@@ -214,6 +230,13 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
     this.persistSidebarPreferences();
   };
 
+  setZoom = (value: number) => {
+    runInAction(() => {
+      this.zoom = clampZoom(value);
+    });
+    this.persistSidebarPreferences();
+  };
+
   toggleDimDependencies = (value?: boolean) => {
     runInAction(() => {
       this.dimDependencies = value ?? !this.dimDependencies;
@@ -227,11 +250,14 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
       if (!stored) return;
 
-      const { width, collapsed, showWeekends, dimDependencies } = JSON.parse(stored) as Partial<TSidebarPreferences>;
+      const { width, collapsed, showWeekends, dimDependencies, zoom } = JSON.parse(
+        stored
+      ) as Partial<TSidebarPreferences>;
       if (typeof width === "number" && Number.isFinite(width)) this.sidebarWidth = clampSidebarWidth(width);
       if (typeof collapsed === "boolean") this.isSidebarCollapsed = collapsed;
       if (typeof showWeekends === "boolean") this.showWeekends = showWeekends;
       if (typeof dimDependencies === "boolean") this.dimDependencies = dimDependencies;
+      if (typeof zoom === "number") this.zoom = clampZoom(zoom);
     } catch {
       // keep the defaults
     }
@@ -244,6 +270,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
         collapsed: this.isSidebarCollapsed,
         showWeekends: this.showWeekends,
         dimDependencies: this.dimDependencies,
+        zoom: this.zoom,
       };
       localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(preferences));
     } catch {

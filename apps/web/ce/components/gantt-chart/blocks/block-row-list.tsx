@@ -11,6 +11,8 @@ import RenderIfVisible from "@/components/core/render-if-visible-HOC";
 import { BlockRow } from "@/components/gantt-chart/blocks/block-row";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
+import { GanttGroupBand } from "../group-row";
+import { isGroupRowId } from "../grouping";
 // types
 
 export type GanttChartBlocksProps = {
@@ -36,9 +38,14 @@ export function GanttChartRowList(props: GanttChartBlocksProps) {
 
   return (
     <div className="absolute top-0 left-0 w-max min-w-full">
-      {blockIds?.map((blockId) => (
-        <>
+      {blockIds?.map((blockId) =>
+        // A group header occupies a row on both sides. It has no block behind it,
+        // so it must be answered before anything asks the store for one.
+        isGroupRowId(blockId) ? (
+          <GanttGroupBand key={blockId} />
+        ) : (
           <RenderIfVisible
+            key={blockId}
             root={ganttContainerRef}
             horizontalOffset={100}
             verticalOffset={200}
@@ -57,8 +64,8 @@ export function GanttChartRowList(props: GanttChartBlocksProps) {
               ganttContainerRef={ganttContainerRef}
             />
           </RenderIfVisible>
-        </>
-      ))}
+        )
+      )}
     </div>
   );
 }

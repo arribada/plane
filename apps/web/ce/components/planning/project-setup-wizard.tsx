@@ -21,6 +21,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Sparkles, Users, X } from "lucide-react";
 import { cn } from "@plane/utils";
+import { OverviewTeamBlock } from "@/plane-web/components/projects/overview/team-block";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type {
   TAiPlan,
@@ -299,6 +300,14 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       .then((r) => setUndatedCount(r?.length ?? 0))
       .catch(() => {});
 
+  // The roster is edited in place on this step, so the capacity defaults and the
+  // unstaffed warnings have to follow the edit rather than wait for a reopen.
+  const reloadTeam = () =>
+    service
+      .getProjectTeam(slug, projectId)
+      .then((r) => setTeam(r?.team ?? []))
+      .catch(() => {});
+
   const buildPlan = async () => {
     if (busy) return;
     setBusy("plan");
@@ -556,6 +565,19 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
               Work is handed out by discipline, so this is what decides who each task goes to — and how many people
               cover a discipline is what decides whether its tasks run side by side or one after another.
             </p>
+
+            {/* The same roster editor the Overview shows, so the disciplines can be
+                filled in here rather than sending the lead away mid-setup. Someone with
+                no Plane account is a normal entry: the discipline still routes the work. */}
+            <div className="overflow-hidden rounded-lg border border-subtle">
+              <OverviewTeamBlock projectId={projectId} team={team ?? []} onSaved={reloadTeam} />
+            </div>
+
+            {rolesInPlay.length > 0 && (
+              <p className="pt-1 text-11 font-medium tracking-wide text-secondary uppercase">
+                How many work each discipline at once
+              </p>
+            )}
             {rolesInPlay.length === 0 ? (
               <p className="text-13 text-secondary">Pick a component first — the disciplines follow from the tasks.</p>
             ) : (
@@ -591,9 +613,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
             )}
             {unstaffed.size > 0 && (
               <p className="bg-amber-500/10 text-amber-700 rounded px-2.5 py-1.5 text-12">
-                {unstaffed.size} discipline(s) have nobody on the roster. The plan is still built and each work item
-                records the discipline it needs — it is handed over automatically when someone picks it up. Add people
-                from the project Overview, under Team &amp; roles.
+                {unstaffed.size} discipline(s) have nobody on the roster — add them above, or carry on: the plan is
+                built either way and each work item records the discipline it needs, so the work is handed over
+                automatically the day someone picks it up.
               </p>
             )}
           </div>

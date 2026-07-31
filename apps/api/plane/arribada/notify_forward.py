@@ -18,10 +18,12 @@
 import json
 import os
 from datetime import timedelta
+from html import unescape
 from urllib import error, request
 
 from celery import shared_task
 from django.utils import timezone
+from django.utils.html import strip_tags
 
 # How far back each run looks. Comfortably wider than the every-10-minutes cadence so
 # a missed tick, a restart or a slow queue still gets picked up next time.
@@ -32,6 +34,15 @@ TIMEOUT_SECONDS = 15
 
 def is_enabled():
     return bool(os.environ.get("ARRIBADA_NOTIFY_URL") and os.environ.get("ARRIBADA_NOTIFY_SECRET"))
+
+
+def _plain_text(value):
+    """Flatten Plane's stored HTML into the sentence a person would read."""
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    # unescape after stripping: the tags go first, then &#x27; becomes an apostrophe
+    # rather than surviving into the bell as mojibake.
+    return " ".join(unescape(strip_tags(value)).split())
 
 
 def _post(items):
@@ -63,6 +74,10 @@ def forward_notifications():
     since = timezone.now() - timedelta(minutes=WINDOW_MINUTES)
     rows = list(
         Notification.objects.filter(created_at__gte=since, read_at__isnull=True)
+        # Bots receive notifications too — a quarter of them here. They have no
+        # dashboard account and never will, so forwarding theirs buys nothing but
+        # a longer batch and a list of "unknown recipients" on the far side.
+        .exclude(receiver__is_bot=True)
         .select_related("receiver", "project", "workspace")
         .order_by("created_at")[:MAX_BATCH]
     )
@@ -76,19 +91,27 @@ def forward_notifications():
         if not email:
             continue
 
-        # Plane stores the readable part under `data.issue` and a sentence in
-        # `message`. `message_stripped` is declared on the model and written by
-        # nothing, so reading it produced an empty body on every forwarded item.
+        # Where the readable text actually lives, checked against production rather
+        # than assumed. Three fields look like the body and two of them are traps:
+        # `message_stripped` is declared on the model and written by nothing, and
+        # `message` holds a dict of template parameters ({'reminder': 'overdue',
+        # 'target_date': ...}), not a sentence. The rendered sentence is in
+        # `message_html`, so that is what a person needs to read.
         payload = row.data if isinstance(row.data, dict) else {}
         issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
         identifier = issue.get("identifier")
         sequence = issue.get("sequence_id")
         issue_name = (issue.get("name") or "").strip()
 
+        # Plane's own issue-activity notifier fills `data.issue`; the reminder and
+        # triage tasks in this app leave it null and put a usable string in `title`.
+        # Both shapes reach here, so both have to work.
         ref = f"{identifier}-{sequence}" if identifier and sequence is not None else ""
         title = " · ".join(part for part in (ref, issue_name) if part) or (row.title or "Plane")
 
-        body = row.message if isinstance(row.message, str) else ""
+        body = _plain_text(row.message_html)
+        if not body and isinstance(row.message, str):
+            body = row.message.strip()
         if not body:
             body = (row.title or "").strip()
 

@@ -438,6 +438,12 @@ export class ArribadaService extends APIService {
       sprints?: { mode: "sprints" | "flow"; length_days?: number | null; count?: number | null };
       use_ai?: boolean;
       context?: string;
+      // {task key: user id} — naming who does a task instead of leaving it to
+      // whoever holds the discipline. Optional, per task.
+      assignees?: Record<string, string>;
+      // Tasks the assistant added on an earlier pass, handed back so re-planning
+      // after a change of owner reuses them instead of paying for another call.
+      extra_tasks?: TPlannedTask[];
     }
   ): Promise<TSetupPlan> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-plan/`, data)

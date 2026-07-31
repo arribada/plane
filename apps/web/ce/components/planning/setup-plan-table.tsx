@@ -13,7 +13,13 @@ import { AlertTriangle, CircleUser, Sparkles } from "lucide-react";
 import { cn } from "@plane/utils";
 import type { TSetupPlan } from "@/plane-web/types/arribada";
 
-type Props = { plan: TSetupPlan; trackLabels: Record<string, string> };
+type Props = {
+  plan: TSetupPlan;
+  trackLabels: Record<string, string>;
+  /** Naming an owner, or handing the task back to whoever holds its discipline. */
+  onAssign?: (taskKey: string, userId: string | null) => void;
+  busy?: boolean;
+};
 
 const day = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -23,7 +29,7 @@ const weeks = (from: string, to: string) => {
   return Math.max(1, Math.round(days / 7));
 };
 
-export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabels }: Props) {
+export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabels, onAssign, busy }: Props) {
   const bySprint = plan.sprints.length > 0;
 
   // One group per sprint, or one per component — same rendering either way.
@@ -104,7 +110,36 @@ export const SetupPlanTable = observer(function SetupPlanTable({ plan, trackLabe
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-12 whitespace-nowrap">
-                      {task.assignee_name ? (
+                      {onAssign && plan.people.length > 0 ? (
+                        <span className="flex items-center gap-1">
+                          <CircleUser
+                            className={cn(
+                              "size-3.5 flex-shrink-0",
+                              task.pinned ? "text-accent-primary" : "text-tertiary"
+                            )}
+                          />
+                          <select
+                            aria-label={`Who does ${task.name}`}
+                            disabled={busy}
+                            value={task.pinned && task.assignee_id ? task.assignee_id : ""}
+                            onChange={(e) => onAssign(task.key, e.target.value || null)}
+                            className="max-w-36 truncate rounded border border-transparent bg-transparent py-0.5 text-12 text-secondary outline-none hover:border-subtle focus:border-accent-strong disabled:opacity-50"
+                          >
+                            {/* Not "unassigned": leaving it blank means the schedule
+                                decides, which is a different thing from nobody. */}
+                            <option value="">
+                              {task.assignee_name
+                                ? `${task.assignee_name} (by discipline)`
+                                : task.role || "by discipline"}
+                            </option>
+                            {plan.people.map((person) => (
+                              <option key={person.id} value={person.id}>
+                                {person.name}
+                              </option>
+                            ))}
+                          </select>
+                        </span>
+                      ) : task.assignee_name ? (
                         <span className="flex items-center gap-1 text-secondary">
                           <CircleUser className="size-3.5 flex-shrink-0 text-tertiary" />
                           {task.assignee_name}

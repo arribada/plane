@@ -679,17 +679,27 @@ def _earliest_free(busy, capacity, earliest, days):
     return candidate, end
 
 
-def schedule(tasks, start_date, capacity=None):
-    """Give every task a start and a target.
+def schedule(tasks, start_date, capacity=None, people=None):
+    """Give every task a start, a target and — where somebody can be named — an owner.
 
-    `tasks`   [{key, days, after, role}] — `after` already filtered to keys present.
-    `capacity` {role: how many people can work that discipline at once}, default 1.
+    `tasks`    [{key, days, after, role, assignee_id?}] — `after` already filtered to
+               keys present; `assignee_id` pins the task to one person.
+    `people`   [{id, name, roles: [lowercased]}] — who can actually be given work.
+    `capacity` {role: how many unnamed hands that discipline has}, default 1. Only
+               used for disciplines nobody on the roster covers.
 
-    Returns (by_key, warnings). Dependencies are hard (a task never starts before the
-    ones it waits on have finished); the role capacity is what decides whether two
-    independent tasks run side by side or one after the other.
+    Scheduling happens against **people**, not disciplines, and a person does one
+    thing at a time. That is the whole point: somebody who covers both hardware and
+    mechanical is one pair of hands, so their hardware task and their mechanical task
+    queue behind each other instead of running side by side — which is exactly what a
+    per-discipline count got wrong. Where a discipline has several holders the task
+    goes to whoever frees up first, so the work spreads without anyone being cloned.
+
+    Returns (by_key, warnings). Dependencies stay hard: a task never starts before the
+    ones it waits on have finished, whoever ends up doing it.
     """
     capacity = capacity or {}
+    people = people or []
     warnings = []
     keys = [t["key"] for t in tasks]
     by_key = {t["key"]: t for t in tasks}
@@ -708,6 +718,15 @@ def schedule(tasks, start_date, capacity=None):
     for pred, succ in edges:
         preds[succ].append(pred)
 
+    # Who covers what. A person appears under every discipline they hold, which is how
+    # one calendar comes to constrain several disciplines at once.
+    holders = defaultdict(list)
+    for person in people:
+        for role in person.get("roles") or []:
+            holders[str(role).strip().lower()].append(person)
+    person_by_id = {p["id"]: p for p in people}
+
+    busy_by_person = defaultdict(list)
     busy_by_role = defaultdict(list)
     placed = {}
     for key in order:
@@ -717,11 +736,35 @@ def schedule(tasks, start_date, capacity=None):
             done = placed.get(pred)
             if done:
                 earliest = max(earliest, next_working_day(done["target"] + timedelta(days=1)))
+
         role = (task.get("role") or "").strip().lower()
-        seats = max(1, int(capacity.get(role, 1) or 1))
-        start, end = _earliest_free(busy_by_role[role], seats, earliest, task["days"])
-        placed[key] = {"start": start, "target": end}
-        busy_by_role[role].append((start, end))
+        pinned = task.get("assignee_id")
+        if pinned and pinned in person_by_id:
+            candidates = [person_by_id[pinned]]
+        else:
+            candidates = holders.get(role, [])
+
+        if candidates:
+            # Whoever can start soonest. Sorted first so an equal-first tie always
+            # resolves the same way and a re-plan does not reshuffle the team.
+            best = None
+            for person in sorted(
+                candidates, key=lambda p: ((p.get("name") or "").lower(), p["id"])
+            ):
+                slot = _earliest_free(busy_by_person[person["id"]], 1, earliest, task["days"])
+                if best is None or slot[0] < best[0]:
+                    best = (slot[0], slot[1], person)
+            start, end, owner = best
+            busy_by_person[owner["id"]].append((start, end))
+            placed[key] = {"start": start, "target": end, "assignee_id": owner["id"]}
+        else:
+            # Nobody on the roster covers this discipline. Fall back to an abstract
+            # pool so the plan still holds together; the item records the discipline
+            # and finds its owner the day somebody picks it up.
+            seats = max(1, int(capacity.get(role, 1) or 1))
+            start, end = _earliest_free(busy_by_role[role], seats, earliest, task["days"])
+            busy_by_role[role].append((start, end))
+            placed[key] = {"start": start, "target": end, "assignee_id": None}
 
     return placed, warnings
 
@@ -771,7 +814,15 @@ def assign_sprints(placed, sprints):
 # ---------------------------------------------------------------------------
 
 
-def build_tasks(selected_keys, *, field_days=None, production_days=None, duration_overrides=None, extra=None):
+def build_tasks(
+    selected_keys,
+    *,
+    field_days=None,
+    production_days=None,
+    duration_overrides=None,
+    extra=None,
+    assignees=None,
+):
     """Resolve a selection into the task list the scheduler takes.
 
     Dependencies pointing at a task that was not selected are dropped rather than
@@ -779,6 +830,9 @@ def build_tasks(selected_keys, *, field_days=None, production_days=None, duratio
     not wedge the plan.
     """
     duration_overrides = duration_overrides or {}
+    # {task key: user id} — the lead naming who does this one, overriding "whoever
+    # holds the discipline". Optional everywhere.
+    assignees = assignees or {}
     chosen = [k for k in selected_keys if k in TASK_BY_KEY]
     present = set(chosen)
     lengths = {"field_days": field_days, "production_days": production_days}
@@ -801,6 +855,7 @@ def build_tasks(selected_keys, *, field_days=None, production_days=None, duratio
                 "role": spec["role"],
                 "days": max(1, min(365, int(days))),
                 "after": [a for a in spec.get("after") or [] if a in present],
+                "assignee_id": assignees.get(key),
             }
         )
 
@@ -823,6 +878,7 @@ def build_tasks(selected_keys, *, field_days=None, production_days=None, duratio
                 "role": str(item.get("role") or "")[:80],
                 "days": max(1, min(365, int(item.get("days") or 5))),
                 "after": after,
+                "assignee_id": assignees.get(key),
                 "added": True,
             }
         )

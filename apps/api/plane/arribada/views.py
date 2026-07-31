@@ -2515,6 +2515,43 @@ def _capacity_from_roster(project_id):
     return dict(counts)
 
 
+def _schedulable_people(project_id):
+    """The roster entries Plane will accept as an assignee, with what each covers.
+
+    The planner schedules against these rather than against disciplines, because a
+    person holding two disciplines is one pair of hands: their tasks have to queue,
+    not run side by side. Anyone without a usable Plane account is left out — they
+    cannot be given a work item, so pretending they are available would produce a
+    plan that shortens on paper and not in life.
+    """
+    rows = list(ProjectTeamMember.objects.filter(project_id=project_id))
+    linked = [str(r.member_id) for r in rows if r.member_id]
+    assignable = _assignable_member_ids(project_id, linked) if linked else set()
+    if not assignable:
+        return []
+
+    names = {
+        str(u.id): (u.display_name or u.first_name or u.email)
+        for u in User.objects.filter(id__in=list(assignable))
+    }
+    people, seen = [], set()
+    # Leads first, then by name — a stable order, so an equal-first tie in the
+    # scheduler always resolves the same way between two runs.
+    for row in sorted(rows, key=lambda r: (not r.is_lead, (r.name or "").lower())):
+        user_id = str(row.member_id) if row.member_id else None
+        if not user_id or user_id not in assignable or user_id in seen:
+            continue
+        seen.add(user_id)
+        people.append(
+            {
+                "id": user_id,
+                "name": names.get(user_id) or row.name,
+                "roles": [r.strip().lower() for r in _clean_roles(row.roles)],
+            }
+        )
+    return people
+
+
 class ProjectBlueprintEndpoint(BaseAPIView):
     """The generic task catalogue the setup wizard ticks through.
 
@@ -2610,16 +2647,35 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             if days and str(key) in TASK_BY_KEY:
                 overrides[str(key)] = days
 
-        # Roster width first, then whatever the lead typed over it.
+        # Roster width first, then whatever the lead typed over it. Only consulted for
+        # disciplines nobody on the roster covers — where somebody is named, the
+        # scheduler counts that person's calendar instead.
         capacity = _capacity_from_roster(project_id)
         for role, value in (request.data.get("capacity") or {}).items():
             seats = _positive(value, 50)
             if seats:
                 capacity[str(role).strip().lower()] = seats
 
+        people = _schedulable_people(project_id)
+        pinnable = {p["id"] for p in people}
+        # Optional, per task: the lead naming who does this one instead of leaving it
+        # to whoever holds the discipline. Anyone Plane would refuse is dropped here
+        # rather than producing a plan that cannot be applied.
+        pinned = {}
+        for key, value in (request.data.get("assignees") or {}).items():
+            user_id = str(value).strip() if value else ""
+            if user_id in pinnable:
+                pinned[str(key)] = user_id
+
         notes, provider, model_name = "", None, None
         extra, ai_durations = [], {}
-        if request.data.get("use_ai"):
+        # Tasks the model added on an earlier pass, handed back so re-planning after a
+        # change of owner does not spend another model call — or, worse, quietly
+        # produce a different set of tasks than the one on screen.
+        carried = [e for e in (request.data.get("extra_tasks") or []) if isinstance(e, dict)][:12]
+        if carried:
+            extra = carried
+        elif request.data.get("use_ai"):
             from .ai import chat_json, resolve_config
 
             config = resolve_config(project.workspace_id)
@@ -2668,8 +2724,9 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             production_days=production_days,
             duration_overrides=merged,
             extra=extra,
+            assignees=pinned,
         )
-        placed, warnings = schedule(tasks, start, capacity)
+        placed, warnings = schedule(tasks, start, capacity, people)
         end = max((v["target"] for v in placed.values()), default=start)
 
         sprint_cfg = request.data.get("sprints") or {}
@@ -2683,11 +2740,10 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             )
         sprint_of = assign_sprints(placed, sprints)
 
-        holders = _role_holders(project_id)
-        names = {
-            str(u.id): (u.display_name or u.first_name or u.email)
-            for u in User.objects.filter(id__in=list(set(holders.values())))
-        }
+        # Owners now come out of the schedule itself — it is what decided which of
+        # several holders each task went to, and it is the only thing that knows
+        # somebody covering two disciplines could not be in both places at once.
+        names = {p["id"]: p["name"] for p in people}
         counts = _capacity_from_roster(project_id)
         missing = sorted(
             {
@@ -2700,7 +2756,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         rows = []
         for task in tasks:
             dates = placed[task["key"]]
-            owner = holders.get((task.get("role") or "").strip().lower())
+            owner = dates.get("assignee_id")
             rows.append(
                 {
                     **task,
@@ -2708,6 +2764,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                     "target_date": dates["target"].isoformat(),
                     "assignee_id": owner,
                     "assignee_name": names.get(owner) if owner else None,
+                    "pinned": task["key"] in pinned,
                     "sprint": sprint_of.get(task["key"]),
                 }
             )
@@ -2730,6 +2787,9 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 ],
                 "capacity": capacity,
                 "role_counts": counts,
+                # Who the lead may name on a task. Sent back so the review table can
+                # offer exactly the people Plane would accept, and no one else.
+                "people": people,
                 # The disciplines this plan needs and nobody on the roster holds. Not an
                 # error: the requirement is recorded on the item either way, and the work
                 # is handed over the day somebody picks the discipline up.
@@ -2758,6 +2818,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def post(self, request, slug, project_id):
+        from plane.bgtasks.issue_activities_task import issue_activity
         from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
         from plane.utils.host import base_host
 
@@ -2794,8 +2855,9 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
         track_labels = {t["key"]: t["label"] for t in TRACKS}
         track_labels["pm"] = "Project management"
 
+        assignable_ids = _assignable_member_ids(project_id)
         created, skipped = {}, []
-        issue_track, issue_role, issue_sprint = {}, {}, {}
+        issue_track, issue_role, issue_sprint, issue_owner = {}, {}, {}, {}
         with transaction.atomic():
             for row in rows:
                 name = str(row.get("name") or "").strip()[:255]
@@ -2820,6 +2882,12 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                 role = str(row.get("role") or "").strip()[:80]
                 if role:
                     issue_role[key] = role
+                # The plan already worked out who does this one — honouring it here is
+                # what makes naming somebody in the wizard mean anything. Anyone Plane
+                # would refuse is dropped, and the discipline still carries the item.
+                owner = str(row.get("assignee_id") or "").strip()
+                if owner in assignable_ids:
+                    issue_owner[key] = owner
                 sprint = row.get("sprint")
                 if isinstance(sprint, int):
                     issue_sprint[key] = sprint
@@ -2937,6 +3005,25 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                     ignore_conflicts=True,
                 )
 
+            if issue_owner:
+                IssueAssignee.objects.bulk_create(
+                    [
+                        # bulk_create bypasses save(), so the denormalised columns have
+                        # to be set here or the rows land with NULLs.
+                        IssueAssignee(
+                            issue_id=created[key].id,
+                            assignee_id=owner,
+                            project_id=project.id,
+                            workspace_id=project.workspace_id,
+                            created_by_id=request.user.id,
+                        )
+                        for key, owner in issue_owner.items()
+                        if key in created
+                    ],
+                    batch_size=100,
+                    ignore_conflicts=True,
+                )
+
             # The window the gantt and the Overview draw against.
             if request.data.get("set_project_window") and created:
                 starts = [i.start_date for i in created.values() if i.start_date]
@@ -2947,14 +3034,35 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                         defaults={"start_date": min(starts), "target_date": max(targets)},
                     )
 
-        # Outside the transaction: this fans out notifications, and a slow mail server
-        # should not hold a write lock over the whole plan.
-        assigned = _materialise_issue_roles(
+        # Writing the assignee row notifies nobody on its own — this is what creates
+        # the activity, subscribes the new owner and sends the mail. Outside the
+        # transaction, because a slow mail server must not hold a lock over the plan.
+        origin = base_host(request=request, is_app=True)
+        for key, owner in issue_owner.items():
+            if key not in created:
+                continue
+            issue_activity.delay(
+                type="issue.activity.updated",
+                requested_data=json.dumps({"assignee_ids": [owner]}),
+                actor_id=str(request.user.id),
+                issue_id=str(created[key].id),
+                project_id=str(project.id),
+                current_instance=json.dumps({"assignee_ids": []}),
+                epoch=int(timezone.now().timestamp()),
+                notification=True,
+                origin=origin,
+            )
+
+        # Anything the plan could not name an owner for is still carrying its
+        # discipline; this hands those over to whoever holds it.
+        by_role = _materialise_issue_roles(
             project,
             request.user.id,
             issue_ids=[i.id for i in created.values()],
-            origin=base_host(request=request, is_app=True),
+            origin=origin,
         )
+        # One number for "got an owner", however they got one.
+        assigned = len({str(created[k].id) for k in issue_owner if k in created} | by_role)
 
         return Response(
             {
@@ -2962,7 +3070,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                 "skipped": skipped,
                 "relations": len(links),
                 "roles_set": len(issue_role),
-                "assigned": len(assigned),
+                "assigned": assigned,
                 "modules_created": modules_created,
                 "cycles_created": cycles_created,
             },

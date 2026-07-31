@@ -248,8 +248,19 @@ export type TPlannedTask = {
   assignee_id: string | null;
   assignee_name: string | null;
   sprint: number | null;
+  // True when the lead named this task's owner rather than letting the schedule
+  // pick whoever holds the discipline.
+  pinned?: boolean;
   // Set on tasks the assistant added on top of the catalogue.
   added?: boolean;
+};
+
+// Someone the plan may hand a task to: a roster entry with a Plane account that
+// the project would actually accept as an assignee.
+export type TPlanPerson = {
+  id: string;
+  name: string;
+  roles: string[];
 };
 
 export type TPlannedSprint = {
@@ -267,6 +278,9 @@ export type TSetupPlan = {
   sprints: TPlannedSprint[];
   capacity: Record<string, number>;
   role_counts: Record<string, number>;
+  // Who can be named on a task. The scheduler treats each of them as one pair of
+  // hands, so somebody covering two disciplines queues their own work.
+  people: TPlanPerson[];
   // Disciplines this plan needs that nobody on the roster holds. Not an error —
   // the requirement is recorded on the item and resolves when someone picks it up.
   missing_roles: string[];

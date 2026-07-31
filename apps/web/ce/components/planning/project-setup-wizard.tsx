@@ -108,6 +108,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [useAi, setUseAi] = useState(true);
   const [context, setContext] = useState("");
   const [plan, setPlan] = useState<TSetupPlan | null>(null);
+  // {task key: user id} — only the tasks the lead named an owner for. Everything
+  // else is left to the schedule, which picks whoever holds the discipline.
+  const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [endOverride, setEndOverride] = useState("");
   const [created, setCreated] = useState<TSetupApplyResult | null>(null);
   // 6 — work already in the project
@@ -136,6 +139,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setIndex(0);
     setError(null);
     setPlan(null);
+    setAssignees({});
     setCreated(null);
     setApplied(null);
     setReflowed(null);
@@ -308,7 +312,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       .then((r) => setTeam(r?.team ?? []))
       .catch(() => {});
 
-  const buildPlan = async () => {
+  // `reflow` is a re-plan after the lead changed who does what: it keeps the tasks
+  // the assistant already added and does not call it again, so only the dates and
+  // the owners move — and the edited target date survives.
+  const buildPlan = async (nextAssignees?: Record<string, string>, reflow = false) => {
     if (busy) return;
     setBusy("plan");
     setError(null);
@@ -326,16 +333,29 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           length_days: sprintCount ? null : Number(sprintLength) || 14,
           count: sprintCount ? Number(sprintCount) : null,
         },
-        use_ai: useAi && aiAvailable,
+        use_ai: !reflow && useAi && aiAvailable,
         context: context.trim(),
+        assignees: nextAssignees ?? assignees,
+        extra_tasks: reflow ? plan?.tasks.filter((t) => t.added) : undefined,
       });
       setPlan(result);
-      setEndOverride(result.end_date);
+      if (!reflow) setEndOverride(result.end_date);
     } catch (e) {
       setError(errorMessage(e, "Could not build a plan."));
     } finally {
       setBusy(null);
     }
+  };
+
+  // Naming somebody, or handing the task back to whoever holds its discipline.
+  // Either way the schedule is recomputed, because who does a task changes when it
+  // can happen — especially when that person already covers another discipline.
+  const assignTask = (taskKey: string, userId: string | null) => {
+    const next = { ...assignees };
+    if (userId) next[taskKey] = userId;
+    else delete next[taskKey];
+    setAssignees(next);
+    void buildPlan(next, true);
   };
 
   const createPlan = async () => {
@@ -812,7 +832,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         if (!plan)
           return (
             <div className="flex flex-wrap items-center gap-3">
-              <button type="button" onClick={buildPlan} disabled={!!busy} className={actionBtn}>
+              <button type="button" onClick={() => buildPlan()} disabled={!!busy} className={actionBtn}>
                 <Sparkles className="size-3.5" />
                 Build the plan
               </button>
@@ -820,7 +840,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           );
         return (
           <div className="space-y-3">
-            <SetupPlanTable plan={plan} trackLabels={trackLabels} />
+            <SetupPlanTable plan={plan} trackLabels={trackLabels} onAssign={assignTask} busy={busy === "plan"} />
             <div className="flex flex-wrap items-end gap-4 border-t border-subtle pt-3">
               <div>
                 <label className={label} htmlFor={`${uid}-end`}>
@@ -834,7 +854,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                   onChange={(e) => setEndOverride(e.target.value)}
                 />
               </div>
-              <button type="button" onClick={buildPlan} disabled={!!busy} className={actionBtn}>
+              <button type="button" onClick={() => buildPlan()} disabled={!!busy} className={actionBtn}>
                 {busy === "plan" ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
                 Rebuild
               </button>

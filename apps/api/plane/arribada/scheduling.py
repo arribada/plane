@@ -66,6 +66,26 @@ def _next_working_day(d):
     return d
 
 
+def _working_span(start, target):
+    """Working days a task occupies, inclusive. One day is one, not zero."""
+    if target < start:
+        return 1
+    day, count = start, 0
+    while day <= target:
+        if day.weekday() < 5:
+            count += 1
+        day += timedelta(days=1)
+    return max(1, count)
+
+
+def _target_after(start, working_days):
+    """Where a task starting on `start` finishes after `working_days` of work."""
+    day = _next_working_day(start)
+    for _ in range(max(1, working_days) - 1):
+        day = _next_working_day(day + timedelta(days=1))
+    return day
+
+
 def cascade(issues, relations):
     """Forward pass. issues: {id: {"start": date|None, "target": date|None}}.
     Returns {id: {"start": date, "target": date}} for issues whose dates MOVED.
@@ -92,9 +112,14 @@ def cascade(issues, relations):
             continue
         earliest = _next_working_day(max(constraints))
         if earliest > cur[node]["start"]:
-            duration = cur[node]["target"] - cur[node]["start"]
+            # Working days, not a calendar timedelta. A task that spanned a weekend
+            # carried those two days inside its duration; sliding it to a Monday then
+            # gave it two fewer working days, and a task that landed on a Thursday
+            # could finish on a Saturday. Auto-schedule writes these dates straight
+            # to the database, so the shrinkage was permanent and silent.
+            span = _working_span(cur[node]["start"], cur[node]["target"])
             cur[node]["start"] = earliest
-            cur[node]["target"] = earliest + duration
+            cur[node]["target"] = _target_after(earliest, span)
             changed[node] = {"start": cur[node]["start"], "target": cur[node]["target"]}
     return changed
 

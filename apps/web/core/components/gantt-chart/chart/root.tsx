@@ -110,6 +110,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     getBlockById,
     zoom,
     setZoom,
+    getDateFromPositionOnGantt,
   } = useTimeLineChartStore();
   const { data } = useUserProfile();
   const startOfWeek = data?.start_of_the_week;
@@ -192,6 +193,8 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     // With a continuous zoom, "fit" can mean fit — fill the width rather than
     // settle for whichever of the three fixed steps happened to be closest.
     const factor = zoomToFill(span.days, available, view);
+    // Fit generates and scrolls itself below; tell the zoom effect to stand down.
+    zoomHandledElsewhere.current = true;
     setZoom(factor);
 
     // Rebuild the chart around the span's midpoint so the generated window
@@ -218,15 +221,32 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A zoom change is a re-render of the whole chart at a new pixels-per-day; the
-  // block positions are all derived from it, so nothing else has to be told.
+  /** The date sitting in the middle of the viewport right now. */
+  const dateAtViewportCentre = (): Date | undefined => {
+    const container = document.querySelector("#gantt-container") as HTMLDivElement | null;
+    if (!container || !currentViewData) return undefined;
+    const centre = container.scrollLeft + (container.clientWidth - sidebarPaneWidth) / 2;
+    return getDateFromPositionOnGantt(Math.max(0, centre), 0);
+  };
+
+  // A zoom change re-renders the chart at a new pixels-per-day. Two things it must
+  // not do: jump back to today (it did, because a null-side rebuild scrolls to
+  // `currentDate`), and fight "Fit", which sets the zoom itself and then places its
+  // own scroll — the effect ran afterwards and undid it, which is why Fit could
+  // never reach a project more than a few months out.
   const firstZoom = useRef(true);
+  const zoomHandledElsewhere = useRef(false);
   useEffect(() => {
     if (firstZoom.current) {
       firstZoom.current = false;
       return;
     }
-    updateCurrentViewRenderPayload(null, currentView);
+    if (zoomHandledElsewhere.current) {
+      zoomHandledElsewhere.current = false;
+      return;
+    }
+    // Re-centre on what the viewer was looking at, not on today.
+    updateCurrentViewRenderPayload(null, currentView, dateAtViewportCentre());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom]);
 

@@ -1115,6 +1115,51 @@ def split_into_sprints(start_date, end_date, length_days=14, count=None):
     return sprints
 
 
+def sprints_from_agile_keys(placed):
+    """Sprint windows read from the task keys, not guessed from the calendar.
+
+    `build_agile_tasks` stamps the sprint into every key it emits (`ag.s3.plan`,
+    `ag.s3.review`), so membership is already known exactly. Re-deriving it by
+    asking which fixed-length calendar window each start date happens to fall in
+    is only equivalent while every sprint takes exactly as long as planned — and
+    it never does, because resource contention stretches them. A six-sprint plan
+    whose increments serialise spans wide enough that the fixed-length split
+    produced twenty windows, so the apply step created twenty cycles named
+    "Sprint 1..20" and filed sprint 3's work into "Sprint 7".
+
+    Each sprint's window is the span of the work that actually belongs to it, so
+    it widens honestly when the roster forces the increment to take longer.
+
+    Returns ({task key: sprint index}, [sprint dicts]) in index order.
+    """
+    membership = {}
+    for key in placed:
+        if not key.startswith("ag.s"):
+            continue
+        digits = key[4:].split(".", 1)[0]
+        if digits.isdigit():
+            membership[key] = int(digits)
+
+    if not membership:
+        return {}, []
+
+    windows = {}
+    for key, index in membership.items():
+        dates = placed[key]
+        window = windows.get(index)
+        if window is None:
+            windows[index] = {"start": dates["start"], "end": dates["target"]}
+        else:
+            window["start"] = min(window["start"], dates["start"])
+            window["end"] = max(window["end"], dates["target"])
+
+    sprints = [
+        {"index": index, "name": f"Sprint {index}", "start": w["start"], "end": w["end"]}
+        for index, w in sorted(windows.items())
+    ]
+    return membership, sprints
+
+
 def assign_sprints(placed, sprints):
     """{task key: sprint index} — a task belongs to the sprint its start falls in."""
     if not sprints:

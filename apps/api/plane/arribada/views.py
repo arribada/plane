@@ -2641,6 +2641,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             default_selection,
             schedule,
             split_into_sprints,
+            sprints_from_agile_keys,
         )
 
         project = _visible_projects(request, slug).filter(id=project_id).first()
@@ -2824,9 +2825,19 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         slack = compute_float(tasks, placed, end)
 
         sprints = []
+        sprint_of = {}
         if in_sprints:
-            sprints = split_into_sprints(start, end, length_days=sprint_length, count=sprint_count)
-        sprint_of = assign_sprints(placed, sprints)
+            # Agile blocks carry their sprint in the key, so read it rather than
+            # re-derive it from dates: the calendar split turned six sprints into
+            # twenty cycles the moment contention stretched an increment.
+            agile_membership, agile_sprints = sprints_from_agile_keys(placed)
+            if agile_membership:
+                sprint_of, sprints = agile_membership, agile_sprints
+            else:
+                # Continuous-flow work has no block structure to read, so the
+                # fixed-length split is still the only available answer there.
+                sprints = split_into_sprints(start, end, length_days=sprint_length, count=sprint_count)
+                sprint_of = assign_sprints(placed, sprints)
 
         # Owners now come out of the schedule itself — it is what decided which of
         # several holders each task went to, and it is the only thing that knows

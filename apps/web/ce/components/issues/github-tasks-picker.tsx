@@ -15,6 +15,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TGithubInboxItem } from "@/plane-web/types/arribada";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = {
   isOpen: boolean;
@@ -34,6 +35,11 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: isOpen, onClose });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -98,7 +104,10 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
         className="absolute inset-0 cursor-default bg-black/40"
         onClick={busy ? undefined : onClose}
       />
-      <div className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1">
+      <div
+        className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1"
+        {...panelProps}
+      >
         <div className="flex items-center justify-between border-b border-subtle px-5 py-4">
           <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Github className="size-4 text-secondary" />

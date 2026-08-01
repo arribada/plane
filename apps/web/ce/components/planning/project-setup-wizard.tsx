@@ -36,6 +36,7 @@ import { AiSettingsModal } from "./ai-settings-modal";
 import { SetupPlanTable } from "./setup-plan-table";
 import { SetupTaskPicker } from "./setup-task-picker";
 import { useAiSettings } from "./use-ai-settings";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = { projectId: string | null; onClose: () => void; onCompleted?: () => void };
 
@@ -370,6 +371,11 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     list.push({ key: "links", title: "Where does the rest of the project live?" });
     return list;
   }, [hasExistingWork, agile]);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: !!projectId, onClose, busy: !!busy });
 
   const step = steps[Math.min(index, steps.length - 1)];
   const isLast = index >= steps.length - 1;
@@ -1344,7 +1350,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           className="absolute inset-0 bg-black/40"
           onClick={busy ? undefined : onClose}
         />
-        <div className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1">
+        <div
+          className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1"
+          {...panelProps}
+        >
           <div className="flex items-start justify-between gap-4 border-b border-subtle px-5 py-3">
             <div className="min-w-0">
               <h3 className="text-16 font-semibold text-primary">{step.title}</h3>

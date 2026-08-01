@@ -13,6 +13,7 @@ import { Loader2, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatus, TProjectStatusUpdate } from "@/plane-web/types/arribada";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 export const STATUS_META: Record<TProjectStatus, { label: string; color: string; dot: string }> = {
   on_track: { label: "On track", color: "#10b981", dot: "bg-success-primary" },
@@ -36,6 +37,11 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
   const [status, setStatus] = useState<TProjectStatus>("on_track");
   const [message, setMessage] = useState("");
   const [posting, setPosting] = useState(false);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: !!projectId, onClose });
 
   useEffect(() => {
     if (!projectId || !workspaceSlug) return;
@@ -74,7 +80,10 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
         className="absolute inset-0 cursor-default bg-black/40"
         onClick={posting ? undefined : onClose}
       />
-      <div className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-subtle bg-layer-1">
+      <div
+        className="shadow-2xl relative z-10 flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-subtle bg-layer-1"
+        {...panelProps}
+      >
         <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
           <h3 className="text-16 font-semibold text-primary">Status · {projectName ?? "Project"}</h3>
           <button type="button" onClick={onClose} className="text-secondary hover:text-primary">

@@ -15,6 +15,7 @@ import { useParams } from "next/navigation";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Category = "work_items" | "cycles" | "modules" | "roles" | "team" | "schedule" | "links";
 
@@ -48,6 +49,11 @@ export const CleanProjectModal = observer(function CleanProjectModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Record<string, number> | null>(null);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: !!projectId, onClose });
 
   if (!projectId) return null;
 
@@ -87,7 +93,10 @@ export const CleanProjectModal = observer(function CleanProjectModal({
         className="absolute inset-0 cursor-default bg-black/40"
         onClick={busy ? undefined : onClose}
       />
-      <div className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1">
+      <div
+        className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-subtle bg-layer-1"
+        {...panelProps}
+      >
         <div className="flex items-start justify-between gap-4 border-b border-subtle px-5 py-3">
           <div className="min-w-0">
             <h3 className="text-16 font-semibold text-primary">Clean this project</h3>

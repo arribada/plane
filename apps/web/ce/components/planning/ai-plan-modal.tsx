@@ -21,6 +21,7 @@ import type { TAiPlan } from "@/plane-web/types/arribada";
 import { PlanReviewTable, usePlanReview } from "./plan-review-table";
 import { AiSettingsModal } from "./ai-settings-modal";
 import { useAiSettings } from "./use-ai-settings";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = {
   projectId: string | null;
@@ -60,6 +61,11 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
   // A value, not an identity: callers pass `issueIds={[...]}` inline, so the raw
   // array is a new object on every render and would restart the effect forever.
   const selectionKey = useMemo(() => (issueIds ?? []).join(","), [issueIds]);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: !!projectId, onClose, busy: !!busy });
 
   // The project's own planned window is nearly always the window to plan inside.
   // A different selection invalidates any proposal already on screen.
@@ -170,7 +176,10 @@ export const AiPlanModal = observer(function AiPlanModal(props: Props) {
           className="absolute inset-0 bg-black/40"
           onClick={busy ? undefined : onClose}
         />
-        <div className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1">
+        <div
+          className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1"
+          {...panelProps}
+        >
           <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
             <div className="min-w-0">
               <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">

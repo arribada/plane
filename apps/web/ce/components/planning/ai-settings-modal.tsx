@@ -15,6 +15,7 @@ import { Check, KeyRound, Loader2, Sparkles, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { useAiSettings } from "./use-ai-settings";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = { isOpen: boolean; onClose: () => void };
 
@@ -43,6 +44,11 @@ export const AiSettingsModal = observer(function AiSettingsModal({ isOpen, onClo
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const seeded = useRef(false);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: isOpen, onClose });
 
   // Seed once per opening: re-seeding on every settings change would wipe the
   // draft (and the "Saved" confirmation) the moment a save refreshes the cache.
@@ -105,7 +111,10 @@ export const AiSettingsModal = observer(function AiSettingsModal({ isOpen, onClo
         className="absolute inset-0 bg-black/40"
         onClick={saving ? undefined : onClose}
       />
-      <div className="shadow-2xl relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5">
+      <div
+        className="shadow-2xl relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5"
+        {...panelProps}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Sparkles className="size-4 text-secondary" />

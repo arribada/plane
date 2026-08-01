@@ -18,6 +18,7 @@ import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioItem } from "@/plane-web/types/arribada";
 import { PRIORITY_COLOR } from "./colors";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 // Local YYYY-MM-DD: toISOString would shift the day in negative-offset zones.
 const toLocalISO = (d: Date): string => {
@@ -91,6 +92,11 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
   const [spreadDays, setSpreadDays] = useState(3);
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: !!projectId, onClose });
 
   useEffect(() => {
     if (!workspaceSlug || !projectId) return;
@@ -211,7 +217,10 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
           className="absolute inset-0 bg-black/40"
           onClick={busy ? undefined : onClose}
         />
-        <div className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-subtle bg-layer-1">
+        <div
+          className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-subtle bg-layer-1"
+          {...panelProps}
+        >
           <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
             <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
               <CalendarRange className="size-4 text-secondary" />

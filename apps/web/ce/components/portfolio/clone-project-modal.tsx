@@ -15,6 +15,7 @@ import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = { isOpen: boolean; onClose: () => void };
 
@@ -48,6 +49,11 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
   const [kickoff, setKickoff] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Escape, a focus trap, focus restored on close and a page that stops
+  // scrolling underneath — the four things this hand-rolled overlay lacked.
+  // Placed above the early return so the hook runs on every render.
+  const { panelProps } = useModalShell({ open: isOpen, onClose });
 
   if (!isOpen) return null;
 
@@ -94,7 +100,10 @@ export const CloneProjectModal = observer(function CloneProjectModal(props: Prop
         className="absolute inset-0 bg-black/40"
         onClick={busy ? undefined : onClose}
       />
-      <div className="shadow-2xl relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5">
+      <div
+        className="shadow-2xl relative z-10 w-full max-w-md rounded-xl border border-subtle bg-layer-1 p-5"
+        {...panelProps}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-16 font-semibold text-primary">
             <Copy className="size-4 text-secondary" />

@@ -24,6 +24,7 @@ import type {
   TNonWorkingDay,
   TProjectBudget,
   TProjectDocs,
+  TProcurementRequest,
   TProjectExpense,
   TRoleRate,
   TProjectSchedule,
@@ -632,6 +633,55 @@ export class ArribadaService extends APIService {
 
   async getBudget(workspaceSlug: string, projectId: string): Promise<TProjectBudget> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/budget/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getProcurement(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ requests: TProcurementRequest[]; can_approve: boolean }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async requestPurchase(
+    workspaceSlug: string,
+    projectId: string,
+    data: Partial<TProcurementRequest>
+  ): Promise<TProcurementRequest> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/`, data)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Lead only. Approving is what writes the expense line. */
+  async decidePurchase(
+    workspaceSlug: string,
+    projectId: string,
+    requestId: string,
+    decision: "approved" | "rejected",
+    note?: string
+  ): Promise<TProcurementRequest> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/${requestId}/`, {
+      decision,
+      note,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async withdrawPurchase(workspaceSlug: string, projectId: string, requestId: string): Promise<{ deleted: boolean }> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/${requestId}/`)
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;

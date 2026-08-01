@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { CalendarOff, Coins, Pencil, Plus, Trash2, Wallet } from "lucide-react";
+import { CalendarOff, Check, Coins, Pencil, Plus, ShoppingCart, Trash2, Wallet, X } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
@@ -22,6 +22,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type {
   TExpenseCategory,
+  TProcurementRequest,
   TNonWorkingDay,
   TProjectBudget,
   TProjectExpense,
@@ -81,8 +82,16 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const [rates, setRates] = useState<TRoleRate[]>([]);
   const [days, setDays] = useState<TNonWorkingDay[]>([]);
   const [allocDraft, setAllocDraft] = useState("");
+  const [requests, setRequests] = useState<TProcurementRequest[]>([]);
+  // Who may write to the sheet. Answered by the server, not inferred from the
+  // workspace role: "project lead" is a job, and admin is a permission level.
+  const [canApprove, setCanApprove] = useState(false);
+  const [asking, setAsking] = useState(false);
 
-  const canEdit = allowPermissions(
+  // The sheet belongs to whoever answers for the budget. Everyone else asks.
+  const canEdit = canApprove;
+  // Raising a request needs only write access to the project.
+  const canRequest = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
     EUserPermissionsLevel.WORKSPACE,
     slug
@@ -91,17 +100,20 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const load = useCallback(async () => {
     if (!slug || !pid) return;
     try {
-      const [b, e, r, c] = await Promise.all([
+      const [b, e, r, c, p] = await Promise.all([
         service.getBudget(slug, pid),
         service.getExpenses(slug, pid),
         service.getRoleRates(slug),
         service.getCalendar(slug),
+        service.getProcurement(slug, pid),
       ]);
       setBudget(b);
       setExpenses(e?.expenses ?? []);
       setRates(r?.rates ?? []);
       setDays(c?.days ?? []);
       setAllocDraft(b?.allocation?.amount != null ? String(b.allocation.amount) : "");
+      setRequests(p?.requests ?? []);
+      setCanApprove(!!p?.can_approve);
       setLoaded(true);
       setFailed(false);
     } catch {
@@ -190,6 +202,55 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     }
   };
 
+  const askFor = async () => {
+    const label = draft.label.trim();
+    const amount = Number(draft.amount);
+    if (!label || !Number.isFinite(amount) || amount <= 0) return;
+    setSaving(true);
+    try {
+      await service.requestPurchase(slug, pid, {
+        category: draft.category,
+        label,
+        amount,
+        quantity: Number(draft.quantity) || 1,
+        currency: draft.currency.trim().toUpperCase() || "EUR",
+      });
+      setDraft(EMPTY_DRAFT);
+      setAsking(false);
+      await load();
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't send that request",
+        message: "Nothing was submitted. Check the price and try again.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const decide = async (id: string, decision: "approved" | "rejected") => {
+    try {
+      await service.decidePurchase(slug, pid, id, decision);
+      await load();
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't record that decision",
+        message: "The request is unchanged.",
+      });
+    }
+  };
+
+  const withdraw = async (id: string) => {
+    try {
+      await service.withdrawPurchase(slug, pid, id);
+      await load();
+    } catch {
+      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't withdraw it", message: "It is still there." });
+    }
+  };
+
   const remove = async (id: string) => {
     try {
       await service.deleteExpense(slug, pid, id);
@@ -213,6 +274,8 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 
   const input =
     "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong";
+  // Only what still needs an answer: decided requests live on as expense lines.
+  const pending = requests.filter((r) => r.status === "pending");
   const alloc = budget?.allocation;
   const over = alloc?.remaining != null && alloc.remaining < 0;
 
@@ -392,6 +455,66 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         </div>
       )}
 
+      {/* Requests waiting on a decision. Above the sheet, because a pending
+          request is a claim on the budget that the figures above do not yet show. */}
+      {pending.length > 0 && (
+        <div className="rounded-lg border border-warning-strong/40 bg-warning-subtle/40 p-2.5">
+          <p className="mb-1.5 flex items-center gap-1.5 text-12 font-medium text-primary">
+            <ShoppingCart className="size-3.5 text-warning-primary" />
+            {pending.length} purchase request{pending.length === 1 ? "" : "s"} waiting
+            {!canApprove && <span className="font-normal text-11 text-tertiary">— the project lead decides</span>}
+          </p>
+          <ul className="flex flex-col gap-1">
+            {pending.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="min-w-0 flex-1 truncate text-13 text-primary">{r.label}</span>
+                {r.quantity !== 1 && (
+                  <span className="flex-shrink-0 text-11 text-tertiary">
+                    {r.quantity} × {money(r.amount, r.currency)}
+                  </span>
+                )}
+                <span className="flex-shrink-0 text-13 font-medium text-primary tabular-nums">
+                  {money(r.total, r.currency)}
+                </span>
+                {r.requested_by_name && (
+                  <span className="flex-shrink-0 text-11 text-tertiary">by {r.requested_by_name}</span>
+                )}
+                {canApprove ? (
+                  <span className="flex flex-shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void decide(r.id, "approved")}
+                      className="flex items-center gap-1 rounded bg-success-primary px-2 py-0.5 text-11 text-white"
+                      title="Approve — this writes the line into the project's expenses"
+                    >
+                      <Check className="size-3" />
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void decide(r.id, "rejected")}
+                      className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                    >
+                      <X className="size-3" />
+                      Reject
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void withdraw(r.id)}
+                    className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary"
+                    title="Withdraw your request"
+                  >
+                    Withdraw
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* The lines themselves */}
       <div>
         <div className="mb-1.5 flex items-center gap-2">
@@ -400,7 +523,21 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             Expenses {expenses.length > 0 && <span className="text-tertiary">({expenses.length})</span>}
           </span>
           <div className="flex-grow" />
-          {canEdit && !adding && (
+          {canRequest && !asking && !adding && (
+            <button
+              type="button"
+              onClick={() => setAsking(true)}
+              className="flex items-center gap-1 rounded border border-subtle px-2 py-1 text-11 text-secondary hover:bg-layer-2"
+              title="Ask the project lead to approve a purchase"
+            >
+              <ShoppingCart className="size-3" />
+              Request a purchase
+            </button>
+          )}
+          {/* Writing straight to the sheet is the lead's alone: it is the record of
+              what the project has committed, and a budget nobody owns is a budget
+              nobody can defend. */}
+          {canEdit && !adding && !asking && (
             <button
               type="button"
               onClick={() => setAdding(true)}
@@ -411,6 +548,79 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             </button>
           )}
         </div>
+
+        {asking && (
+          <div className="mb-2 rounded-lg border border-subtle bg-layer-2 p-2">
+            <p className="mb-1.5 text-11 text-tertiary">
+              This goes to the project lead. Nothing is committed until they approve it.
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">What you need</span>
+                <input
+                  value={draft.label}
+                  onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                  placeholder="10 x Linkit V4 boards"
+                  className={cn(input, "w-56")}
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Category</span>
+                <select
+                  value={draft.category}
+                  onChange={(e) => setDraft({ ...draft, category: e.target.value as TExpenseCategory })}
+                  className={cn(input, "w-44")}
+                >
+                  {CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Unit price</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.amount}
+                  onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
+                  className={cn(input, "w-24")}
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Qty</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  value={draft.quantity}
+                  onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
+                  className={cn(input, "w-16")}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void askFor()}
+                disabled={saving || !draft.label.trim() || !(Number(draft.amount) > 0)}
+                className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+              >
+                {saving ? "Sending…" : "Send request"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAsking(false);
+                  setDraft(EMPTY_DRAFT);
+                }}
+                className="px-1 text-12 text-secondary hover:text-primary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {adding && (
           <div className="mb-2 flex flex-wrap items-end gap-2 rounded-lg border border-subtle bg-layer-2 p-2">

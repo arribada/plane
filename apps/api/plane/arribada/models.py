@@ -538,3 +538,72 @@ class ProjectExpense(models.Model):
 
     def __str__(self):
         return f"{self.label} {self.total} {self.currency}"
+
+
+class ProcurementRequest(models.Model):
+    """Somebody asking to spend the project's money, and the lead answering.
+
+    The expense sheet is the record of what was committed, so it is not something
+    every member should be able to write to directly — a budget nobody owns is a
+    budget nobody can defend. Anyone on the project can *ask*; only the lead can
+    say yes, and saying yes is what creates the expense line.
+
+    `expense` is the line that approval produced, kept so the two can never drift:
+    reject-after-approve removes it, and nothing else can create an expense that
+    claims to have come from a request.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    STATUS_CHOICES = [(PENDING, "Pending"), (APPROVED, "Approved"), (REJECTED, "Rejected")]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_procurement"
+    )
+    requested_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    # The same shape as the expense it becomes, so approval is a copy and not a
+    # translation — a field that existed only on one side would be a field that
+    # silently disappears at the moment of approval.
+    category = models.CharField(
+        max_length=16, choices=ProjectExpense.CATEGORY_CHOICES, default=ProjectExpense.OTHER
+    )
+    label = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    currency = models.CharField(max_length=3, default="EUR")
+
+    supplier = models.CharField(max_length=255, blank=True, default="")
+    justification = models.TextField(blank=True, default="")
+    needed_by = models.DateField(null=True, blank=True)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    decided_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True, default="")
+    expense = models.ForeignKey(
+        ProjectExpense, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_procurement_request"
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=["project", "status"])]
+
+    @property
+    def total(self):
+        return self.amount * self.quantity
+
+    def __str__(self):
+        return f"{self.label} ({self.status})"

@@ -429,3 +429,26 @@ export type TProjectBudget = {
     count: number;
   };
 };
+
+/** Somebody asking to spend the project's money. Inert until the lead approves. */
+export type TProcurementRequest = {
+  id: string;
+  category: TExpenseCategory;
+  label: string;
+  amount: number;
+  quantity: number;
+  total: number;
+  currency: string;
+  supplier: string;
+  justification: string;
+  needed_by: string | null;
+  status: "pending" | "approved" | "rejected";
+  requested_by: string | null;
+  requested_by_name: string | null;
+  decided_by_name: string | null;
+  decided_at: string | null;
+  decision_note: string;
+  /** The expense line approval produced, so the two can never drift. */
+  expense_id: string | null;
+  created_at: string;
+};

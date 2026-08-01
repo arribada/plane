@@ -35,6 +35,7 @@ from .models import (
     ProjectSchedule,
     ProjectStatusUpdate,
     ProjectTeamMember,
+    ProcurementRequest,
     ProjectExpense,
     ProjectWikiDoc,
     WorkspaceAiSettings,
@@ -3578,6 +3579,40 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
         return Response({"rates": saved}, status=status.HTTP_200_OK)
 
 
+def _is_project_lead(user, project_id):
+    """Whether this person owns the project's budget.
+
+    Two ways to be the lead, because the fork has two rosters and both are real:
+    Plane's own `Project.project_lead`, and an arribada roster row flagged
+    `is_lead` — which exists precisely because most of the team has no Plane
+    account. Either counts.
+
+    A workspace admin is deliberately NOT included. Admin is a permission level;
+    owning a budget is a job. Letting every admin approve spending on every project
+    is how "the lead approves it" becomes "somebody approved it".
+    """
+    if not user or not getattr(user, "id", None):
+        return False
+    if Project.objects.filter(id=project_id, project_lead_id=user.id).exists():
+        return True
+    return ProjectTeamMember.objects.filter(
+        project_id=project_id, member_id=user.id, is_lead=True
+    ).exists()
+
+
+def _lead_guard(request, project_id):
+    """403 body when the caller is not the lead, else None."""
+    if _is_project_lead(request.user, project_id):
+        return None
+    return Response(
+        {
+            "error": "Only the project lead can do this.",
+            "detail": "Anyone on the project can raise a purchase request; the lead approves it.",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
 class ProjectExpensesEndpoint(BaseAPIView):
     """Everything a project spends that is not somebody's time."""
 
@@ -3593,6 +3628,11 @@ class ProjectExpensesEndpoint(BaseAPIView):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # The sheet is the record of what was committed, so only its owner writes
+        # to it. Everyone else raises a request, which the lead turns into a line.
+        denied = _lead_guard(request, project_id)
+        if denied:
+            return denied
         label = str(request.data.get("label") or "").strip()[:255]
         if not label:
             return Response({"error": "A label is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -3622,6 +3662,9 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
     def patch(self, request, slug, project_id, expense_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _lead_guard(request, project_id)
+        if denied:
+            return denied
         row = ProjectExpense.objects.filter(id=expense_id, project_id=project_id).first()
         if not row:
             return Response({"error": "Expense not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -3654,6 +3697,9 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
     def delete(self, request, slug, project_id, expense_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _lead_guard(request, project_id)
+        if denied:
+            return denied
         ProjectExpense.objects.filter(id=expense_id, project_id=project_id).delete()
         return Response({"deleted": True}, status=status.HTTP_200_OK)
 
@@ -3787,3 +3833,181 @@ def _working_days_between(start, end):
             count += 1
         day += timedelta(days=1)
     return max(1, count)
+
+
+def _serialize_request(row):
+    return {
+        "id": str(row.id),
+        "category": row.category,
+        "label": row.label,
+        "amount": float(row.amount),
+        "quantity": float(row.quantity),
+        "total": float(row.total),
+        "currency": row.currency,
+        "supplier": row.supplier,
+        "justification": row.justification,
+        "needed_by": row.needed_by.isoformat() if row.needed_by else None,
+        "status": row.status,
+        "requested_by": str(row.requested_by_id) if row.requested_by_id else None,
+        "requested_by_name": (
+            row.requested_by.display_name or row.requested_by.email if row.requested_by else None
+        ),
+        "decided_by_name": (
+            row.decided_by.display_name or row.decided_by.email if row.decided_by else None
+        ),
+        "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+        "decision_note": row.decision_note,
+        "expense_id": str(row.expense_id) if row.expense_id else None,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+class ProjectProcurementEndpoint(BaseAPIView):
+    """Purchase requests: anyone on the project may raise one, the lead answers.
+
+    The split is the point. The expense sheet is what the project has committed,
+    so it belongs to whoever answers for the budget; everybody else asks. A request
+    is inert until approved — approval is what writes the money down.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = ProcurementRequest.objects.filter(project_id=project_id).select_related(
+            "requested_by", "decided_by"
+        )
+        return Response(
+            {
+                "requests": [_serialize_request(r) for r in rows],
+                # The client needs to know whether to render an approve button at
+                # all; asking it to infer that from the roster would be a second
+                # implementation of the same rule.
+                "can_approve": _is_project_lead(request.user, project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        label = str(request.data.get("label") or "").strip()[:255]
+        if not label:
+            return Response({"error": "Say what you need"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
+            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            return Response({"error": "Amount and quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({"error": "A price is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        row = ProcurementRequest.objects.create(
+            project=project,
+            requested_by=request.user,
+            category=str(request.data.get("category") or ProjectExpense.OTHER)[:16],
+            label=label,
+            amount=amount,
+            quantity=quantity,
+            currency=str(request.data.get("currency") or "EUR").strip().upper()[:3],
+            supplier=str(request.data.get("supplier") or "")[:255],
+            justification=str(request.data.get("justification") or "")[:2000],
+            needed_by=_parse_date(request.data.get("needed_by")),
+        )
+        return Response(_serialize_request(row), status=status.HTTP_201_CREATED)
+
+
+class ProjectProcurementDecisionEndpoint(BaseAPIView):
+    """Approve or reject a request. Lead only, and approval is what spends."""
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, request_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _lead_guard(request, project_id)
+        if denied:
+            return denied
+
+        row = ProcurementRequest.objects.filter(id=request_id, project_id=project_id).first()
+        if not row:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        decision = str(request.data.get("decision") or "").strip().lower()
+        if decision not in {ProcurementRequest.APPROVED, ProcurementRequest.REJECTED}:
+            return Response(
+                {"error": "decision must be 'approved' or 'rejected'"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        note = str(request.data.get("note") or "")[:2000]
+
+        with transaction.atomic():
+            if decision == ProcurementRequest.APPROVED:
+                # Approving twice must not spend twice. The existing line is reused
+                # rather than a second one created — an idempotent approve is worth
+                # more than an error message about a button somebody pressed again.
+                if row.expense_id:
+                    expense = ProjectExpense.objects.filter(id=row.expense_id).first()
+                else:
+                    expense = None
+                if not expense:
+                    expense = ProjectExpense.objects.create(
+                        project=project,
+                        category=row.category,
+                        label=row.label,
+                        amount=row.amount,
+                        quantity=row.quantity,
+                        currency=row.currency,
+                        # Approved is committed, not yet paid: it belongs in the
+                        # budget half until somebody marks it spent.
+                        planned=True,
+                        notes=(
+                            f"Requested by {row.requested_by.display_name or row.requested_by.email}"
+                            if row.requested_by
+                            else "From a purchase request"
+                        )
+                        + (f" — {row.supplier}" if row.supplier else ""),
+                        created_by=request.user,
+                    )
+                    row.expense = expense
+            else:
+                # Rejecting something previously approved takes the money back out.
+                # Leaving the line would make a rejected request cost the project.
+                if row.expense_id:
+                    ProjectExpense.objects.filter(id=row.expense_id).delete()
+                    row.expense = None
+
+            row.status = decision
+            row.decided_by = request.user
+            row.decided_at = timezone.now()
+            row.decision_note = note
+            row.save()
+
+        return Response(_serialize_request(row), status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id, request_id):
+        """Withdraw a request. The person who raised it may take it back while it is
+        still pending; the lead may remove any of them."""
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        row = ProcurementRequest.objects.filter(id=request_id, project_id=project_id).first()
+        if not row:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        is_lead = _is_project_lead(request.user, project_id)
+        own_and_pending = row.requested_by_id == request.user.id and row.status == ProcurementRequest.PENDING
+        if not (is_lead or own_and_pending):
+            return Response(
+                {"error": "You can only withdraw your own request while it is still pending."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Deleting an approved request must not leave its money behind.
+        if row.expense_id:
+            ProjectExpense.objects.filter(id=row.expense_id).delete()
+        row.delete()
+        return Response({"deleted": True}, status=status.HTTP_200_OK)

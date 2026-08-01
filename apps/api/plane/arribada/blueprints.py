@@ -1043,6 +1043,104 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
     return placed, warnings
 
 
+def working_days_between(start, end):
+    """Working days from `start` to `end` inclusive; 0 when `end` precedes `start`."""
+    if end < start:
+        return 0
+    day = start
+    count = 0
+    while day <= end:
+        if day.weekday() < 5:
+            count += 1
+        day += timedelta(days=1)
+    return count
+
+
+def compute_float(tasks, placed, project_end=None):
+    """How many working days each task can slip before something else moves.
+
+    This is what turns a bar chart into a decision: "PCB layout has four days of
+    slack" is actionable in a way that "PCB layout runs 5–18 January" is not, and
+    it is the one thing every serious planning tool reports and almost no modern
+    one does.
+
+    Two numbers, both in working days:
+
+    `free`  — slack against the successors alone. Spend it and nothing else moves.
+    `total` — slack against the project's own end date. Spend it and the delivery
+              date holds, but the tasks after this one shift.
+
+    A task with zero total float is on the critical path, by definition. That is
+    computed here rather than asked of a separate endpoint, so the answer cannot
+    disagree with the dates it was derived from.
+
+    Caveat worth stating rather than hiding: this is float against the dependency
+    graph, not against people. A task with four days of graph slack whose owner is
+    busy for those four days cannot actually move. Reporting resource-constrained
+    float would mean re-running the whole placement per task; graph float is the
+    standard number and the honest one to label as such.
+    """
+    successors = defaultdict(list)
+    for task in tasks:
+        for pred in task.get("after") or []:
+            if pred in placed:
+                successors[pred].append(task["key"])
+
+    horizon = project_end or max((v["target"] for v in placed.values()), default=None)
+    if horizon is None:
+        return {}
+
+    # Latest finish, walked backwards. A task with no successor is only bounded by
+    # the project's end; otherwise it must finish before its earliest successor starts.
+    latest_finish = {}
+
+    def resolve(key):
+        if key in latest_finish:
+            return latest_finish[key]
+        children = successors.get(key) or []
+        if not children:
+            latest_finish[key] = horizon
+            return horizon
+        # Guard against a dependency loop: the topological pass upstream already
+        # reports one, and recursing into it here would blow the stack.
+        latest_finish[key] = horizon
+        bound = horizon
+        for child in children:
+            child_start = placed.get(child, {}).get("start")
+            if not child_start:
+                continue
+            # The last working day before the successor may begin.
+            day = child_start - timedelta(days=1)
+            while day.weekday() >= 5:
+                day -= timedelta(days=1)
+            bound = min(bound, day)
+        latest_finish[key] = bound
+        return bound
+
+    out = {}
+    for key, dates in placed.items():
+        children = successors.get(key) or []
+        starts = [placed[c]["start"] for c in children if c in placed]
+        if starts:
+            earliest_child = min(starts)
+            day = earliest_child - timedelta(days=1)
+            while day.weekday() >= 5:
+                day -= timedelta(days=1)
+            free = max(0, working_days_between(dates["target"], day) - 1)
+        else:
+            free = max(0, working_days_between(dates["target"], horizon) - 1)
+
+        total = max(0, working_days_between(dates["target"], resolve(key)) - 1)
+        out[key] = {
+            "free": free,
+            # Total float can never be less than free float; clamping rather than
+            # asserting keeps a knotted graph from producing a negative number.
+            "total": max(free, total),
+            "critical": max(free, total) == 0,
+        }
+    return out
+
+
 def split_into_sprints(start_date, end_date, length_days=14, count=None):
     """Cut the plan's window into sprints.
 

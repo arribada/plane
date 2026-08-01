@@ -265,6 +265,12 @@ export type TPlannedTask = {
   date_pinned?: boolean;
   // Set on tasks the assistant added on top of the catalogue.
   added?: boolean;
+  /** Working days this task can slip before any successor has to move. */
+  free_float?: number | null;
+  /** Working days it can slip before the project's end date moves. Zero means it
+   *  is on the critical path — which is what `critical` restates. */
+  total_float?: number | null;
+  critical?: boolean;
 };
 
 // Someone the plan may hand a task to: a roster entry with a Plane account that
@@ -296,6 +302,8 @@ export type TSetupPlan = {
   // Disciplines this plan needs that nobody on the roster holds. Not an error —
   // the requirement is recorded on the item and resolves when someone picks it up.
   missing_roles: string[];
+  /** How many tasks have no slack at all. One line beats scanning a column. */
+  critical_count?: number;
   warnings: string[];
   notes: string;
   provider: string | null;

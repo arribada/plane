@@ -130,3 +130,99 @@ def critical_path(issues, relations):
         path.add(end)
         end = prev[end]
     return path
+
+
+def slack_for_issues(issues, relations):
+    """Working days of slack per issue, from the dates already on them.
+
+    `critical_path` answers "which tasks are on the longest chain". That is one bit
+    per task. This answers the question a lead actually asks in a review — "how far
+    can this slip before it costs us" — and does it for every task, not just the
+    chain.
+
+    Two numbers, both in working days:
+      free  — slack against the successors alone; spend it and nothing else moves.
+      total — slack against the project's own last day; spend it and the delivery
+              date holds but everything downstream shifts.
+
+    A task with zero total float IS on the critical path, so this also subsumes the
+    boolean — and cannot disagree with it, which two separately-computed answers
+    eventually would.
+
+    Float against the dependency graph, not against people: a task with four days
+    of graph slack whose owner is busy for those four days cannot really move. That
+    is the standard definition and the honest thing to label it as.
+    """
+    dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
+    if not dated:
+        return {}
+
+    edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
+    successors = defaultdict(list)
+    for pred, succ, _kind in edges:
+        successors[pred].append(succ)
+
+    horizon = max(v["target"] for v in dated.values())
+
+    def working_days(start, end):
+        if end < start:
+            return 0
+        day, count = start, 0
+        while day <= end:
+            if day.weekday() < 5:
+                count += 1
+            day += timedelta(days=1)
+        return count
+
+    def last_working_day_before(day):
+        cursor = day - timedelta(days=1)
+        while cursor.weekday() >= 5:
+            cursor -= timedelta(days=1)
+        return cursor
+
+    # Latest each task may finish, walked backwards from the horizon. Memoised with
+    # the horizon written first, so a dependency loop terminates instead of
+    # recursing forever — the caller already reports the loop separately.
+    latest = {}
+
+    def latest_finish(node):
+        if node in latest:
+            return latest[node]
+        latest[node] = horizon
+        children = successors.get(node) or []
+        if not children:
+            return horizon
+        bound = horizon
+        for child in children:
+            if child not in dated:
+                continue
+            bound = min(bound, last_working_day_before(latest_start(child)))
+        latest[node] = bound
+        return bound
+
+    def latest_start(node):
+        finish = latest_finish(node)
+        span = dated[node]
+        # Preserve the task's own duration in working days while sliding it right.
+        duration = max(1, working_days(span["start"], span["target"]))
+        cursor, remaining = finish, duration
+        while remaining > 1:
+            cursor -= timedelta(days=1)
+            while cursor.weekday() >= 5:
+                cursor -= timedelta(days=1)
+            remaining -= 1
+        return cursor
+
+    out = {}
+    for node, span in dated.items():
+        children = [c for c in (successors.get(node) or []) if c in dated]
+        if children:
+            earliest_child = min(dated[c]["start"] for c in children)
+            free = max(0, working_days(span["target"], last_working_day_before(earliest_child)) - 1)
+        else:
+            free = max(0, working_days(span["target"], horizon) - 1)
+
+        total = max(0, working_days(span["target"], latest_finish(node)) - 1)
+        total = max(free, total)
+        out[node] = {"free": free, "total": total, "critical": total == 0}
+    return out

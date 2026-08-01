@@ -9,7 +9,7 @@
  */
 import { Fragment, useState } from "react";
 import { observer } from "mobx-react";
-import { AlertTriangle, CircleUser, GitBranch, Pin, Sparkles } from "lucide-react";
+import { AlertTriangle, CircleUser, GitBranch, Pin, Sparkles, Zap } from "lucide-react";
 import { cn } from "@plane/utils";
 import type { TSetupPlan } from "@/plane-web/types/arribada";
 
@@ -76,6 +76,15 @@ export const SetupPlanTable = observer(function SetupPlanTable({
           about {weeks(plan.start_date, plan.end_date)} weeks · {plan.tasks.length} work items
           {bySprint ? ` · ${plan.sprints.length} sprints` : ""}
         </span>
+        {typeof plan.critical_count === "number" && plan.critical_count > 0 && (
+          <span
+            className="flex items-center gap-1 rounded bg-danger-subtle px-2 py-0.5 text-12 text-danger-primary"
+            title="These have no slack: lose a day on any of them and the end date moves with it."
+          >
+            <Zap className="size-3.5" />
+            {plan.critical_count} on the critical path
+          </span>
+        )}
       </div>
 
       {plan.missing_roles.length > 0 && (
@@ -105,7 +114,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({
             {groups.map((group) => (
               <Fragment key={group.id}>
                 <tr className="bg-layer-2">
-                  <td colSpan={3} className="px-3 py-1.5">
+                  <td colSpan={4} className="px-3 py-1.5">
                     <span className="text-12 font-semibold text-primary">{group.label}</span>
                     <span className="ml-2 text-11 text-tertiary">{group.meta}</span>
                   </td>
@@ -207,6 +216,32 @@ export const SetupPlanTable = observer(function SetupPlanTable({
                         </>
                       )}
                     </td>
+                    {/* The number that turns a set of dates into a decision: how far
+                        this can slip before anything else has to. Zero is the
+                        critical path, which is the same statement said twice. */}
+                    <td className="px-2 py-1.5 text-right text-12 whitespace-nowrap">
+                      {typeof task.total_float === "number" ? (
+                        task.critical ? (
+                          <span
+                            className="rounded bg-danger-subtle px-1.5 py-0.5 text-11 font-medium text-danger-primary"
+                            title="No slack — a day lost here is a day lost on the delivery date"
+                          >
+                            no slack
+                          </span>
+                        ) : (
+                          <span
+                            className="text-tertiary tabular-nums"
+                            title={
+                              task.free_float === task.total_float
+                                ? `Can slip ${task.total_float} working day(s) without moving anything else`
+                                : `Can slip ${task.free_float} day(s) freely, ${task.total_float} before the end date moves`
+                            }
+                          >
+                            +{task.total_float}d
+                          </span>
+                        )
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
                 {onEditDeps &&
@@ -214,7 +249,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({
                     .filter((task) => openDeps === task.key)
                     .map((task) => (
                       <tr key={`${task.key}-deps`} className="border-t border-subtle bg-layer-2">
-                        <td colSpan={3} className="px-3 py-2">
+                        <td colSpan={4} className="px-3 py-2">
                           <p className="mb-1.5 text-11 font-medium tracking-wide text-secondary uppercase">
                             {task.name} waits on
                           </p>
@@ -251,7 +286,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({
                     ))}
                 {group.tasks.length === 0 && (
                   <tr className="border-t border-subtle">
-                    <td colSpan={3} className="px-3 py-1.5 text-12 text-tertiary">
+                    <td colSpan={4} className="px-3 py-1.5 text-12 text-tertiary">
                       Nothing lands in this sprint.
                     </td>
                   </tr>

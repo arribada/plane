@@ -38,7 +38,7 @@ from .models import (
     ProjectWikiDoc,
     WorkspaceAiSettings,
 )
-from .scheduling import build_edges, cascade, critical_path
+from .scheduling import build_edges, cascade, critical_path, slack_for_issues
 from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
@@ -641,14 +641,30 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
 
 
 class ProjectCriticalPathEndpoint(BaseAPIView):
-    """The issue ids on the project's critical (longest-duration) dependency chain."""
+    """The critical chain, and how much slack every other task has.
+
+    `issue_ids` is kept for callers that only want the chain. `slack` is the more
+    useful answer: "this can slip four days" is a decision, "this is not on the
+    critical path" is trivia. Both come out of the same dates, so they cannot
+    contradict each other.
+    """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         issues, relations = _project_graph(project_id, slug)
-        return Response({"issue_ids": sorted(critical_path(issues, relations))}, status=status.HTTP_200_OK)
+        slack = slack_for_issues(issues, relations)
+        return Response(
+            {
+                "issue_ids": sorted(critical_path(issues, relations)),
+                "slack": {
+                    issue_id: {"free": v["free"], "total": v["total"], "critical": v["critical"]}
+                    for issue_id, v in slack.items()
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class WorkspaceCriticalPathEndpoint(BaseAPIView):
@@ -2621,6 +2637,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
             assign_sprints,
             build_agile_tasks,
             build_tasks,
+            compute_float,
             default_selection,
             schedule,
             split_into_sprints,
@@ -2801,6 +2818,11 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         placed, warnings = schedule(tasks, start, capacity, people, pinned_dates)
         end = max((v["target"] for v in placed.values()), default=start)
 
+        # How much each task can slip. Derived from the dates that were just placed,
+        # so it can never disagree with them — which a separate critical-path
+        # endpoint computed from the database eventually would.
+        slack = compute_float(tasks, placed, end)
+
         sprints = []
         if in_sprints:
             sprints = split_into_sprints(start, end, length_days=sprint_length, count=sprint_count)
@@ -2833,6 +2855,12 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                     "pinned": task["key"] in pinned,
                     "date_pinned": task["key"] in pinned_dates,
                     "sprint": sprint_of.get(task["key"]),
+                    # Working days of slack. `free` moves nothing else; `total` holds
+                    # the delivery date but shifts what comes after. Zero total float
+                    # is the definition of the critical path.
+                    "free_float": slack.get(task["key"], {}).get("free"),
+                    "total_float": slack.get(task["key"], {}).get("total"),
+                    "critical": slack.get(task["key"], {}).get("critical", False),
                 }
             )
         rows.sort(key=lambda r: (r["start_date"], r["target_date"], r["key"]))
@@ -2852,6 +2880,10 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                     }
                     for s in sprints
                 ],
+                # The chain with no slack at all: lose a day on any of these and the
+                # end date moves. Sent as a count so the plan step can say it in one
+                # line rather than making the lead scan a column.
+                "critical_count": sum(1 for v in slack.values() if v.get("critical")),
                 "capacity": capacity,
                 "role_counts": counts,
                 # Who the lead may name on a task. Sent back so the review table can

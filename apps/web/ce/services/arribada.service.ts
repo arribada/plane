@@ -109,7 +109,12 @@ export class ArribadaService extends APIService {
   }
 
   // Issue ids on the project's critical (longest-duration) dependency chain.
-  async getCriticalPath(workspaceSlug: string, projectId: string): Promise<{ issue_ids: string[] }> {
+  async getCriticalPath(
+    workspaceSlug: string,
+    projectId: string
+    // `slack` is the useful half: free/total working days per issue. `issue_ids` is
+    // the chain, kept for callers that only want the boolean.
+  ): Promise<{ issue_ids: string[]; slack?: Record<string, { free: number; total: number; critical: boolean }> }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/critical-path/`)
       .then((response) => response?.data)
       .catch((error) => {

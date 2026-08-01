@@ -17,6 +17,7 @@ import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
@@ -33,6 +34,8 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
   const portfolio = usePortfolio();
+  // Shared with the arrows, which colour the critical chain from the same answer.
+  const { byIssue: slackByIssue } = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
   // This overlay is shared by every gantt (issues/cycles/modules); the portfolio-only
   // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
   const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
@@ -81,6 +84,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const height = Math.max(blockCount, 1) * BLOCK_HEIGHT;
   const active = store.activeBlockId;
   const blockIds = store.blockIds ?? [];
+  const dayWidthForTails: number = view.data?.dayWidth ?? 0;
 
   // progress fills: a darker inset bar covering `percent` of each item's bar
   const fills: { x: number; y: number; w: number }[] = [];
@@ -94,6 +98,31 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2,
       w: (block.position.width * Math.min(pct, 100)) / 100,
     });
+  }
+
+  // Slack tails: a hairline continuing past a bar to where it could still finish
+  // without moving anything else. This is what turns dates into a decision — "four
+  // days of room here" is actionable, "runs 5-18 January" is not — and it is the
+  // one thing MS Project and Primavera report that the modern tools dropped.
+  //
+  // Free float, not total: total float would draw a tail into space the successors
+  // are already using, which reads as more room than there is.
+  const tails: { x: number; y: number; w: number; days: number }[] = [];
+  if (dayWidthForTails > 0) {
+    for (let i = 0; i < blockIds.length; i++) {
+      const info = slackByIssue[blockIds[i]];
+      if (!info || info.free <= 0) continue;
+      const block = store.getBlockById(blockIds[i]);
+      if (!block?.position?.width) continue;
+      // Working days, so the tail has to skip weekends the same way the bars do.
+      const calendarDays = info.free + Math.floor(info.free / 5) * 2;
+      tails.push({
+        x: block.position.marginLeft + block.position.width,
+        y: i * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
+        w: calendarDays * dayWidthForTails,
+        days: info.free,
+      });
+    }
   }
 
   // "today" marker
@@ -224,6 +253,19 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       ))}
       {fills.map((f) => (
         <rect key={`pf-${f.x}-${f.y}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />
+      ))}
+      {tails.map((t) => (
+        <g key={`sl-${t.x}-${t.y}`} opacity={0.75}>
+          <line x1={t.x} y1={t.y} x2={t.x + t.w} y2={t.y} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="3 2" />
+          {/* End cap, so a tail reads as a bounded amount of room rather than as a
+              line that trails off. */}
+          <line x1={t.x + t.w} y1={t.y - 4} x2={t.x + t.w} y2={t.y + 4} stroke="#94a3b8" strokeWidth={1.5} />
+          {t.w > 26 && (
+            <text x={t.x + 4} y={t.y - 4} fontSize={9} className="fill-tertiary">
+              +{t.days}d
+            </text>
+          )}
+        </g>
       ))}
       {typeof todayX === "number" && (
         <g>

@@ -26,11 +26,14 @@ import type {
   TProjectDocs,
   TProcurementRequest,
   TProjectExpense,
+  TCurrencySettings,
+  TRolePreset,
   TRoleRate,
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
   TTeamMember,
+  TUserTimeline,
 } from "@/plane-web/types/arribada";
 
 // The roster endpoint answers with the vocabulary too, so the editor can offer
@@ -271,6 +274,17 @@ export class ArribadaService extends APIService {
   // The requesting user's open assigned work items (Home 'My tasks' widget).
   async getMyWork(workspaceSlug: string): Promise<TMyWorkItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-work/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  // Every dated work item assigned to one user, across every project the caller can
+  // see — the profile Timeline tab. Not getMyWork(): that one is the caller's own
+  // open items with no start_date, so every bar would be a sliver at its due date.
+  async getUserTimeline(workspaceSlug: string, userId: string): Promise<TUserTimeline> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/users/${userId}/timeline/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
@@ -578,8 +592,37 @@ export class ArribadaService extends APIService {
       });
   }
 
-  async getRoleRates(workspaceSlug: string): Promise<{ rates: TRoleRate[]; known_roles: string[] }> {
+  /**
+   * The rates, the vocabulary they can attach to, and the indicative figures to
+   * offer where a rate is missing. `known_roles` was typed as string[] and never
+   * read, so nothing caught that the server answers with {value,label} pairs.
+   */
+  async getRoleRates(workspaceSlug: string): Promise<{
+    rates: TRoleRate[];
+    known_roles: { value: string; label: string }[];
+    presets: TRolePreset[];
+  }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/role-rates/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getCurrencySettings(workspaceSlug: string): Promise<TCurrencySettings> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/currency/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Workspace admin only, the same gate the hourly rates sit behind. */
+  async saveCurrencySettings(
+    workspaceSlug: string,
+    data: { display_currency?: string; eur_gbp_rate?: number; rate_captured_on?: string | null }
+  ): Promise<TCurrencySettings> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/currency/`, data)
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;
@@ -631,8 +674,14 @@ export class ArribadaService extends APIService {
       });
   }
 
-  async getBudget(workspaceSlug: string, projectId: string): Promise<TProjectBudget> {
-    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/budget/`)
+  /**
+   * `display` reads the same budget in one currency for this call only. Leaving it
+   * off falls back to the workspace's choice, which is how the switch is meant to
+   * be set — looking at a budget in sterling should not change it for everybody.
+   */
+  async getBudget(workspaceSlug: string, projectId: string, display?: string): Promise<TProjectBudget> {
+    const query = display ? `?display=${encodeURIComponent(display)}` : "";
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/budget/${query}`)
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;
@@ -687,4 +736,100 @@ export class ArribadaService extends APIService {
         throw e?.response?.data;
       });
   }
+
+  /**
+   * One row per person, their dated work across every visible project, and the
+   * periods where two of their own items collide.
+   *
+   * The overlap regions arrive computed. They are not derived here on purpose: the
+   * roster's leave and part-time data has never left the server, and a second
+   * definition of "these two collide" in TypeScript would drift from the planner's.
+   */
+  async getWorkloadTimeline(
+    workspaceSlug: string,
+    params?: { from?: string; to?: string; includeEmpty?: boolean }
+  ): Promise<TWorkloadTimeline> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/workload-timeline/`, {
+      params: {
+        ...(params?.from ? { from: params.from } : {}),
+        ...(params?.to ? { to: params.to } : {}),
+        ...(params?.includeEmpty ? { include_empty: true } : {}),
+      },
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
 }
+
+// --- Workload timeline -------------------------------------------------------
+// Declared here beside the only call that produces them, the way
+// TProjectTeamResponse above is, rather than in types/arribada.ts.
+
+/** A period where two or more of one person's items are live at the same time. */
+export type TWorkloadOverlap = {
+  start: string;
+  end: string;
+  /**
+   * Working days lost to the double-booking. Weekends, workspace holidays and the
+   * person's own leave are already removed, so `days` is time that actually clashes
+   * rather than calendar days two ranges happen to share.
+   */
+  days: number;
+  issue_ids: string[];
+};
+
+export type TWorkloadTimelineItem = {
+  id: string;
+  name: string;
+  sequence_id: number;
+  /** Both null-able: an item with only one date is drawn as a marker, never a bar. */
+  start_date: string | null;
+  target_date: string | null;
+  priority: string;
+  state_group: string | null;
+  project_id: string;
+  project_identifier: string;
+  project_name: string;
+  assignee_ids: string[];
+};
+
+export type TWorkloadTimelinePerson = {
+  user_id: string;
+  name: string;
+  email: string;
+  avatar: string | null;
+  /** The synthetic row holding work nobody owns. Never overlap-checked. */
+  is_unassigned: boolean;
+  is_active_member: boolean;
+  assigned: number;
+  overdue: number;
+  due_week: number;
+  points: number;
+  /** Smallest week any project's roster records for this person; 5 when unknown. */
+  days_per_week: number;
+  roles: string[];
+  leave: { start: string; end: string }[];
+  /** Ids into `items` — an item with two assignees appears under both people. */
+  item_ids: string[];
+  dated_count: number;
+  /** Open work that cannot be drawn: one date only, and no dates at all. */
+  partial_count: number;
+  undated_count: number;
+  conflict_count: number;
+  conflict_days: number;
+  overlaps: TWorkloadOverlap[];
+};
+
+export type TWorkloadTimeline = {
+  window: { from: string; to: string };
+  today: string;
+  holidays: string[];
+  people: TWorkloadTimelinePerson[];
+  items: TWorkloadTimelineItem[];
+  /** People with no open work at all, left out unless include_empty was asked for. */
+  hidden_people_count: number;
+  /** True when the item cap was hit and the board is showing an incomplete picture. */
+  truncated: boolean;
+};

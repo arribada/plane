@@ -14,18 +14,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { CalendarOff, Check, Coins, Pencil, Plus, ShoppingCart, Trash2, Wallet, X } from "lucide-react";
+import {
+  ArrowLeftRight,
+  CalendarOff,
+  Check,
+  Coins,
+  Pencil,
+  Plus,
+  ShoppingCart,
+  Trash2,
+  Wallet,
+  Wand2,
+  X,
+} from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useUserPermissions } from "@/hooks/store/user";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type {
+  TCurrencySettings,
   TExpenseCategory,
   TProcurementRequest,
   TNonWorkingDay,
   TProjectBudget,
   TProjectExpense,
+  TRolePreset,
   TRoleRate,
 } from "@/plane-web/types/arribada";
 
@@ -49,6 +63,17 @@ const money = (amount: number, currency: string) => {
     return `${Math.round(amount).toLocaleString()} ${currency}`;
   }
 };
+
+/**
+ * A converted figure, never written like a recorded one. The "≈" is doing real
+ * work: it is the difference between a number somebody has a receipt for and a
+ * number this page worked out from a rate a colleague typed last spring.
+ */
+const approx = (amount: number, currency: string) => `≈ ${money(amount, currency)}`;
+
+/** The recorded amounts, side by side, for the line under a converted figure. */
+const recorded = (rows: { currency: string; amount: number }[]) =>
+  rows.map((t) => money(t.amount, t.currency)).join(" · ");
 
 const EMPTY_DRAFT = {
   category: "hardware" as TExpenseCategory,
@@ -78,11 +103,21 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // The two workspace-level tables that make the labour figure mean anything.
   // Edited here rather than behind a settings page: this is where somebody
   // notices the number is wrong, and it is where they should be able to fix it.
-  const [panel, setPanel] = useState<"rates" | "calendar" | "allocation" | null>(null);
+  const [panel, setPanel] = useState<"rates" | "calendar" | "allocation" | "currency" | null>(null);
   const [rates, setRates] = useState<TRoleRate[]>([]);
+  // The vocabulary a rate can attach to, and the indicative figures to offer
+  // where one is missing. Both come from the server: a rate table that also lived
+  // in this file would be two tables the day somebody edited one of them.
+  const [knownRoles, setKnownRoles] = useState<{ value: string; label: string }[]>([]);
+  const [presets, setPresets] = useState<TRolePreset[]>([]);
   const [days, setDays] = useState<TNonWorkingDay[]>([]);
   const [allocDraft, setAllocDraft] = useState("");
+  const [allocCcy, setAllocCcy] = useState("EUR");
   const [requests, setRequests] = useState<TProcurementRequest[]>([]);
+  // Which currency the figures are being read in, and the rate that gets them
+  // there. "" until the first load answers with the workspace's own choice.
+  const [currency, setCurrency] = useState<TCurrencySettings | null>(null);
+  const [displayCcy, setDisplayCcy] = useState("");
   // Who may write to the sheet. Answered by the server, not inferred from the
   // workspace role: "project lead" is a job, and admin is a permission level.
   const [canApprove, setCanApprove] = useState(false);
@@ -96,34 +131,85 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     EUserPermissionsLevel.WORKSPACE,
     slug
   );
+  // The hourly rates and the exchange rate are workspace-wide commercial facts and
+  // the server has always gated both on workspace admin — a different rule from
+  // everything else on this sheet, which the project lead owns. Asked here so a
+  // lead who is not an admin is told before they type, rather than by a 403.
+  const canWriteWorkspaceRates = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, slug);
 
-  const load = useCallback(async () => {
-    if (!slug || !pid) return;
-    try {
-      const [b, e, r, c, p] = await Promise.all([
-        service.getBudget(slug, pid),
-        service.getExpenses(slug, pid),
-        service.getRoleRates(slug),
-        service.getCalendar(slug),
-        service.getProcurement(slug, pid),
-      ]);
-      setBudget(b);
-      setExpenses(e?.expenses ?? []);
-      setRates(r?.rates ?? []);
-      setDays(c?.days ?? []);
-      setAllocDraft(b?.allocation?.amount != null ? String(b.allocation.amount) : "");
-      setRequests(p?.requests ?? []);
-      setCanApprove(!!p?.can_approve);
-      setLoaded(true);
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [service, slug, pid]);
+  // `ccy` is passed through to the budget read so the switch changes what this
+  // page shows without changing it for everybody in the workspace.
+  const load = useCallback(
+    async (ccy?: string) => {
+      if (!slug || !pid) return;
+      try {
+        const [b, e, r, c, p, cur] = await Promise.all([
+          service.getBudget(slug, pid, ccy || undefined),
+          service.getExpenses(slug, pid),
+          service.getRoleRates(slug),
+          service.getCalendar(slug),
+          service.getProcurement(slug, pid),
+          // Swallowed on its own rather than with the rest: a server that predates
+          // the currency table should cost the reader a toggle, not the whole
+          // sheet. Without a setting the budget reads in its own currency, which
+          // is exactly what it did before any of this existed.
+          service.getCurrencySettings(slug).catch(() => null),
+        ]);
+        setBudget(b);
+        setExpenses(e?.expenses ?? []);
+        setRates(r?.rates ?? []);
+        setKnownRoles(r?.known_roles ?? []);
+        setPresets(r?.presets ?? []);
+        setDays(c?.days ?? []);
+        setAllocDraft(b?.allocation?.amount != null ? String(b.allocation.amount) : "");
+        setAllocCcy(b?.allocation?.currency ?? "EUR");
+        setRequests(p?.requests ?? []);
+        setCanApprove(!!p?.can_approve);
+        setCurrency(cur ?? null);
+        // Whatever the server settled on, so the toggle starts where the page is
+        // rather than on a guess that would silently move the figures.
+        setDisplayCcy(ccy || b?.display?.currency || "");
+        setLoaded(true);
+        setFailed(false);
+      } catch {
+        setFailed(true);
+      }
+    },
+    [service, slug, pid]
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Re-read the budget in another currency. Nothing else on the page moves. */
+  const switchDisplay = async (ccy: string) => {
+    setDisplayCcy(ccy);
+    try {
+      setBudget(await service.getBudget(slug, pid, ccy));
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't switch currency",
+        message: "The figures on screen are still the ones you were reading.",
+      });
+    }
+  };
+
+  const saveCurrency = async (data: { display_currency?: string; eur_gbp_rate?: number }) => {
+    try {
+      const next = await service.saveCurrencySettings(slug, data);
+      setCurrency(next);
+      setPanel(null);
+      await load(displayCcy);
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't save the exchange rate",
+        message: "Every converted figure on screen still uses the old one.",
+      });
+    }
+  };
 
   const add = async () => {
     const label = draft.label.trim();
@@ -141,7 +227,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
       });
       setDraft(EMPTY_DRAFT);
       setAdding(false);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({
         type: TOAST_TYPE.ERROR,
@@ -159,9 +245,12 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     if (amount !== null && (!Number.isFinite(amount) || amount < 0)) return;
     setSaving(true);
     try {
-      await service.updateSchedule(slug, pid, { budget_amount: amount });
+      // The currency goes with the amount. It was writable end to end and no UI
+      // had ever sent it, which is why every allocation in the instance is euros
+      // whether or not the project was funded in them.
+      await service.updateSchedule(slug, pid, { budget_amount: amount, budget_currency: allocCcy });
       setPanel(null);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't save the budget", message: "Nothing was changed." });
     } finally {
@@ -173,13 +262,17 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     setRates(next);
     try {
       await service.saveRoleRates(slug, next);
-      await load();
-    } catch {
+      await load(displayCcy);
+    } catch (error) {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't save the rates",
-        message: "The figures on screen are not what is stored. Reload before relying on them.",
+        message:
+          "The figures on screen are not what is stored. These are workspace-wide, so saving them needs workspace admin.",
       });
+      // Re-thrown so the panel keeps its "not saved yet" warning up. Swallowing it
+      // would leave a prefill looking committed when nothing reached the server.
+      throw error;
     }
   };
 
@@ -187,7 +280,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     if (!date) return;
     try {
       await service.addNonWorkingDay(slug, { date, name });
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't add that day", message: "The calendar is unchanged." });
     }
@@ -196,7 +289,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const removeHoliday = async (date: string) => {
     try {
       await service.removeNonWorkingDay(slug, date);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't remove that day", message: "It is still there." });
     }
@@ -217,7 +310,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
       });
       setDraft(EMPTY_DRAFT);
       setAsking(false);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({
         type: TOAST_TYPE.ERROR,
@@ -232,7 +325,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const decide = async (id: string, decision: "approved" | "rejected") => {
     try {
       await service.decidePurchase(slug, pid, id, decision);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({
         type: TOAST_TYPE.ERROR,
@@ -245,7 +338,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const withdraw = async (id: string) => {
     try {
       await service.withdrawPurchase(slug, pid, id);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't withdraw it", message: "It is still there." });
     }
@@ -254,7 +347,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const remove = async (id: string) => {
     try {
       await service.deleteExpense(slug, pid, id);
-      await load();
+      await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't delete that line", message: "It is still there." });
     }
@@ -277,7 +370,32 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // Only what still needs an answer: decided requests live on as expense lines.
   const pending = requests.filter((r) => r.status === "pending");
   const alloc = budget?.allocation;
-  const over = alloc?.remaining != null && alloc.remaining < 0;
+  // The same figures read in one currency. `converted` is false when everything
+  // was already in it, in which case these ARE the recorded numbers and nothing
+  // needs marking as approximate.
+  const disp = budget?.display;
+  const near = !!disp?.converted;
+  // The allocation currency itself may be one the pair cannot reach (a dollar
+  // budget read in sterling); then there is nothing to show but the record.
+  const useDisp = !!disp && (alloc?.amount == null || disp.allocation != null);
+  const shownCcy = useDisp && disp ? disp.currency : (alloc?.currency ?? "EUR");
+  const shownAmount = useDisp && disp ? disp.allocation : (alloc?.amount ?? null);
+  const shownCommitted = useDisp && disp ? disp.committed : (alloc?.committed ?? 0);
+  const shownRemaining = useDisp && disp ? disp.remaining : (alloc?.remaining ?? null);
+  const shownPercent = useDisp && disp ? disp.percent : (alloc?.percent ?? null);
+  const over = shownRemaining != null && shownRemaining < 0;
+  // A total that swept up a converted figure is approximate; the allocation is
+  // only approximate if it was itself converted. Marking a number that was typed
+  // in this very currency would train people to ignore the mark.
+  const allocApprox = useDisp && !!disp && (alloc?.currency ?? "") !== disp.currency;
+  const fig = (amount: number) => (near ? approx(amount, shownCcy) : money(amount, shownCcy));
+  const figAlloc = (amount: number) => (allocApprox ? approx(amount, shownCcy) : money(amount, shownCcy));
+  // Currencies no total on this page includes. The display block knows about the
+  // ones its pair cannot reach; the allocation block knows about the ones that do
+  // not match the budget's own currency. Whichever view is on screen, the reader
+  // is told which figures are missing from the number above.
+  const missing = useDisp && disp ? disp.unconvertible : (alloc?.excluded_currencies ?? []);
+  const options = currency?.available?.length ? currency.available : ["EUR", "GBP"];
 
   return (
     <div className="flex flex-col gap-4 px-4 py-3">
@@ -285,24 +403,42 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
       <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-11 font-medium tracking-wide text-tertiary uppercase">Budget</span>
-          {alloc?.amount == null ? (
+          {shownAmount == null ? (
             <span className="text-13 text-tertiary">No budget recorded</span>
           ) : (
             <>
               <span className={cn("text-18 font-semibold", over ? "text-danger-primary" : "text-primary")}>
-                {money(alloc.committed, alloc.currency)}
+                {fig(shownCommitted)}
               </span>
-              <span className="text-13 text-tertiary">of {money(alloc.amount, alloc.currency)}</span>
-              {alloc.remaining != null && (
+              <span className="text-13 text-tertiary">of {figAlloc(shownAmount)}</span>
+              {shownRemaining != null && (
                 <span className={cn("text-12", over ? "text-danger-primary" : "text-secondary")}>
-                  {over
-                    ? `${money(Math.abs(alloc.remaining), alloc.currency)} over`
-                    : `${money(alloc.remaining, alloc.currency)} left`}
+                  {over ? `${fig(Math.abs(shownRemaining))} over` : `${fig(shownRemaining)} left`}
                 </span>
               )}
             </>
           )}
           <div className="flex-grow" />
+          {/* Which currency to read in. A view, not a change to the record: the
+              amounts stay as recorded and the switch is per reader. Only offered
+              when the server actually answered with a converted reading — a
+              toggle that quietly does nothing is worse than no toggle. */}
+          <span className={cn("flex items-center overflow-hidden rounded border border-subtle", !disp && "hidden")}>
+            {options.map((code) => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => void switchDisplay(code)}
+                aria-pressed={displayCcy === code}
+                className={cn(
+                  "px-2 py-0.5 text-11",
+                  displayCcy === code ? "bg-accent-primary text-white" : "text-secondary hover:bg-layer-1"
+                )}
+              >
+                {code}
+              </button>
+            ))}
+          </span>
           {canEdit && (
             <button
               type="button"
@@ -315,21 +451,55 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           )}
         </div>
 
-        {alloc?.amount != null && alloc.percent != null && (
+        {shownAmount != null && shownPercent != null && (
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-layer-1">
             <div
               className={cn("h-full rounded-full", over ? "bg-danger-primary" : "bg-accent-primary")}
               // Capped at 100 so an overrun fills the bar rather than escaping it;
               // the figure above already says by how much.
-              style={{ width: `${Math.min(100, alloc.percent)}%` }}
+              style={{ width: `${Math.min(100, shownPercent)}%` }}
             />
           </div>
         )}
 
-        {alloc && alloc.excluded_currencies.length > 0 && (
+        {/* The provenance travels with the figure. A converted number whose rate
+            and date are two clicks away is a number nobody can defend when the
+            funder asks where it came from. */}
+        {near && disp && (
           <p className="mt-1.5 text-11 text-tertiary">
-            Not counted here: figures in {alloc.excluded_currencies.join(", ")}. Nothing is converted — no exchange rate
-            in this system would be one anybody chose.
+            ≈ approximate. Converted at 1 EUR = {disp.rate} GBP
+            {disp.rate_configured
+              ? disp.rate_captured_on
+                ? `, recorded ${disp.rate_captured_on}`
+                : ", date unrecorded"
+              : " — a starting value nobody has set yet"}
+            . Every amount is still stored in the currency it was entered in — only this reading is converted.
+            {canWriteWorkspaceRates && (
+              <button
+                type="button"
+                onClick={() => setPanel(panel === "currency" ? null : "currency")}
+                className="ml-1 underline hover:text-primary"
+              >
+                Change the rate
+              </button>
+            )}
+          </p>
+        )}
+
+        {missing.length > 0 && (
+          <p className="mt-1.5 text-11 text-tertiary">
+            Not counted above: figures in {missing.join(", ")}. Only euros and sterling convert — anything else would
+            need a rate nobody here chose, so it stays in its own.
+          </p>
+        )}
+
+        {/* A budget held in something neither euros nor sterling can reach. The
+            figures above are then simply the record, and saying so is cheaper
+            than letting somebody wonder why the switch does nothing. */}
+        {!useDisp && alloc?.amount != null && (
+          <p className="mt-1.5 text-11 text-tertiary">
+            This budget is held in {alloc.currency}, which this reading cannot convert. The figures above are the ones
+            recorded, counted only against amounts in the same currency.
           </p>
         )}
 
@@ -344,7 +514,16 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               placeholder="Leave empty for none"
               className={cn(input, "w-40")}
             />
-            <span className="text-11 text-tertiary">{alloc?.currency ?? "EUR"}</span>
+            {/* The currency the project was actually funded in. It was storable
+                all along and no screen ever asked, so every budget in the
+                instance says euros whether or not that is true. */}
+            <select value={allocCcy} onChange={(e) => setAllocCcy(e.target.value)} className={cn(input, "w-20")}>
+              {[...new Set([...options, allocCcy])].map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={() => void saveAllocation()}
@@ -358,6 +537,10 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             </button>
           </div>
         )}
+
+        {panel === "currency" && currency && (
+          <CurrencyPanel settings={currency} onSave={saveCurrency} onClose={() => setPanel(null)} />
+        )}
       </div>
 
       {/* The two halves, side by side and clearly separate. */}
@@ -365,16 +548,24 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
           <p className="text-11 font-medium tracking-wide text-tertiary uppercase">Human time</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-2">
-            {labour?.totals.length ? (
+            {!labour?.totals.length ? (
+              <span className="text-13 text-tertiary">No rates recorded yet</span>
+            ) : near && disp ? (
+              // Folded into one figure because the reader asked for one currency.
+              // The recorded amounts follow immediately below, so the estimate is
+              // never the only thing on screen.
+              <span className="text-18 font-semibold text-primary">{approx(disp.labour_total, disp.currency)}</span>
+            ) : (
               labour.totals.map((t) => (
                 <span key={t.currency} className="text-18 font-semibold text-primary">
                   {money(t.amount, t.currency)}
                 </span>
               ))
-            ) : (
-              <span className="text-13 text-tertiary">No rates recorded yet</span>
             )}
           </p>
+          {near && labour?.totals.length ? (
+            <p className="text-11 text-tertiary">recorded as {recorded(labour.totals)}</p>
+          ) : null}
           <p className="mt-0.5 text-11 text-tertiary">
             Estimated from the dated work items — it moves when the plan moves.
           </p>
@@ -404,6 +595,19 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 <CalendarOff className="size-3" />
                 Non-working days {days.length > 0 && `(${days.length})`}
               </button>
+              {/* The third workspace-wide number, and the only one that is a
+                  judgement call rather than a fact. Admin-gated, like the rates. */}
+              {canWriteWorkspaceRates && (
+                <button
+                  type="button"
+                  onClick={() => setPanel(panel === "currency" ? null : "currency")}
+                  className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                  title="The EUR/GBP rate every converted figure is read at"
+                >
+                  <ArrowLeftRight className="size-3" />
+                  Exchange rate
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -411,29 +615,66 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
           <p className="text-11 font-medium tracking-wide text-tertiary uppercase">Everything else</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-3">
-            {spend?.actual.length ? (
-              spend.actual.map((t) => (
-                <span key={`a-${t.currency}`} className="text-18 font-semibold text-primary">
-                  {money(t.amount, t.currency)}
-                  <span className="font-normal ml-1 text-11 text-tertiary">spent</span>
-                </span>
-              ))
+            {near && disp ? (
+              <>
+                {disp.expenses_actual > 0 ? (
+                  <span className="text-18 font-semibold text-primary">
+                    {approx(disp.expenses_actual, disp.currency)}
+                    <span className="font-normal ml-1 text-11 text-tertiary">spent</span>
+                  </span>
+                ) : (
+                  <span className="text-13 text-tertiary">Nothing spent yet</span>
+                )}
+                {disp.expenses_planned > 0 && (
+                  <span className="text-13 text-secondary">
+                    {approx(disp.expenses_planned, disp.currency)}
+                    <span className="ml-1 text-11 text-tertiary">budgeted</span>
+                  </span>
+                )}
+              </>
             ) : (
-              <span className="text-13 text-tertiary">Nothing spent yet</span>
+              <>
+                {spend?.actual.length ? (
+                  spend.actual.map((t) => (
+                    <span key={`a-${t.currency}`} className="text-18 font-semibold text-primary">
+                      {money(t.amount, t.currency)}
+                      <span className="font-normal ml-1 text-11 text-tertiary">spent</span>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-13 text-tertiary">Nothing spent yet</span>
+                )}
+                {spend?.planned.map((t) => (
+                  <span key={`p-${t.currency}`} className="text-13 text-secondary">
+                    {money(t.amount, t.currency)}
+                    <span className="ml-1 text-11 text-tertiary">budgeted</span>
+                  </span>
+                ))}
+              </>
             )}
-            {spend?.planned.map((t) => (
-              <span key={`p-${t.currency}`} className="text-13 text-secondary">
-                {money(t.amount, t.currency)}
-                <span className="ml-1 text-11 text-tertiary">budgeted</span>
-              </span>
-            ))}
           </p>
+          {/* An expense is the one figure here somebody has a receipt for, so the
+              amount on the receipt stays on screen even when the card is read in
+              another currency. */}
+          {near && (spend?.actual.length || spend?.planned.length) ? (
+            <p className="text-11 text-tertiary">
+              recorded as {recorded([...(spend?.actual ?? []), ...(spend?.planned ?? [])])}
+            </p>
+          ) : null}
           <p className="mt-0.5 text-11 text-tertiary">Hardware, field trips, shipping, subcontracting.</p>
         </div>
       </div>
 
       {panel === "rates" && (
-        <RatesPanel rates={rates} roles={labour?.by_role.map((r) => r.role) ?? []} onSave={saveRates} />
+        <RatesPanel
+          rates={rates}
+          roles={labour?.by_role.map((r) => r.role) ?? []}
+          knownRoles={knownRoles}
+          presets={presets}
+          displayCurrency={displayCcy}
+          canWrite={canWriteWorkspaceRates}
+          onSave={saveRates}
+        />
       )}
 
       {panel === "calendar" && <CalendarPanel days={days} onAdd={addHoliday} onRemove={removeHoliday} />}
@@ -768,50 +1009,132 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 });
 
 /**
- * Hourly rates, workspace-wide. Every discipline the project uses is listed
- * whether or not it has a rate, so a gap is a blank field rather than an absence
- * nobody notices.
+ * Rates are stored lowercased and the vocabulary is not ("QA / test",
+ * "data / science"), so everything is folded down before it is compared. Keying on
+ * the vocabulary's own casing would quietly give those two roles a second row.
+ */
+const roleKey = (role: string) => role.trim().toLowerCase();
+
+/**
+ * Hourly rates, workspace-wide. Every discipline the catalogue knows about is
+ * listed whether or not the project uses it and whether or not it has a rate, so a
+ * gap is a blank field rather than an absence nobody notices — and so a project
+ * with no dated work items still has somewhere to enter one.
+ *
+ * Where a rate is missing, the market averages the server holds are offered as a
+ * greyed suggestion and behind an explicit button. Both are deliberate: a
+ * suggestion that saved itself would be indistinguishable, a month later, from a
+ * figure somebody decided on.
  */
 function RatesPanel({
   rates,
   roles,
+  knownRoles,
+  presets,
+  displayCurrency,
+  canWrite,
   onSave,
 }: {
   rates: TRoleRate[];
   roles: string[];
+  knownRoles: { value: string; label: string }[];
+  presets: TRolePreset[];
+  displayCurrency: string;
+  canWrite: boolean;
   onSave: (next: TRoleRate[]) => void | Promise<void>;
 }) {
-  const byRole = new Map(rates.map((r) => [r.role, r]));
-  // The project's own disciplines first, then any rate recorded for something it
-  // does not currently use — deleting the last task of a discipline should not
-  // hide the rate somebody entered for it.
-  // toSorted is ES2023 and this workspace targets earlier; the spread already made
-  // a fresh array, so sorting it in place mutates nothing anyone holds.
-  // oxlint-disable-next-line unicorn/no-array-sort
-  const shown = [...new Set([...roles, ...rates.map((r) => r.role)])].sort();
+  const byRole = new Map(rates.map((r) => [roleKey(r.role), r]));
+  const labelFor = new Map(knownRoles.map((r) => [roleKey(r.value), r.label]));
+  // The disciplines the project uses, every discipline the catalogue defines, and
+  // anything a rate was already recorded against — deleting the last task of a
+  // discipline should not hide the rate somebody entered for it.
+  const shown = [
+    ...new Set([
+      ...roles.map(roleKey),
+      ...rates.map((r) => roleKey(r.role)),
+      ...knownRoles.map((r) => roleKey(r.value)),
+    ]),
+    // toSorted is ES2023 and this workspace targets earlier; the spread already
+    // made a fresh array, so sorting it in place mutates nothing anyone holds.
+    // oxlint-disable-next-line unicorn/no-array-sort
+  ].sort();
+
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(shown.map((r) => [r, byRole.get(r)?.hourly_rate ? String(byRole.get(r)?.hourly_rate) : ""]))
   );
+  // Currency and hours-per-day only for rows the user actually touched. A save
+  // must not rewrite the currency of a rate somebody deliberately recorded in a
+  // third one just because another row was prefilled.
+  // Hours are held as the typed string, not a number: parsing on every keystroke
+  // makes "7." collapse to "7" under the caret, and the next digit lands in the
+  // wrong place. Parsed once, on save.
+  const [override, setOverride] = useState<Record<string, { currency: string; hours: string }>>({});
+  const [applied, setApplied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Which market's figures to show as ghosts: the one matching the currency being
+  // read, so the suggestion and the budget are in the same money.
+  const hint = presets.find((p) => p.currency === displayCurrency) ?? presets[0];
+  const currencyOptions = [...new Set(presets.map((p) => p.currency))];
+
+  const ccyOf = (role: string) => override[role]?.currency ?? byRole.get(role)?.currency ?? "EUR";
+  const hoursOf = (role: string) => override[role]?.hours ?? String(byRole.get(role)?.hours_per_day ?? 7);
+  // The server clamps this to 0.5..24 anyway; a blank or nonsense box falls back
+  // to the seven-hour day the rest of the fork assumes.
+  const hoursNumber = (role: string) => {
+    const parsed = Number(hoursOf(role));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+  };
+
+  /**
+   * Fill in one market's figures. Explicit, reversible until saved, and only for
+   * roles the table actually covers — a discipline the presets have never heard of
+   * stays blank rather than inheriting somebody else's number.
+   */
+  const applyPreset = (preset: TRolePreset) => {
+    const nextDraft = { ...draft };
+    const nextOverride = { ...override };
+    for (const role of shown) {
+      const value = preset.rates[role];
+      if (value == null) continue;
+      nextDraft[role] = String(value);
+      // A UK figure is meaningless stored as euros, so the currency and the
+      // working day travel with the number.
+      nextOverride[role] = { currency: preset.currency, hours: String(preset.hours_per_day) };
+    }
+    // The panel outlives a reload, so this has to be a state write: a prop change
+    // alone would leave every field showing what it showed before.
+    setDraft(nextDraft);
+    setOverride(nextOverride);
+    setApplied(preset.label);
+  };
 
   const commit = async () => {
     setBusy(true);
     const next: TRoleRate[] = shown
       .map((role) => {
         const value = Number(draft[role]);
-        const existing = byRole.get(role);
         return {
           role,
           hourly_rate: Number.isFinite(value) ? value : 0,
-          hours_per_day: existing?.hours_per_day ?? 7,
-          currency: existing?.currency ?? "EUR",
+          hours_per_day: hoursNumber(role),
+          currency: ccyOf(role),
         };
       })
       // A blank field means "no rate", which is not the same as zero: sending it
       // would turn an honest gap into a discipline that costs nothing.
       .filter((r) => r.hourly_rate > 0);
-    await onSave(next);
-    setBusy(false);
+    try {
+      await onSave(next);
+      // Only now are these figures a decision rather than a suggestion, so only
+      // now does the warning come down.
+      setApplied(null);
+    } catch {
+      // The caller has already said what went wrong; the panel's job is to keep
+      // the unsaved work and the warning that says it is unsaved.
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -819,25 +1142,94 @@ function RatesPanel({
       <p className="mb-2 text-11 font-medium tracking-wide text-tertiary uppercase">
         Hourly rates · shared by every project in this workspace
       </p>
+
+      {!canWrite && (
+        <p className="mb-2 text-11 text-warning-primary">
+          These are workspace-wide, so only a workspace admin can save them. You can still work out the figures here.
+        </p>
+      )}
+
+      {presets.length > 0 && (
+        <div className="mb-2 rounded border border-subtle bg-layer-1 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-11 text-secondary">Start from a market average:</span>
+            {presets.map((preset) => (
+              <button
+                key={preset.country}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-2"
+                title={`Fill every blank and every filled box with ${preset.label} figures in ${preset.currency}`}
+              >
+                <Wand2 className="size-3" />
+                {preset.label} ({preset.currency})
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-10 text-tertiary">
+            {/* The caveat comes from the server with the numbers, so it cannot be
+                left behind when somebody copies the figures somewhere else. */}
+            {hint?.source} Taken {hint?.captured_on}.
+          </p>
+          {applied ? (
+            <p className="mt-1 text-10 text-warning-primary">
+              {applied} figures filled in. Nothing is stored until you press Save — change anything that is wrong first,
+              because after that they read as numbers this organisation decided on.
+            </p>
+          ) : (
+            <p className="mt-1 text-10 text-tertiary">
+              Greyed figures are indicative {hint?.label} averages, not values. An empty box stays empty when you save.
+            </p>
+          )}
+        </div>
+      )}
+
       {shown.length === 0 ? (
         <p className="text-12 text-tertiary">No disciplines on this project yet.</p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {shown.map((role) => (
-            <label key={role} className="flex items-center gap-2">
-              <span className="w-44 flex-shrink-0 truncate text-12 text-secondary">{role}</span>
+            <label key={role} className="flex flex-wrap items-center gap-2">
+              <span className="w-44 flex-shrink-0 truncate text-12 text-secondary" title={role}>
+                {labelFor.get(role) ?? role}
+              </span>
               <input
                 type="number"
                 min={0}
                 step="1"
                 value={draft[role] ?? ""}
                 onChange={(e) => setDraft({ ...draft, [role]: e.target.value })}
-                placeholder="—"
+                // A ghost, never a value: it is not saved and it disappears the
+                // moment anything is typed.
+                placeholder={hint?.rates[role] != null ? `~${hint.rates[role]}` : "—"}
                 className="w-24 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
               />
-              <span className="text-11 text-tertiary">
-                {byRole.get(role)?.currency ?? "EUR"} / h · {byRole.get(role)?.hours_per_day ?? 7} h per day
-              </span>
+              <select
+                value={ccyOf(role)}
+                onChange={(e) =>
+                  setOverride({ ...override, [role]: { currency: e.target.value, hours: hoursOf(role) } })
+                }
+                aria-label={`Currency for ${labelFor.get(role) ?? role}`}
+                className="rounded border border-subtle bg-layer-1 px-1.5 py-1 text-11 text-secondary outline-none focus:border-accent-strong"
+              >
+                {[...new Set([...currencyOptions, ccyOf(role)])].map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+              <span className="text-11 text-tertiary">/ h ·</span>
+              <input
+                type="number"
+                min={0.5}
+                max={24}
+                step="0.5"
+                value={hoursOf(role)}
+                onChange={(e) => setOverride({ ...override, [role]: { currency: ccyOf(role), hours: e.target.value } })}
+                aria-label={`Hours per day for ${labelFor.get(role) ?? role}`}
+                className="w-14 rounded border border-subtle bg-layer-1 px-1.5 py-1 text-11 text-secondary outline-none focus:border-accent-strong"
+              />
+              <span className="text-11 text-tertiary">h per day</span>
             </label>
           ))}
         </div>
@@ -845,11 +1237,93 @@ function RatesPanel({
       <button
         type="button"
         onClick={() => void commit()}
-        disabled={busy}
+        disabled={busy || !canWrite}
         className="mt-2 rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
       >
         {busy ? "Saving…" : "Save rates"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * The one exchange rate this fork will use, and the day somebody wrote it down.
+ *
+ * Not a feed. A rate that updates itself is a rate nobody can account for when the
+ * figure is questioned six months later; this one is wrong in a way a reader can
+ * see and an admin can fix.
+ */
+function CurrencyPanel({
+  settings,
+  onSave,
+  onClose,
+}: {
+  settings: TCurrencySettings;
+  onSave: (data: { display_currency?: string; eur_gbp_rate?: number }) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [rate, setRate] = useState(String(settings.eur_gbp_rate));
+  const [preferred, setPreferred] = useState(settings.display_currency);
+  const [busy, setBusy] = useState(false);
+  const value = Number(rate);
+  const valid = Number.isFinite(value) && value >= 0.1 && value <= 10;
+
+  return (
+    <div className="mt-2 rounded border border-subtle bg-layer-1 p-2.5">
+      <p className="mb-2 text-11 font-medium tracking-wide text-tertiary uppercase">Exchange rate · workspace-wide</p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-10 text-tertiary uppercase">1 EUR buys</span>
+          <input
+            type="number"
+            min={0.1}
+            max={10}
+            step="0.001"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            className="w-24 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+          />
+        </label>
+        <span className="pb-1.5 text-12 text-secondary">GBP</span>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-10 text-tertiary uppercase">Everyone reads budgets in</span>
+          <select
+            value={preferred}
+            onChange={(e) => setPreferred(e.target.value)}
+            className="w-44 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+          >
+            {/* "" is a real answer, and the one that converts nothing. */}
+            <option value="">each project&apos;s own currency</option>
+            {settings.available.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={busy || !valid}
+          onClick={async () => {
+            setBusy(true);
+            await onSave({ eur_gbp_rate: value, display_currency: preferred });
+            setBusy(false);
+          }}
+          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={onClose} className="px-1 text-12 text-secondary hover:text-primary">
+          Cancel
+        </button>
+      </div>
+      <p className="mt-1.5 text-10 text-tertiary">
+        Saving stamps today&apos;s date on it, and every converted figure says so. Nothing recorded is rewritten — the
+        amounts stay in the currency they were entered in, and only the reading changes.
+        {settings.rate_captured_on
+          ? ` The rate on screen was recorded ${settings.rate_captured_on}.`
+          : " Nobody has set this yet, so the figures use a starting value."}
+      </p>
     </div>
   );
 }

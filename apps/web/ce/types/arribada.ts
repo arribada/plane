@@ -40,6 +40,21 @@ export type TPortfolioItem = {
   assignees: TItemAssignee[];
 };
 
+// One dated work item on somebody's personal timeline. It is a portfolio item that
+// also names its project: a personal timeline spans every project at once, so the
+// owner cannot be implied by the URL the way it is for a project's items.
+export type TUserTimelineItem = TPortfolioItem & { project_id: string };
+
+// The profile Timeline tab's payload. `undated_count` is the whole point of the
+// envelope: items with no dates cannot be drawn, so they are counted and left out
+// rather than quietly dropped, and `truncated` says when even the dated ones were cut.
+export type TUserTimeline = {
+  items: TUserTimelineItem[];
+  total_count: number;
+  undated_count: number;
+  truncated: boolean;
+};
+
 // One of the requesting user's open assigned work items (Home 'My tasks' widget).
 export type TMyWorkItem = {
   id: string;
@@ -377,6 +392,35 @@ export type TRoleRate = {
   currency: string;
 };
 
+/**
+ * A market's indicative rates, served whole by the API. The numbers live only on
+ * the server — the client renders what it is handed rather than keeping a second
+ * copy that quietly drifts out of step with it.
+ */
+export type TRolePreset = {
+  country: string;
+  label: string;
+  currency: string;
+  hours_per_day: number;
+  /** Keyed on the lowercased discipline, which is how a rate is stored. */
+  rates: Record<string, number>;
+  /** Where the figures came from. Shown, not hidden behind a tooltip. */
+  source: string;
+  captured_on: string;
+};
+
+/** The currency budgets are read in, and the one rate that gets them there. */
+export type TCurrencySettings = {
+  /** "" = read every project in its own currency and convert nothing. */
+  display_currency: string;
+  /** GBP per 1 EUR. Typed by a person, not fetched. */
+  eur_gbp_rate: number;
+  rate_captured_on: string | null;
+  /** false when nobody has ever set this up. */
+  configured: boolean;
+  available: string[];
+};
+
 export type TExpenseCategory = "hardware" | "travel" | "field" | "services" | "shipping" | "other";
 
 export type TProjectExpense = {
@@ -396,7 +440,36 @@ export type TProjectExpense = {
 
 export type TMoney = { currency: string; amount: number };
 
+/**
+ * The same figures read in one currency, as an approximation.
+ *
+ * A sibling of the blocks below and never a replacement for them: the recorded
+ * amounts stay exactly as recorded, so a reader can always get back to the number
+ * somebody actually typed. Only EUR and GBP convert; anything else is named in
+ * `unconvertible` and left out of every total here.
+ */
+export type TBudgetDisplay = {
+  currency: string;
+  /** GBP per 1 EUR, and the day a human wrote it down. */
+  rate: number;
+  rate_captured_on: string | null;
+  /** false when the rate is the built-in starting value, not one somebody set. */
+  rate_configured: boolean;
+  /** false when every figure was already in this currency — nothing to caveat. */
+  converted: boolean;
+  allocation: number | null;
+  committed: number;
+  remaining: number | null;
+  percent: number | null;
+  labour_total: number;
+  expenses_planned: number;
+  expenses_actual: number;
+  unconvertible: string[];
+};
+
 export type TProjectBudget = {
+  /** Approximate, single-currency view. The blocks below are the record. */
+  display: TBudgetDisplay;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {
     amount: number | null;

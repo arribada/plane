@@ -35,6 +35,16 @@ export const PROFILE_ADMINS_TAB = [
     i18n_label: "profile.tabs.subscribed",
     selected: "/subscribed/",
   },
+  // Arribada: every assigned work item, across every project, on one gantt.
+  // `route` has no trailing slash (it builds the href) but `selected` does, because
+  // the next/link compat shim pushes every href through ensureTrailingSlash — drop it
+  // and the tab never highlights and the mobile header loses its label.
+  {
+    key: "timeline",
+    route: "timeline",
+    i18n_label: "profile.tabs.timeline",
+    selected: "/timeline/",
+  },
   {
     key: "activity",
     route: "activity",

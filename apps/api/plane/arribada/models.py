@@ -607,3 +607,54 @@ class ProcurementRequest(models.Model):
 
     def __str__(self):
         return f"{self.label} ({self.status})"
+
+
+class WorkspaceCurrencySettings(models.Model):
+    """Which currency this workspace reads its budgets in, and at what rate.
+
+    The rest of this app deliberately refuses to convert: a rate row, an expense and
+    an allocation each carry their own currency and are shown side by side rather
+    than summed, because a subcontractor billed in dollars beside a salaried
+    engineer costed in euros has no meaningful total. That refusal was never about
+    arithmetic — it was about *provenance*. An exchange rate pulled from a feed
+    moves under the reader, is attributable to nobody, and turns a figure somebody
+    could defend into one they cannot.
+
+    A rate a human typed, with the date they typed it, is a different object. It is
+    wrong in a way that is visible and fixable. So this holds exactly one pair —
+    EUR and GBP, the two currencies this organisation actually works in — and every
+    figure derived from it is reported in a separate `display` block, marked as an
+    approximation, next to the rate and the date it was captured. The recorded
+    amounts are never rewritten.
+
+    One row per workspace, created on first write. Absent means "no display
+    currency chosen", which is not the same as EUR: with no row, every project is
+    read in its own allocation currency and nothing is converted at all.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    workspace = models.OneToOneField(
+        "db.Workspace", on_delete=models.CASCADE, related_name="arribada_currency_settings"
+    )
+    # "" = follow each project's own allocation currency and convert nothing.
+    display_currency = models.CharField(max_length=3, blank=True, default="")
+    # GBP per 1 EUR. Six decimal places because a rate rounded to two is a rate
+    # that visibly disagrees with the bank statement it is meant to approximate.
+    eur_gbp_rate = models.DecimalField(max_digits=12, decimal_places=6, default=0.85)
+    # When the human took the rate down. Shown beside every converted figure: a
+    # rate without a date is indistinguishable from a rate from four years ago.
+    rate_captured_on = models.DateField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_currency_settings"
+        verbose_name = "Workspace currency settings"
+        verbose_name_plural = "Workspace currency settings"
+
+    def __str__(self):
+        return f"{self.workspace_id} display={self.display_currency or 'project'} @ {self.eur_gbp_rate}"

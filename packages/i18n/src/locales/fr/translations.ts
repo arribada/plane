@@ -1827,6 +1827,7 @@ export default {
       assigned: "Assigné",
       created: "Créé",
       subscribed: "Suivi",
+      timeline: "Chronologie",
       activity: "Activité",
     },
     empty_state: {

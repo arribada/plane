@@ -98,6 +98,12 @@ export const coreRoutes: RouteConfigEntry[] = [
             ":workspaceSlug/profile/:userId/activity",
             "./(all)/[workspaceSlug]/(projects)/profile/[userId]/activity/page.tsx"
           ),
+          // Timeline (Arribada) — static, so it outranks :profileViewId above, the
+          // same way activity does.
+          route(
+            ":workspaceSlug/profile/:userId/timeline",
+            "./(all)/[workspaceSlug]/(projects)/profile/[userId]/timeline/page.tsx"
+          ),
         ]),
 
         // Stickies

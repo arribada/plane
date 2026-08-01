@@ -11,6 +11,7 @@ from .views import (
     ProjectExpenseDetailEndpoint,
     ProjectExpensesEndpoint,
     WorkspaceCalendarEndpoint,
+    WorkspaceCurrencyEndpoint,
     WorkspaceRoleRatesEndpoint,
     AdoptIssuesEndpoint,
     GithubInboxEndpoint,
@@ -28,7 +29,9 @@ from .views import (
     ProjectTeamEndpoint,
     ProjectTemplateCloneEndpoint,
     TeamSyncEndpoint,
+    UserTimelineEndpoint,
     WorkloadEndpoint,
+    WorkloadTimelineEndpoint,
     WorkspaceAiSettingsEndpoint,
     WorkspaceCriticalPathEndpoint,
     WorkspaceProjectStatusesEndpoint,
@@ -138,9 +141,19 @@ urlpatterns = [
         name="arribada-workload",
     ),
     path(
+        "workspaces/<str:slug>/workload-timeline/",
+        WorkloadTimelineEndpoint.as_view(),
+        name="arribada-workload-timeline",
+    ),
+    path(
         "workspaces/<str:slug>/my-work/",
         MyWorkEndpoint.as_view(),
         name="arribada-my-work",
+    ),
+    path(
+        "workspaces/<str:slug>/users/<uuid:user_id>/timeline/",
+        UserTimelineEndpoint.as_view(),
+        name="arribada-user-timeline",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/overview/",
@@ -216,6 +229,11 @@ urlpatterns = [
         "workspaces/<str:slug>/role-rates/",
         WorkspaceRoleRatesEndpoint.as_view(),
         name="arribada-workspace-role-rates",
+    ),
+    path(
+        "workspaces/<str:slug>/currency/",
+        WorkspaceCurrencyEndpoint.as_view(),
+        name="arribada-workspace-currency",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/expenses/",

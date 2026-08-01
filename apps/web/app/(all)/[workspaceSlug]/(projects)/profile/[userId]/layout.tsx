@@ -48,8 +48,15 @@ function UseProfileLayout({ params }: Route.ComponentProps) {
     userService.getUserProfileProjectsSegregation(workspaceSlug, userId)
   );
   // derived values
+  // "timeline" is gated like the other admin tabs: it is in PROFILE_ADMINS_TAB, so a
+  // viewer who is not ADMIN/MEMBER gets the permission message rather than a board.
   const isAuthorizedPath =
-    pathname.includes("assigned") || pathname.includes("created") || pathname.includes("subscribed");
+    pathname.includes("assigned") ||
+    pathname.includes("created") ||
+    pathname.includes("subscribed") ||
+    pathname.includes("timeline");
+  // Deliberately NOT timeline: this filter and the mobile header drive the
+  // EIssuesStoreType.PROFILE issues store, which the timeline tab does not use.
   const isIssuesTab = pathname.includes("assigned") || pathname.includes("created") || pathname.includes("subscribed");
 
   const tabsList = isAuthorized ? [...PROFILE_VIEWER_TAB, ...PROFILE_ADMINS_TAB] : PROFILE_VIEWER_TAB;

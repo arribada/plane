@@ -286,7 +286,13 @@
     --txt-placeholder: var(--neutral-900);
     --txt-disabled: var(--neutral-800);
     --txt-accent-primary: var(--brand-default);
-    --txt-accent-secondary: var(--brand-700);
+    /* Not --brand-700: that stop is 2.76:1 on --bg-surface-1, which fails AA for
+       text, and `text-accent-secondary` is used as body text and as a link hover
+       in ~30 places. Hand-set to the lightest teal on this hue that still clears
+       4.5:1 against the *darkest* light-mode background (--bg-canvas): 4.57:1
+       there, 5.22:1 on white, 5.02:1 on --bg-accent-subtle. Still lighter than
+       --txt-accent-primary, so the primary/secondary hierarchy is preserved. */
+    --txt-accent-secondary: oklch(0.52 0.1 172);
     --txt-on-color: var(--neutral-100);
     --txt-on-color-disabled: var(--alpha-black-400);
     --txt-inverse: var(--neutral-white);
@@ -398,15 +404,24 @@
 
     /* ---------- Dark mode color tokens ---------- */
     @variant dark {
-      /* Neutral colors */
-      --neutral-black: oklch(0.1689 0.0021 230.81);
-      --neutral-100: oklch(0.1932 0.002 230.81);
-      --neutral-200: oklch(0.2158 0.0025 230.82);
-      --neutral-300: oklch(0.2378 0.0029 230.83);
-      --neutral-400: oklch(0.2593 0.0033 230.84);
-      --neutral-500: oklch(0.3011 0.0041 230.85);
-      --neutral-600: oklch(0.3415 0.0049 230.86);
-      --neutral-700: oklch(0.3999 0.0059 230.87);
+      /* Neutral colors.
+         Stops black..700 are the dark theme's surfaces and borders, and they
+         carry the Arribada navy: hue 250 — the hue of #0a1929, which is
+         oklch(0.208 0.038 251) — with the chroma tapering off as the stops get
+         lighter, so the chrome reads navy while mid-greys stay grey. Lightness
+         is untouched at every stop, and the chroma is small enough that the
+         relative luminance is unchanged to four decimal places: every contrast
+         ratio against these backgrounds moves by at most 0.01.
+         Stops 800..1200 are text and stay neutral — tinting text is what makes
+         a themed UI look muddy. */
+      --neutral-black: oklch(0.1689 0.026 250);
+      --neutral-100: oklch(0.1932 0.025 250);
+      --neutral-200: oklch(0.2158 0.022 250);
+      --neutral-300: oklch(0.2378 0.02 250);
+      --neutral-400: oklch(0.2593 0.018 250);
+      --neutral-500: oklch(0.3011 0.015 250);
+      --neutral-600: oklch(0.3415 0.013 250);
+      --neutral-700: oklch(0.3999 0.011 250);
       --neutral-800: oklch(0.5989 0.0096 230.88);
       --neutral-900: oklch(0.6835 0.0074 230.81);
       --neutral-1000: oklch(0.7655 0.0054 230.76);
@@ -491,9 +506,27 @@
       --bg-layer-transparent-active: var(--alpha-white-200);
       --bg-layer-transparent-selected: var(--alpha-white-300);
       --bg-layer-disabled: var(--neutral-700);
-      --bg-accent-primary: var(--brand-default);
-      --bg-accent-primary-hover: var(--brand-500);
-      --bg-accent-primary-active: var(--brand-400);
+      /* Not --brand-default. Filled accent surfaces put --txt-on-color on top
+         (see the `primary` button variant), and --txt-on-color is light in this
+         theme, so a bright teal here reads at 2.53:1 — a fail, and the same fail
+         upstream's blue had at 2.73:1. Darkened to the brightest teal on this
+         hue that clears 4.5:1 against --txt-on-color: 4.56:1, while still
+         standing 3.35:1 clear of --bg-canvas so the button itself is visible.
+         --brand-default keeps the bright teal for text, icons and borders, where
+         it sits on a dark background and measures 6.04:1. Flipping
+         --txt-on-color dark instead was the alternative, and it is not
+         available: dark --bg-danger-primary is a *dark* red and shares it. */
+      --bg-accent-primary: oklch(0.5 0.09 172);
+      /* Moved down with the base above, not left on the brand ramp. Darkening
+         --bg-accent-primary from 0.64 to 0.5 to fix its text contrast collapsed the
+         step to --brand-500 from 2.23:1 to 1.24:1 — hovering a filled accent button
+         became almost invisible, and nothing else in the group signals hover, so the
+         button read as unresponsive. Re-spaced to 1.75:1 base→hover and 2.31:1
+         base→active, close to what upstream's blue had. Both are darker than the
+         base, so the light --txt-on-color sitting on them only gains contrast:
+         5.40:1 → 9.44:1 → 12.47:1. */
+      --bg-accent-primary-hover: oklch(0.37 0.075 172);
+      --bg-accent-primary-active: oklch(0.3 0.062 172);
       --bg-accent-subtle: var(--brand-100);
       --bg-accent-subtle-hover: var(--brand-200);
       --bg-accent-subtle-active: var(--brand-300);

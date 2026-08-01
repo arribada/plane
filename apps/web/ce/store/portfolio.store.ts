@@ -79,7 +79,31 @@ export interface IPortfolioStore {
   isCriticalIssue: (id: string) => boolean;
   setShowCriticalPath: (workspaceSlug: string, value: boolean) => void;
   fetchCriticalPath: (workspaceSlug: string) => Promise<void>;
+  // --- profile "Timeline" tab: the same board focused on one person ----------
+  // A personal timeline is this board with a different row set — same gantt slot,
+  // same getRowById, same dependency arrows. Everything below is inert while
+  // `focusUserId` is null, which is what the portfolio always leaves it as.
+  focusUserId: string | null;
+  /** Every item assigned to the focused user, dated or not. */
+  userTotalCount: number;
+  /** How many of them a timeline cannot place, so the view can say so. */
+  userUndatedCount: number;
+  userTruncated: boolean;
+  /** The load failed, so an empty board means "we don't know", not "no work". */
+  userLoadFailed: boolean;
+  /** Projects the focused user actually has rows in, in board order. */
+  userProjectIds: string[];
+  /** Their items as one flat, date-ordered list (the "no grouping" mode). */
+  userItemIds: string[];
+  /** Loaded items grouped by project — already computed for the gantt; exposed so
+   *  a sidebar can say how many rows a project header stands for. */
+  itemIdsByProject: Map<string, string[]>;
+  fetchUserTimeline: (workspaceSlug: string, userId: string) => Promise<void>;
+  resetUserFocus: () => void;
 }
+
+/** One shared empty array, so "this project has no rows" is a stable reference. */
+const NO_ITEMS: string[] = [];
 
 const ORDER_KEY = "arribada.portfolio.manualOrder";
 const FOLDER_PREFIX = "__folder__:";
@@ -103,6 +127,13 @@ export class PortfolioStore implements IPortfolioStore {
   expandedProjectIds: Set<string> = new Set();
   colorBy: TPortfolioColorBy = "project";
   sortBy: TPortfolioSortBy = "start_date";
+  // What the portfolio was sorted and coloured by before a per-user timeline took
+  // the store over; null when no such view is open. See fetchUserTimeline.
+  // Deliberately absent from makeObservable: nothing renders these, they are only
+  // read by resetUserFocus, and making them reactive would invalidate observers
+  // for a value none of them display.
+  preFocusSortBy: TPortfolioSortBy | null = null;
+  preFocusColorBy: TPortfolioColorBy | null = null;
   isLoading = false;
   folders: TFolder[] = [];
   groupByFolder = false;
@@ -116,6 +147,12 @@ export class PortfolioStore implements IPortfolioStore {
   showCriticalPath = false;
   criticalIssueIds: Set<string> = new Set();
   crossEdges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[] = [];
+  // per-user focus (profile "Timeline" tab); null on the portfolio, always
+  focusUserId: string | null = null;
+  userTotalCount = 0;
+  userUndatedCount = 0;
+  userTruncated = false;
+  userLoadFailed = false;
 
   service: ArribadaService;
 
@@ -141,6 +178,15 @@ export class PortfolioStore implements IPortfolioStore {
       showCriticalPath: observable.ref,
       criticalIssueIds: observable,
       crossEdges: observable,
+      focusUserId: observable.ref,
+      userTotalCount: observable.ref,
+      userUndatedCount: observable.ref,
+      userTruncated: observable.ref,
+      userLoadFailed: observable.ref,
+      userProjectIds: computed,
+      userItemIds: computed,
+      fetchUserTimeline: action,
+      resetUserFocus: action,
       allProjects: computed,
       scopedProjectIds: computed,
       sortedProjectIds: computed,
@@ -202,6 +248,9 @@ export class PortfolioStore implements IPortfolioStore {
   // The base project set the timeline shows: the user's selection, or — when a
   // folder is focused — only that folder's projects (a folder-scoped portfolio).
   get scopedProjectIds(): string[] {
+    // Focused on one person: only the projects they actually have work in. A personal
+    // timeline listing every project in the workspace, most of them empty, is noise.
+    if (this.focusUserId) return this.userProjectIds;
     if (!this.focusFolderId) return this.displayedProjectIds;
     const folder = this.folders.find((f) => f.id === this.focusFolderId);
     if (!folder) return this.displayedProjectIds;
@@ -289,7 +338,36 @@ export class PortfolioStore implements IPortfolioStore {
   }
 
   private sortedItemIds(projectId: string): string[] {
-    return this.itemIdsByProject.get(projectId) ?? [];
+    // NO_ITEMS, not `?? []`. A project whose rows are not loaded — every collapsed
+    // one — would otherwise get a freshly-minted array on each call, so an observer
+    // comparing by reference sees a change that never happened and re-renders on
+    // every tick of anything else in the store.
+    return this.itemIdsByProject.get(projectId) ?? NO_ITEMS;
+  }
+
+  // Projects the focused user has loaded rows in, kept in board order. Reads
+  // itemIdsByProject rather than itemMap so it can never disagree with the rows the
+  // gantt draws under each project header.
+  get userProjectIds(): string[] {
+    if (!this.focusUserId) return [];
+    const grouped = this.itemIdsByProject;
+    return this.displayedProjectIds.filter((id) => !!grouped.get(id)?.length);
+  }
+
+  // The same rows as one flat, date-ordered list — the "no grouping" mode, where a
+  // person reads their own weeks straight down the page instead of per project.
+  get userItemIds(): string[] {
+    if (!this.focusUserId) return [];
+    // Object.values() is already a copy, so sorting it mutates nothing observable.
+    const rows = Object.values(this.itemMap).filter((it) => this.itemMatchesFilters(it));
+    rows.sort((a, b) => {
+      const byStart = cmpDate(a.start_date, b.start_date);
+      if (byStart) return byStart;
+      const byTarget = cmpDate(a.target_date, b.target_date);
+      if (byTarget) return byTarget;
+      return a.sequence_id - b.sequence_id;
+    });
+    return rows.map((it) => it.id);
   }
 
   // Displayed projects grouped into folder swimlanes, each preserving the active
@@ -424,6 +502,123 @@ export class PortfolioStore implements IPortfolioStore {
         this.isLoading = false;
       });
     }
+  };
+
+  /**
+   * Load one person's whole timeline: every dated item assigned to them, in every
+   * project the caller can see, in one request.
+   *
+   * Deliberately NOT fetchPortfolio() + toggleProjectExpansion(): that path lazy-loads
+   * items one project at a time on expand, so "assigned to me" could only ever filter
+   * the projects somebody had already opened by hand. It also re-reads the saved manual
+   * drag order and force-flips sortBy to "manual", which would silently import the
+   * user's portfolio arrangement into a view that never offered them one.
+   *
+   * The item-level filters are cleared: on this board every row is already assigned to
+   * the subject, and inheriting the portfolio's "assigned to me" toggle would blank out
+   * a colleague's timeline entirely.
+   */
+  fetchUserTimeline = async (workspaceSlug: string, userId: string): Promise<void> => {
+    runInAction(() => {
+      this.isLoading = true;
+      this.userLoadFailed = false;
+      // This view forces its own sort and colour, and this store is a singleton
+      // shared with the portfolio. Remember what the portfolio was showing so
+      // leaving does not hand it back a sort choice the user never made:
+      // fetchPortfolio only reassigns sortBy when a saved manual order exists, so
+      // on a workspace without one the leak is permanent and silent.
+      // Captured on entry only — re-entering the same view must not overwrite the
+      // portfolio's setting with this view's own.
+      if (!this.focusUserId) {
+        this.preFocusSortBy = this.sortBy;
+        this.preFocusColorBy = this.colorBy;
+      }
+    });
+    try {
+      const [projects, folders, timeline] = await Promise.all([
+        this.service.getPortfolio(workspaceSlug),
+        this.service.getFolders(workspaceSlug).catch(() => []),
+        this.service.getUserTimeline(workspaceSlug, userId),
+      ]);
+      runInAction(() => {
+        this.folders = folders.map((f) => ({ id: f.id, name: f.name, project_ids: f.project_ids }));
+        this.projectMap = {};
+        for (const project of projects) set(this.projectMap, [project.id], project);
+
+        const items: Record<string, TPortfolioItem> = {};
+        const owner: Record<string, string> = {};
+        const withRows = new Set<string>();
+        for (const row of timeline.items ?? []) {
+          const { project_id: projectId, ...item } = row;
+          items[item.id] = item;
+          owner[item.id] = projectId;
+          withRows.add(projectId);
+        }
+        this.itemMap = items;
+        this.itemProjectId = owner;
+        // Every project here arrived whole, so mark it loaded: that alone stops a
+        // collapse/expand from lazily pulling in everybody else's work items.
+        this.loadedItemProjects = withRows;
+        // A personal timeline with collapsed project rows shows nothing at all.
+        this.expandedProjectIds = new Set(withRows);
+        this.displayedProjectIds = projects.filter((p) => !p.archived).map((p) => p.id);
+
+        this.sortBy = "start_date";
+        // groupByFolder is deliberately left alone: the view owns that switch, and
+        // resetting it here would fight the control on every profile-to-profile move.
+        this.focusFolderId = null;
+        this.priorityFilter = new Set();
+        this.assignedToMeOnly = false;
+
+        this.userTotalCount = timeline.total_count ?? 0;
+        this.userUndatedCount = timeline.undated_count ?? 0;
+        this.userTruncated = !!timeline.truncated;
+        this.focusUserId = userId;
+      });
+    } catch {
+      // Swallowed on purpose, and recorded: the view is entered by clicking a tab, so
+      // there is nobody to hand the rejection to, and an empty board that cannot say
+      // whether it failed or the person simply has no work is the worse outcome.
+      runInAction(() => {
+        this.itemMap = {};
+        this.itemProjectId = {};
+        this.loadedItemProjects = new Set();
+        this.expandedProjectIds = new Set();
+        this.userTotalCount = 0;
+        this.userUndatedCount = 0;
+        this.userTruncated = false;
+        this.userLoadFailed = true;
+        this.focusUserId = userId;
+      });
+    } finally {
+      runInAction(() => {
+        this.isLoading = false;
+      });
+    }
+  };
+
+  /** Leave the personal view. Not optional: this store is a singleton on RootStore,
+   *  so without it /portfolio would open filtered to one person, every project
+   *  force-expanded, with a row set that came from somebody else's profile. */
+  resetUserFocus = (): void => {
+    this.focusUserId = null;
+    this.userTotalCount = 0;
+    this.userUndatedCount = 0;
+    this.userTruncated = false;
+    this.userLoadFailed = false;
+    this.itemMap = {};
+    this.itemProjectId = {};
+    this.loadedItemProjects = new Set();
+    this.expandedProjectIds = new Set();
+    // emptied rather than left stale: fetchPortfolio rebuilds it on the way in
+    this.displayedProjectIds = [];
+    this.priorityFilter = new Set();
+    this.assignedToMeOnly = false;
+    this.groupByFolder = false;
+    if (this.preFocusSortBy) this.sortBy = this.preFocusSortBy;
+    if (this.preFocusColorBy) this.colorBy = this.preFocusColorBy;
+    this.preFocusSortBy = null;
+    this.preFocusColorBy = null;
   };
 
   toggleProjectExpansion = async (workspaceSlug: string, projectId: string): Promise<void> => {

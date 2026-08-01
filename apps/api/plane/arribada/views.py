@@ -39,8 +39,16 @@ from .models import (
     ProjectExpense,
     ProjectWikiDoc,
     WorkspaceAiSettings,
+    WorkspaceCurrencySettings,
     WorkspaceNonWorkingDay,
     WorkspaceRoleRate,
+)
+from .rate_presets import (
+    DEFAULT_EUR_GBP_RATE,
+    DEFAULT_RATE_CAPTURED_ON,
+    DISPLAY_CURRENCIES,
+    convert as _convert_money,
+    preset_payload,
 )
 from .scheduling import build_edges, cascade, critical_path, slack_for_issues
 from .serializers import ProjectScheduleSerializer
@@ -1013,6 +1021,101 @@ class MyWorkEndpoint(BaseAPIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
+# A personal timeline is a workspace-wide scan for one person, so it needs a ceiling
+# of its own: PortfolioItemsEndpoint's 500 is per project, and there is no project here.
+USER_TIMELINE_LIMIT = 500
+
+
+class UserTimelineEndpoint(BaseAPIView):
+    """Every DATED work item assigned to one user, across every project the caller
+    can see — the profile view's cross-project 'Timeline' tab.
+
+    PortfolioItemsEndpoint answers the same row shape one project at a time, which a
+    personal timeline cannot use: it would be one request per project and the project
+    would be implied by the URL. Here the project id travels with each row instead.
+
+    Undated items are counted and left out, not silently dropped: a timeline cannot
+    place an item with no dates at all, and the caller has to be able to say how many
+    are missing rather than showing a board that quietly omits half the work.
+
+    Scoped to the CALLER's projects (`_visible_projects`), never the subject's, so
+    viewing a colleague's profile can never leak a project you are not a member of.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, user_id):
+        visible = _visible_projects(request, slug).filter(archived_at__isnull=True)
+
+        # Through IssueAssignee, never the `assignees` m2m — see MyWorkEndpoint above:
+        # Django does not apply a through model's manager to an m2m join, so
+        # `assignees=<user>` matches SOFT-DELETED assignment rows too, and upstream's
+        # issue serializer deletes and re-inserts every assignee row on each edit.
+        # The m2m form shows people work they were taken off months ago.
+        assigned_ids = IssueAssignee.objects.filter(
+            assignee_id=user_id, deleted_at__isnull=True
+        ).values_list("issue_id", flat=True)
+
+        assigned = Issue.issue_objects.filter(
+            workspace__slug=slug,
+            project__in=visible,
+            id__in=assigned_ids,
+            deleted_at__isnull=True,
+        )
+
+        dated = Q(start_date__isnull=False) | Q(target_date__isnull=False)
+        counts = assigned.aggregate(
+            total=Count("id", distinct=True),
+            dated=Count("id", filter=dated, distinct=True),
+        )
+
+        # One row over the limit, so "there is more" is a fact rather than a guess.
+        item_list = list(
+            assigned.filter(dated)
+            .order_by("start_date", "target_date", "sequence_id")
+            .values(
+                "id",
+                "name",
+                "sequence_id",
+                "start_date",
+                "target_date",
+                "state_id",
+                "parent_id",
+                "priority",
+                "project_id",
+            )[: USER_TIMELINE_LIMIT + 1]
+        )
+        truncated = len(item_list) > USER_TIMELINE_LIMIT
+        item_list = item_list[:USER_TIMELINE_LIMIT]
+
+        # Same assignee attachment as PortfolioItemsEndpoint: the bars show every owner,
+        # not just the person whose profile this is. select_related the avatar asset too,
+        # or avatar_url is an N+1 per assignee.
+        assignees = defaultdict(list)
+        for a in IssueAssignee.objects.filter(
+            issue_id__in=[i["id"] for i in item_list], deleted_at__isnull=True
+        ).select_related("assignee", "assignee__avatar_asset"):
+            u = a.assignee
+            assignees[a.issue_id].append(
+                {
+                    "id": str(u.id),
+                    "name": u.display_name or u.first_name or u.email,
+                    "avatar": getattr(u, "avatar_url", None) or None,
+                }
+            )
+        for i in item_list:
+            i["assignees"] = assignees.get(i["id"], [])
+
+        return Response(
+            {
+                "items": item_list,
+                "total_count": counts["total"] or 0,
+                "undated_count": (counts["total"] or 0) - (counts["dated"] or 0),
+                "truncated": truncated,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class WorkloadEndpoint(BaseAPIView):
     """Per-person load across the workspace: how much active work each member
     carries, what's overdue, and what's due this week. Data already exists
@@ -1499,8 +1602,33 @@ class ProjectScheduleEndpoint(BaseAPIView):
             return Response(
                 {"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND
             )
+        payload = request.data
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
-        serializer = ProjectScheduleSerializer(schedule, data=request.data, partial=True)
+        if "budget_currency" in payload:
+            # Nothing validated this before, because no UI had ever sent it. A typo
+            # here is silent and expensive: the budget view only counts figures
+            # matching the allocation's currency, so "EURO" would leave the bar
+            # rendering against a committed total of zero. New choices are therefore
+            # held to the currencies this fork can actually reason about.
+            #
+            # Only NEW choices. The client resends the current currency with every
+            # allocation save, so validating unconditionally locked any project
+            # already held in something else out of its own amount field — the
+            # dropdown offers the stored value precisely so it is not silently
+            # rewritten, and the server then refused the value it had just served.
+            # Keeping what is already recorded is not a decision this needs to vet.
+            wanted = str(payload.get("budget_currency") or "").strip().upper()
+            stored = (schedule.budget_currency or "").strip().upper()
+            if wanted not in DISPLAY_CURRENCIES and wanted != stored:
+                return Response(
+                    {
+                        "budget_currency": f"A budget must be held in {' or '.join(DISPLAY_CURRENCIES)}.",
+                        "detail": "An expense can be in any currency; the allocation it is read against cannot.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            payload = {**payload, "budget_currency": wanted}
+        serializer = ProjectScheduleSerializer(schedule, data=payload, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -3549,8 +3677,15 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
                     for r in rows
                 ],
                 # The vocabulary a rate can attach to, so the UI offers the
-                # disciplines that exist rather than a free-text box.
-                "known_roles": list(PROJECT_ROLES),
+                # disciplines that exist rather than a free-text box. Same
+                # {value,label} shape ProjectTeamEndpoint returns — it used to be
+                # list(PROJECT_ROLES), which DRF renders as bare 2-tuples, and no
+                # caller had ever read it closely enough to notice.
+                "known_roles": [{"value": v, "label": label} for v, label in PROJECT_ROLES],
+                # Indicative starting figures, per market. The server is the only
+                # place these numbers exist: the client renders what it is given
+                # rather than carrying a second copy that drifts from this one.
+                "presets": preset_payload(),
             },
             status=status.HTTP_200_OK,
         )
@@ -3594,6 +3729,106 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
                 }
             )
         return Response({"rates": saved}, status=status.HTTP_200_OK)
+
+
+def _currency_settings(slug):
+    """{display_currency, eur_gbp_rate, rate_captured_on} for a workspace.
+
+    No row means nobody has chosen a display currency, which is deliberately not
+    the same as choosing EUR: with no row every project is read in its own
+    allocation currency and nothing anywhere is converted.
+    """
+    row = WorkspaceCurrencySettings.objects.filter(workspace__slug=slug).first()
+    if not row:
+        return {
+            "display_currency": "",
+            "eur_gbp_rate": float(DEFAULT_EUR_GBP_RATE),
+            # Deliberately None, not DEFAULT_RATE_CAPTURED_ON. That constant is the
+            # day the fallback was written into this repository, and reporting it
+            # here would put a date on a rate nobody chose — the client renders it
+            # as "recorded <date>", which reads as a person's decision. The whole
+            # point of this feature is that a converted figure can be defended six
+            # months later; a fabricated provenance is worse than none.
+            "rate_captured_on": None,
+            "configured": False,
+        }
+    return {
+        "display_currency": (row.display_currency or "").upper(),
+        "eur_gbp_rate": float(row.eur_gbp_rate),
+        "rate_captured_on": row.rate_captured_on.isoformat() if row.rate_captured_on else None,
+        "configured": True,
+    }
+
+
+class WorkspaceCurrencyEndpoint(BaseAPIView):
+    """The currency budgets are read in, and the one rate used to get there.
+
+    Deliberately not an FX feed. A rate that moves under the reader is a rate
+    nobody can defend six months later when the figure is questioned; a rate a
+    named person typed on a named day is wrong in a way that is visible and
+    fixable. Everything derived from it is reported separately and marked as an
+    approximation — the recorded amounts are never rewritten.
+
+    Reading is open to anyone who can see the workspace; writing is admin-only,
+    the same gate as the hourly rates, because both are commercial facts about the
+    organisation rather than decisions about one project.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        payload = dict(_currency_settings(slug))
+        payload["available"] = list(DISPLAY_CURRENCIES)
+        return Response(payload, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN], level="WORKSPACE")
+    def put(self, request, slug):
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if not workspace:
+            return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        row, _ = WorkspaceCurrencySettings.objects.get_or_create(workspace=workspace)
+
+        if "display_currency" in request.data:
+            wanted = str(request.data.get("display_currency") or "").strip().upper()
+            # "" is a real answer: read every project in its own currency and
+            # convert nothing. Anything else has to be a pair we can actually do.
+            if wanted and wanted not in DISPLAY_CURRENCIES:
+                return Response(
+                    {
+                        "error": f"Only {' and '.join(DISPLAY_CURRENCIES)} can be displayed.",
+                        "detail": "Amounts in any other currency stay in their own — nothing is guessed.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row.display_currency = wanted
+
+        if "eur_gbp_rate" in request.data:
+            try:
+                rate = float(request.data.get("eur_gbp_rate") or 0)
+            except (TypeError, ValueError):
+                return Response({"error": "The rate must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+            # Bounds wide enough for any rate this pair has ever held, narrow
+            # enough that a slipped decimal point is caught rather than shipped
+            # into every figure on the page.
+            if not 0.1 <= rate <= 10:
+                return Response(
+                    {"error": "That rate is not plausible for EUR/GBP.", "detail": "Expected something near 0.85."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row.eur_gbp_rate = rate
+            # A rate without a date cannot be told apart from a rate from four
+            # years ago, so changing one always restamps the other. An explicit
+            # date wins — somebody entering last month's rate should say so.
+            row.rate_captured_on = _parse_date(request.data.get("rate_captured_on")) or timezone.now().date()
+        elif "rate_captured_on" in request.data:
+            row.rate_captured_on = _parse_date(request.data.get("rate_captured_on"))
+
+        row.updated_by = request.user
+        row.save()
+
+        payload = dict(_currency_settings(slug))
+        payload["available"] = list(DISPLAY_CURRENCIES)
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 def _is_project_lead(user, project_id):
@@ -3736,6 +3971,90 @@ def _serialize_expense(row):
     }
 
 
+def _budget_display(wanted, settings, allocated, allocation_currency, labour_totals, expenses):
+    """One currency's worth of the same figures, marked as an approximation.
+
+    A sibling of `allocation`/`labour`/`expenses`, never a replacement for them:
+    the recorded amounts stay exactly as recorded and remain in the response, so
+    nothing downstream silently changes meaning and a reader can always get back
+    to the number somebody actually typed.
+
+    Only EUR and GBP convert. A third currency is not guessed at — it is named in
+    `unconvertible` and left out of the totals, which is the same treatment
+    `excluded_currencies` already gives it, so a toggle can never make a line
+    disappear quietly.
+    """
+    currency = (wanted or "").strip().upper()
+    if currency not in DISPLAY_CURRENCIES:
+        # Nobody has chosen one: read the project in its own currency, which
+        # converts nothing and reproduces the figures above exactly.
+        currency = (allocation_currency or "EUR").upper()
+    rate = settings["eur_gbp_rate"]
+
+    unconvertible = set()
+    converted = False
+
+    def take(amount, source):
+        """Amount in the display currency, or None; records what it could not do."""
+        nonlocal converted
+        code = (source or "").strip().upper()
+        value = _convert_money(amount, code, currency, rate)
+        if value is None:
+            unconvertible.add(code or "?")
+            return None
+        if code != currency:
+            converted = True
+        return value
+
+    labour_total = 0.0
+    for row in labour_totals:
+        value = take(row["amount"], row["currency"])
+        if value is not None:
+            labour_total += value
+
+    planned = actual = 0.0
+    for row in expenses:
+        value = take(float(row.total), row.currency)
+        if value is None:
+            continue
+        if row.planned:
+            planned += value
+        else:
+            actual += value
+
+    committed = labour_total + planned + actual
+
+    allocation = None
+    if allocated is not None:
+        allocation = take(allocated, allocation_currency)
+
+    return {
+        "currency": currency,
+        # GBP per 1 EUR, and the day a human wrote it down. Both travel with the
+        # figures so the caveat cannot be separated from the number.
+        "rate": rate,
+        "rate_captured_on": settings["rate_captured_on"],
+        # False when the rate is the built-in starting value rather than one
+        # somebody set. Without this the client cannot tell "nobody has chosen a
+        # rate" from "somebody chose one and left the date blank", and the two
+        # deserve different words.
+        "rate_configured": settings["configured"],
+        # False when every figure was already in this currency: the client then
+        # has no reason to mark anything as approximate.
+        "converted": converted,
+        "allocation": None if allocation is None else round(allocation, 2),
+        "committed": round(committed, 2),
+        "remaining": None if allocation is None else round(allocation - committed, 2),
+        "percent": None if not allocation else round(100 * committed / allocation),
+        "labour_total": round(labour_total, 2),
+        "expenses_planned": round(planned, 2),
+        "expenses_actual": round(actual, 2),
+        # Currencies this pair cannot reach. Left out of every total above and
+        # named here, exactly as they are left out of `allocation.committed`.
+        "unconvertible": sorted(unconvertible),
+    }
+
+
 class ProjectBudgetEndpoint(BaseAPIView):
     """What this project costs: the human time its plan implies, plus what it spends.
 
@@ -3802,8 +4121,24 @@ class ProjectBudgetEndpoint(BaseAPIView):
             else:
                 other_currencies.add(row.currency)
 
+        # The same figures read in one currency. A sibling block, never a
+        # rewrite: `allocation`/`labour`/`expenses` below are untouched, so the
+        # amounts somebody actually recorded stay available beside the estimate.
+        # `?display=` overrides the workspace's choice for one read — looking at a
+        # budget in sterling should not require changing it for everybody.
+        currency_settings = _currency_settings(slug)
+        display = _budget_display(
+            request.query_params.get("display") or currency_settings["display_currency"],
+            currency_settings,
+            allocated,
+            allocation_currency,
+            labour["totals"],
+            expenses,
+        )
+
         return Response(
             {
+                "display": display,
                 "allocation": {
                     "amount": allocated,
                     "currency": allocation_currency,
@@ -4028,3 +4363,498 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
             ProjectExpense.objects.filter(id=row.expense_id).delete()
         row.delete()
         return Response({"deleted": True}, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# Workload timeline: when each person is booked, and where two things collide
+# ---------------------------------------------------------------------------
+
+# The default span the timeline answers for. A month back, because work that
+# started before this week still has to be visible; two quarters forward, because
+# that is as far ahead as this team commits. Overridable with ?from= / ?to=.
+WORKLOAD_WINDOW_BACK_DAYS = 30
+WORKLOAD_WINDOW_FORWARD_DAYS = 180
+# The widest window a caller may ask for. Without a ceiling, ?from=1970&to=2100
+# turns a bounded query into a scan of every dated item this workspace ever had.
+WORKLOAD_WINDOW_MAX_DAYS = 1096
+# And a ceiling on the rows themselves. WorkspaceCriticalPathEndpoint loads every
+# dated issue in every visible project with no cap at all; on two dozen projects
+# that is the shape of query that stops answering. Truncation is reported rather
+# than hidden, so the UI can say the board is incomplete instead of implying it.
+WORKLOAD_ITEM_CAP = 2000
+
+# Work items nobody owns still have to go somewhere. They get their own row under
+# this id rather than being dropped, because "no owner" is the most actionable
+# thing a plan can tell you — but they are never overlap-checked: an unowned
+# backlog is not one pair of hands, so two of them running at once is not a clash.
+UNASSIGNED_ROW_ID = "unassigned"
+
+
+def _workload_window(request, today):
+    """The [from, to] the timeline answers for, from the query string or defaults.
+
+    A malformed date falls back to the default rather than raising: a typo in a
+    bookmarked URL should show the normal window, not a 500.
+    """
+
+    def _read(name, fallback):
+        raw = (request.GET.get(name) or "").strip()
+        if not raw:
+            return fallback
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return fallback
+
+    win_from = _read("from", today - timedelta(days=WORKLOAD_WINDOW_BACK_DAYS))
+    win_to = _read("to", today + timedelta(days=WORKLOAD_WINDOW_FORWARD_DAYS))
+    if win_to < win_from:
+        win_from, win_to = win_to, win_from
+    if (win_to - win_from).days > WORKLOAD_WINDOW_MAX_DAYS:
+        win_to = win_from + timedelta(days=WORKLOAD_WINDOW_MAX_DAYS)
+    return win_from, win_to
+
+
+def _working_day_test(holidays, leave):
+    """A predicate for "does this person work on this day".
+
+    Weekends and workspace holidays are answered by the scheduler's own
+    `next_working_day` — a day is a working day exactly when advancing to the next
+    one does not move. Reusing it rather than re-testing `weekday() < 5` here is
+    the point: the planner and the timeline must not be able to disagree about
+    which days exist, and a second copy of that rule would eventually drift.
+
+    The person's own leave is layered on top, which is why this is a closure per
+    person and not a workspace constant.
+    """
+    from .blueprints import next_working_day
+
+    def is_working(day):
+        if next_working_day(day, holidays) != day:
+            return False
+        return not any(start <= day <= end for start, end in leave)
+
+    return is_working
+
+
+def _count_working_days(start, end, is_working):
+    """Working days in the inclusive range [start, end]; 0 if the range is empty."""
+    if end < start:
+        return 0
+    day, count = start, 0
+    # Bounded exactly as next_working_day is: a pair of dates from bad data must
+    # not be able to spin this loop.
+    for _ in range(WORKLOAD_WINDOW_MAX_DAYS + 2):
+        if day > end:
+            break
+        if is_working(day):
+            count += 1
+        day += timedelta(days=1)
+    return count
+
+
+def _overlap_regions(windows, is_working):
+    """Periods where two or more of `windows` are live on a day the person works.
+
+    `windows` is [(start, end, issue_id)] with INCLUSIVE ends — Plane's target_date
+    is the last day of the work, not the day after it.
+
+    Two rules keep this a conflict report rather than a red wash:
+
+    * end-to-start is not a conflict. A task finishing on the Friday and the next
+      starting on the Monday share no day at all, so the intersection is empty and
+      nothing is emitted. That falls out of inclusive ranges; it is stated here
+      because it is the first thing anybody will ask.
+    * a region must contain at least one WORKING day. Two tasks that meet only
+      across a weekend, or only inside somebody's fortnight of leave, intersect on
+      the calendar and cost nobody an hour. Flagging those would paint a real board
+      solid red, and a warning everybody has learned to ignore is worse than none.
+
+    Regions separated only by non-working days are merged, so one double-booking
+    that happens to straddle a weekend is reported once rather than twice.
+
+    The predicate is the same one the scheduler's `_earliest_free` uses at heart
+    (`b[0] <= end and candidate <= b[1]`) — an inclusive interval intersection.
+    """
+    if len(windows) < 2:
+        return []
+    # Sweep the segment boundaries: between two consecutive edges the set of live
+    # tasks cannot change, so each segment is either a conflict or it is not.
+    edges = sorted({w[0] for w in windows} | {w[1] + timedelta(days=1) for w in windows})
+    raw = []
+    for index in range(len(edges) - 1):
+        seg_start = edges[index]
+        seg_end = edges[index + 1] - timedelta(days=1)
+        if seg_end < seg_start:
+            continue
+        active = [w for w in windows if w[0] <= seg_end and seg_start <= w[1]]
+        if len(active) < 2:
+            continue
+        days = _count_working_days(seg_start, seg_end, is_working)
+        if not days:
+            continue
+        raw.append(
+            {
+                "start": seg_start,
+                "end": seg_end,
+                "days": days,
+                "issue_ids": [w[2] for w in active],
+            }
+        )
+
+    merged = []
+    for region in raw:
+        previous = merged[-1] if merged else None
+        gap = (
+            _count_working_days(
+                previous["end"] + timedelta(days=1),
+                region["start"] - timedelta(days=1),
+                is_working,
+            )
+            if previous
+            else 1
+        )
+        # Same tasks, no working day between them: one double-booking that happens
+        # to straddle a weekend, reported once.
+        #
+        # The set has to MATCH, not merely touch. Unioning across a change of cast
+        # was the bug: A+B on Mon-Tue followed by C+D on Wed-Thu has no gap, and
+        # folding them together produced one region carrying four issue_ids, which
+        # the tooltip reads out as "on 4 things at once". The person was never on
+        # more than two. Two consecutive but different clashes are two facts, and
+        # saying so is both true and more useful — it names which pair collides when.
+        same_cast = previous is not None and set(previous["issue_ids"]) == set(region["issue_ids"])
+        if previous and not gap and same_cast:
+            previous["end"] = region["end"]
+            previous["days"] += region["days"]
+        else:
+            merged.append(region)
+    return merged
+
+
+def _merged_roster(projects):
+    """{user_id: {days_per_week, leave, roles}} merged across the visible projects.
+
+    The arribada roster is per PROJECT: somebody on five projects has five
+    ProjectTeamMember rows, five independent leave lists and five days_per_week
+    values, and this fork has no workspace-level person record to fold them into.
+    Merging is therefore a judgement call, and it is written down rather than made
+    silently:
+
+    * leave is UNIONED — away on one project is away, full stop. Somebody cannot be
+      in the field for the turtle programme and at their desk for the bird one.
+    * days_per_week is the MINIMUM anybody recorded. It is the capacity the whole
+      workspace can safely believe; taking the maximum would let a timeline promise
+      five days from a person one project already knows works three.
+
+    Rows with no linked Plane account are skipped: they own no work items, so there
+    is nothing here for them to qualify.
+    """
+    from .blueprints import _parse_leave
+
+    out = {}
+    rows = ProjectTeamMember.objects.filter(
+        project__in=projects, member_id__isnull=False
+    ).values("member_id", "days_per_week", "leave", "roles")
+    for row in rows:
+        user_id = str(row["member_id"])
+        entry = out.setdefault(user_id, {"days_per_week": 5, "leave": [], "roles": []})
+        try:
+            per_week = int(row["days_per_week"] or 5)
+        except (TypeError, ValueError):
+            per_week = 5
+        entry["days_per_week"] = min(entry["days_per_week"], max(1, min(5, per_week)))
+        for span in _parse_leave(row["leave"]):
+            if span not in entry["leave"]:
+                entry["leave"].append(span)
+        for role in _clean_roles(row["roles"]):
+            if role not in entry["roles"]:
+                entry["roles"].append(role)
+    for entry in out.values():
+        entry["leave"].sort()
+    return out
+
+
+class WorkloadTimelineEndpoint(BaseAPIView):
+    """Every dated work item each person owns, across every project the caller can
+    see, plus the periods where two of their own items collide.
+
+    The workload table answers "how much". This answers "when", which is the only
+    way to see the thing that actually hurts a small team on many projects: one
+    engineer committed to two of them in the same fortnight.
+
+    Two deliberate choices.
+
+    The bars come from Plane (IssueAssignee joined to the issue dates) and the
+    availability comes from the arribada roster (ProjectTeamMember.leave and
+    .days_per_week). Only the first is a record of an assignment — a roster row does
+    not require a Plane account, and most of this instance's roster holds a
+    discipline on paper — so a timeline built from the roster would draw rows for
+    people who provably own nothing. The roster is an overlay, never the source.
+
+    Overlap is computed HERE and not in the browser. The leave and part-time data
+    has never left the server, and a second implementation of "these two collide" in
+    TypeScript would drift from the scheduler's — precisely what compute_float's
+    docstring warns about. One definition, one place.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        today = timezone.now().date()
+        win_from, win_to = _workload_window(request, today)
+        include_empty = request.GET.get("include_empty", "false") == "true"
+
+        visible = _visible_projects(request, slug)
+
+        # Anything with at least one date and any part of it inside the window. An
+        # item with only one of the two dates cannot be a bar and cannot be
+        # overlap-checked, but it is still returned: hiding it would let the view
+        # claim somebody with a wall of half-dated work is free.
+        has_date = Q(start_date__isnull=False) | Q(target_date__isnull=False)
+        touches_window = (
+            Q(start_date__gte=win_from, start_date__lte=win_to)
+            | Q(target_date__gte=win_from, target_date__lte=win_to)
+            | Q(start_date__lte=win_from, target_date__gte=win_to)
+        )
+        rows = list(
+            Issue.issue_objects.filter(project__in=visible)
+            .filter(has_date)
+            .filter(touches_window)
+            .exclude(state__group__in=["completed", "cancelled"])
+            .values(
+                "id",
+                "name",
+                "sequence_id",
+                "start_date",
+                "target_date",
+                "priority",
+                "state__group",
+                "project_id",
+                "project__identifier",
+                "project__name",
+            )
+            .order_by("start_date", "target_date", "sequence_id")[: WORKLOAD_ITEM_CAP + 1]
+        )
+        truncated = len(rows) > WORKLOAD_ITEM_CAP
+        rows = rows[:WORKLOAD_ITEM_CAP]
+
+        # Through IssueAssignee with deleted_at__isnull=True, never the `assignees`
+        # m2m: Django does not apply a through model's manager to an m2m join, and
+        # upstream's issue serializer deletes and re-inserts every assignee row on
+        # each edit, so a m2m read hands a person work they were taken off months ago.
+        issue_ids = [r["id"] for r in rows]
+        by_issue = defaultdict(list)
+        by_user = defaultdict(list)
+        for link in IssueAssignee.objects.filter(
+            issue_id__in=issue_ids, deleted_at__isnull=True
+        ).values("issue_id", "assignee_id"):
+            issue_id, user_id = str(link["issue_id"]), str(link["assignee_id"])
+            if user_id in by_issue[issue_id]:
+                continue
+            by_issue[issue_id].append(user_id)
+            by_user[user_id].append(issue_id)
+
+        items = []
+        item_by_id = {}
+        unassigned_ids = []
+        for row in rows:
+            issue_id = str(row["id"])
+            owners = by_issue.get(issue_id, [])
+            item = {
+                "id": issue_id,
+                "name": row["name"],
+                "sequence_id": row["sequence_id"],
+                "start_date": row["start_date"],
+                "target_date": row["target_date"],
+                "priority": row["priority"],
+                "state_group": row["state__group"],
+                "project_id": str(row["project_id"]),
+                "project_identifier": row["project__identifier"],
+                "project_name": row["project__name"],
+                "assignee_ids": owners,
+            }
+            items.append(item)
+            item_by_id[issue_id] = item
+            if not owners:
+                unassigned_ids.append(issue_id)
+
+        # How much work each person carries that this timeline CANNOT draw. Counted
+        # over all their open work, not just the window, because "9 items with no
+        # dates" is the honest caveat on an empty-looking row.
+        # Scoped through `Issue.issue_objects`, not through a raw join on the issues
+        # table. IssueAssignee reaches every row: triage, archived, issues in an
+        # archived project, and drafts — which in Plane are visible only to the person
+        # who wrote them. Counting those told the reader "40 open items have no dates"
+        # about work that is finished and filed, and leaked the size of a colleague's
+        # private drafts. It also put a different population next to `unowned_undated`
+        # on the same banner, which has always used the manager.
+        drawable = Issue.issue_objects.filter(project__in=visible)
+        open_assignments = IssueAssignee.objects.filter(
+            issue__in=drawable,
+            deleted_at__isnull=True,
+        ).exclude(issue__state__group__in=["completed", "cancelled"])
+        undrawable = {
+            str(r["assignee_id"]): r
+            for r in open_assignments.values("assignee_id").annotate(
+                undated=Count(
+                    "issue_id",
+                    filter=Q(issue__start_date__isnull=True, issue__target_date__isnull=True),
+                    distinct=True,
+                ),
+                partial=Count(
+                    "issue_id",
+                    filter=Q(issue__start_date__isnull=True, issue__target_date__isnull=False)
+                    | Q(issue__start_date__isnull=False, issue__target_date__isnull=True),
+                    distinct=True,
+                ),
+            )
+        }
+
+        # Open work with no dates AND no owner. The most actionable number on the
+        # page, so it is counted rather than left as an implied zero on the
+        # Unassigned row — that row would otherwise claim the unowned backlog is empty
+        # simply because none of it can be drawn.
+        unowned_undated = (
+            Issue.issue_objects.filter(
+                project__in=visible, start_date__isnull=True, target_date__isnull=True
+            )
+            .exclude(state__group__in=["completed", "cancelled"])
+            .exclude(
+                id__in=IssueAssignee.objects.filter(
+                    issue__project__in=visible, deleted_at__isnull=True
+                ).values("issue_id")
+            )
+            .count()
+        )
+
+        counts = _load_by_assignee(visible)
+        active_member_ids = {
+            str(m)
+            for m in WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values_list(
+                "member_id", flat=True
+            )
+        }
+        # Anyone who actually owns something is listed even if their workspace
+        # membership has since been deactivated. Dropping them would make their work
+        # vanish from the board while it is still on the project.
+        known_ids = active_member_ids | set(by_user.keys())
+        users = {str(u.id): u for u in User.objects.filter(id__in=list(known_ids))}
+        roster = _merged_roster(visible)
+        holidays = _holidays_for(slug)
+
+        people = []
+        hidden = 0
+        for user_id in known_ids:
+            user = users.get(user_id)
+            if not user:
+                continue
+            aggregate = counts.get(user_id, {})
+            profile = roster.get(user_id, {})
+            leave = profile.get("leave", [])
+            owned = by_user.get(user_id, [])
+
+            if not owned and not aggregate.get("assigned") and not include_empty:
+                hidden += 1
+                continue
+
+            # Clamped to the window before the sweep. Clamping can only SHRINK a
+            # range, so it can never invent an overlap — and it bounds the day-count
+            # loop, which a task dated to 2035 otherwise would not.
+            windows = []
+            for issue_id in owned:
+                item = item_by_id.get(issue_id)
+                if not item or not item["start_date"] or not item["target_date"]:
+                    continue
+                low, high = sorted((item["start_date"], item["target_date"]))
+                low, high = max(low, win_from), min(high, win_to)
+                if high < low:
+                    continue
+                windows.append((low, high, issue_id))
+
+            overlaps = _overlap_regions(windows, _working_day_test(holidays, leave))
+            extra = undrawable.get(user_id, {})
+            people.append(
+                {
+                    "user_id": user_id,
+                    "name": user.display_name or user.first_name or user.email or "Unnamed",
+                    "email": user.email or "",
+                    "avatar": getattr(user, "avatar_url", None) or user.avatar,
+                    "is_unassigned": False,
+                    "is_active_member": user_id in active_member_ids,
+                    "assigned": aggregate.get("assigned", 0),
+                    "overdue": aggregate.get("overdue", 0),
+                    "due_week": aggregate.get("due_week", 0),
+                    "points": aggregate.get("points") or 0,
+                    "days_per_week": profile.get("days_per_week", 5),
+                    "roles": profile.get("roles", []),
+                    "leave": [{"start": start, "end": end} for start, end in leave],
+                    "item_ids": owned,
+                    "dated_count": len(windows),
+                    "partial_count": extra.get("partial", 0),
+                    "undated_count": extra.get("undated", 0),
+                    "conflict_count": len(overlaps),
+                    "conflict_days": sum(o["days"] for o in overlaps),
+                    "overlaps": overlaps,
+                }
+            )
+
+        # Conflicts first, and by how bad they are — the whole point of the view is
+        # that a double-booking must be impossible to scroll past.
+        people.sort(
+            key=lambda p: (
+                -p["conflict_count"],
+                -p["conflict_days"],
+                -p["dated_count"],
+                -p["assigned"],
+                (p["name"] or "").lower(),
+            )
+        )
+
+        if unassigned_ids or unowned_undated:
+            people.append(
+                {
+                    "user_id": UNASSIGNED_ROW_ID,
+                    "name": "Unassigned",
+                    "email": "",
+                    "avatar": None,
+                    "is_unassigned": True,
+                    "is_active_member": True,
+                    "assigned": len(unassigned_ids) + unowned_undated,
+                    "overdue": 0,
+                    "due_week": 0,
+                    "points": 0,
+                    "days_per_week": 5,
+                    "roles": [],
+                    "leave": [],
+                    "item_ids": unassigned_ids,
+                    "dated_count": sum(
+                        1
+                        for i in unassigned_ids
+                        if item_by_id[i]["start_date"] and item_by_id[i]["target_date"]
+                    ),
+                    "partial_count": sum(
+                        1
+                        for i in unassigned_ids
+                        if bool(item_by_id[i]["start_date"]) != bool(item_by_id[i]["target_date"])
+                    ),
+                    "undated_count": unowned_undated,
+                    # Never overlap-checked: work with no owner is not one pair of
+                    # hands, so two of it at once is a staffing question, not a clash.
+                    "conflict_count": 0,
+                    "conflict_days": 0,
+                    "overlaps": [],
+                }
+            )
+
+        return Response(
+            {
+                "window": {"from": win_from, "to": win_to},
+                "today": today,
+                "holidays": sorted(d for d in holidays if win_from <= d <= win_to),
+                "people": people,
+                "items": items,
+                "hidden_people_count": hidden,
+                "truncated": truncated,
+            },
+            status=status.HTTP_200_OK,
+        )

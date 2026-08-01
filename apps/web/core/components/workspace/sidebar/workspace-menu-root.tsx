@@ -26,7 +26,8 @@ import { useWorkspace } from "@/hooks/store/use-workspace";
 import { useUser, useUserProfile } from "@/hooks/store/user";
 import { useInstance } from "@/hooks/store/use-instance";
 // components
-import { WorkspaceLogo } from "../logo";
+// arribada: brand mark instead of the workspace initial when no logo is uploaded
+import { BrandWorkspaceLogo as WorkspaceLogo } from "@/plane-web/components/workspace/brand-workspace-logo";
 import SidebarDropdownItem from "./dropdown-item";
 
 type WorkspaceMenuRootProps = {

@@ -1665,6 +1665,7 @@ export default {
       assigned: "Assigned",
       created: "Created",
       subscribed: "Subscribed",
+      timeline: "Timeline",
       activity: "Activity",
     },
     empty_state: {

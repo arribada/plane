@@ -730,7 +730,7 @@ def build_agile_tasks(
             "days": max(1, min(365, int(duration_overrides.get(key, days)))),
             # A redrawn dependency replaces the block's own. Self-links are dropped
             # rather than turned into a one-task cycle.
-            "after": [a for a in dependency_overrides.get(key, after) if a != key],
+            "after": [a for a in dependency_overrides.get(key, after) if link_key(a) != key],
             "assignee_id": assignees.get(key),
         }
 
@@ -798,7 +798,7 @@ def build_agile_tasks(
         name = str(item.get("name") or "").strip()[:255]
         if not key or not name or key in present:
             continue
-        after = [a for a in item.get("after") or [] if a in present]
+        after = [a for a in item.get("after") or [] if link_key(a) in present]
         present.add(key)
         tasks.append(
             {
@@ -937,6 +937,49 @@ def _stretch_for_part_time(days, days_per_week):
 # ---------------------------------------------------------------------------
 
 
+def parse_link(entry):
+    """A dependency, from either shape the client may send.
+
+    `after` has always been a flat list of predecessor keys, meaning finish-to-start
+    with no gap. That covers most of a V-cycle and none of the sentences people
+    actually say: "validation starts a week after integration begins", "the boards
+    ship five days before assembly". So an entry may now also be an object:
+
+        {"key": "hw.layout", "lag": 5, "type": "FS"}
+
+    `lag` is in working days and may be negative — a lead rather than a lag, which
+    is how overlapping work is expressed. `type` is FS (default) or SS: finish-to-
+    start waits for the predecessor to end, start-to-start waits for it to begin.
+
+    The flat string is kept working rather than migrated, because every stored plan
+    and every catalogue entry uses it and none of them mean anything else.
+    """
+    if isinstance(entry, dict):
+        key = str(entry.get("key") or "").strip()
+        try:
+            lag = max(-365, min(365, int(entry.get("lag") or 0)))
+        except (TypeError, ValueError):
+            lag = 0
+        kind = str(entry.get("type") or "FS").strip().upper()
+        return key, lag, ("SS" if kind == "SS" else "FS")
+    return str(entry or "").strip(), 0, "FS"
+
+
+def link_key(entry):
+    """Just the predecessor key, for the filters that only care about presence."""
+    return parse_link(entry)[0]
+
+
+def shift_working_days(day, days, holidays=None):
+    """Move `day` by `days` working days, in either direction."""
+    step = 1 if days >= 0 else -1
+    for _ in range(abs(int(days))):
+        day += timedelta(days=step)
+        while day.weekday() >= 5 or day in (holidays or frozenset()):
+            day += timedelta(days=step)
+    return day
+
+
 def _topo(keys, edges):
     """Kahn order over (pred, succ). Anything left in a cycle comes back separately
     rather than silently vanishing from the plan."""
@@ -1013,7 +1056,16 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None, holidays
     warnings = []
     keys = [t["key"] for t in tasks]
     by_key = {t["key"]: t for t in tasks}
-    edges = [(pred, t["key"]) for t in tasks for pred in t.get("after") or [] if pred in by_key]
+    # The graph is keys only; the lag and the type ride alongside, keyed on the
+    # pair, so the topological sort stays a plain edge list.
+    edges = []
+    link_of = {}
+    for task in tasks:
+        for entry in task.get("after") or []:
+            pred, lag, kind = parse_link(entry)
+            if pred in by_key:
+                edges.append((pred, task["key"]))
+                link_of[(pred, task["key"])] = (lag, kind)
 
     order, cyclic = _topo(keys, edges)
     if cyclic:
@@ -1071,8 +1123,14 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None, holidays
         earliest = next_working_day(start_date, holidays)
         for pred in preds[key]:
             done = placed.get(pred)
-            if done:
-                earliest = max(earliest, next_working_day(done["target"] + timedelta(days=1), holidays))
+            if not done:
+                continue
+            lag, kind = link_of.get((pred, key), (0, "FS"))
+            # SS waits for the predecessor to *start*; FS waits for it to finish.
+            base = done["start"] if kind == "SS" else next_working_day(
+                done["target"] + timedelta(days=1), holidays
+            )
+            earliest = max(earliest, shift_working_days(base, lag, holidays))
 
         role = (task.get("role") or "").strip().lower()
         pinned = task.get("assignee_id")
@@ -1318,7 +1376,7 @@ def build_tasks(
                 "after": [
                     a
                     for a in (dependency_overrides.get(key, spec.get("after")) or [])
-                    if a in present and a != key
+                    if link_key(a) in present and link_key(a) != key
                 ],
                 "assignee_id": assignees.get(key),
             }
@@ -1332,7 +1390,7 @@ def build_tasks(
         if not key or not name or key in present:
             continue
         # Resolved before the key joins `present`, so an item cannot depend on itself.
-        after = [a for a in item.get("after") or [] if a in present]
+        after = [a for a in item.get("after") or [] if link_key(a) in present]
         present.add(key)
         tasks.append(
             {

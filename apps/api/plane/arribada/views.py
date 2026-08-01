@@ -2728,7 +2728,24 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         dependency_overrides = {}
         for key, value in (request.data.get("dependencies") or {}).items():
             if isinstance(value, list):
-                dependency_overrides[str(key)] = [str(v) for v in value if v][:20]
+                # A predecessor is either a bare key or {key, lag, type}. Both are
+                # accepted: every stored plan uses the first, and the second is what
+                # lets someone say "five days after", which the first cannot.
+                links = []
+                for entry in value[:20]:
+                    if isinstance(entry, dict):
+                        pred = str(entry.get("key") or "").strip()
+                        if not pred:
+                            continue
+                        try:
+                            lag = max(-365, min(365, int(entry.get("lag") or 0)))
+                        except (TypeError, ValueError):
+                            lag = 0
+                        kind = "SS" if str(entry.get("type") or "").upper() == "SS" else "FS"
+                        links.append({"key": pred, "lag": lag, "type": kind})
+                    elif entry:
+                        links.append(str(entry))
+                dependency_overrides[str(key)] = links
 
         people = _schedulable_people(project_id)
         pinnable = {p["id"] for p in people}

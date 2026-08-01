@@ -144,6 +144,7 @@ export class PortfolioStore implements IPortfolioStore {
       allProjects: computed,
       scopedProjectIds: computed,
       sortedProjectIds: computed,
+      itemIdsByProject: computed,
       focusFolderName: computed,
       folderGroups: computed,
       ganttBlockIds: computed,
@@ -247,18 +248,48 @@ export class PortfolioStore implements IPortfolioStore {
     return true;
   }
 
+  /**
+   * Every project's items, filtered and sorted, built in one pass.
+   *
+   * This used to be done per project: `Object.values(itemMap).filter(...)` walked
+   * the whole map to find one project's rows, once for every expanded project. On
+   * a board with a dozen projects open that is a dozen full scans, and because
+   * `ganttBlockIds` is a computed over an observable map, all of them ran again
+   * every time anybody edited a single date.
+   *
+   * One grouping pass, then one sort per project. The filters are read here so the
+   * computed still invalidates when they change.
+   */
+  get itemIdsByProject(): Map<string, string[]> {
+    const grouped = new Map<string, TPortfolioItem[]>();
+    for (const item of Object.values(this.itemMap)) {
+      const projectId = this.itemProjectId[item.id];
+      if (!projectId || !this.itemMatchesFilters(item)) continue;
+      const bucket = grouped.get(projectId);
+      if (bucket) bucket.push(item);
+      else grouped.set(projectId, [item]);
+    }
+
+    const out = new Map<string, string[]>();
+    for (const [projectId, rows] of grouped) {
+      // Each bucket is ours alone — it was built above — so sorting in place
+      // mutates nothing anyone else holds.
+      rows.sort((a, b) => {
+        if (a.start_date && b.start_date) return a.start_date.localeCompare(b.start_date);
+        if (a.start_date) return -1;
+        if (b.start_date) return 1;
+        return a.sequence_id - b.sequence_id;
+      });
+      out.set(
+        projectId,
+        rows.map((it) => it.id)
+      );
+    }
+    return out;
+  }
+
   private sortedItemIds(projectId: string): string[] {
-    // `filter` already returned a fresh array, so sorting it in place mutates nothing shared
-    const rows = Object.values(this.itemMap).filter(
-      (it) => this.itemProjectId[it.id] === projectId && this.itemMatchesFilters(it)
-    );
-    rows.sort((a, b) => {
-      if (a.start_date && b.start_date) return a.start_date.localeCompare(b.start_date);
-      if (a.start_date) return -1;
-      if (b.start_date) return 1;
-      return a.sequence_id - b.sequence_id;
-    });
-    return rows.map((it) => it.id);
+    return this.itemIdsByProject.get(projectId) ?? [];
   }
 
   // Displayed projects grouped into folder swimlanes, each preserving the active

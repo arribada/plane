@@ -21,7 +21,11 @@ import type {
   TMyWorkItem,
   TPortfolioItem,
   TPortfolioProject,
+  TNonWorkingDay,
+  TProjectBudget,
   TProjectDocs,
+  TProjectExpense,
+  TRoleRate,
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
@@ -544,6 +548,93 @@ export class ArribadaService extends APIService {
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
+      });
+  }
+
+  // --- cost -----------------------------------------------------------------
+
+  async getCalendar(workspaceSlug: string): Promise<{ days: TNonWorkingDay[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/calendar/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async addNonWorkingDay(workspaceSlug: string, data: { date: string; name?: string }): Promise<TNonWorkingDay> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/calendar/`, data)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async removeNonWorkingDay(workspaceSlug: string, date: string): Promise<{ deleted: boolean }> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/calendar/?date=${encodeURIComponent(date)}`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getRoleRates(workspaceSlug: string): Promise<{ rates: TRoleRate[]; known_roles: string[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/role-rates/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async saveRoleRates(workspaceSlug: string, rates: TRoleRate[]): Promise<{ rates: TRoleRate[] }> {
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/role-rates/`, { rates })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getExpenses(workspaceSlug: string, projectId: string): Promise<{ expenses: TProjectExpense[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async addExpense(workspaceSlug: string, projectId: string, data: Partial<TProjectExpense>): Promise<TProjectExpense> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/`, data)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async updateExpense(
+    workspaceSlug: string,
+    projectId: string,
+    expenseId: string,
+    data: Partial<TProjectExpense>
+  ): Promise<TProjectExpense> {
+    return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/${expenseId}/`, data)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async deleteExpense(workspaceSlug: string, projectId: string, expenseId: string): Promise<{ deleted: boolean }> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/${expenseId}/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getBudget(workspaceSlug: string, projectId: string): Promise<TProjectBudget> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/budget/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
       });
   }
 }

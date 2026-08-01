@@ -357,3 +357,61 @@ export type TGithubInboxItem = {
   state: string | null;
   github_url: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Cost
+// ---------------------------------------------------------------------------
+
+/** A day nobody works. Workspace-wide: a holiday is a fact about the calendar. */
+export type TNonWorkingDay = { id: string; date: string; name: string };
+
+export type TRoleRate = {
+  role: string;
+  hourly_rate: number;
+  /** A working day is rarely eight hours, and a field day is not a bench day. */
+  hours_per_day: number;
+  currency: string;
+};
+
+export type TExpenseCategory = "hardware" | "travel" | "field" | "services" | "shipping" | "other";
+
+export type TProjectExpense = {
+  id: string;
+  category: TExpenseCategory;
+  label: string;
+  amount: number;
+  quantity: number;
+  /** amount x quantity, computed server-side so the two cannot disagree. */
+  total: number;
+  currency: string;
+  /** true = budgeted, not yet spent. */
+  planned: boolean;
+  incurred_on: string | null;
+  notes: string;
+};
+
+export type TMoney = { currency: string; amount: number };
+
+export type TProjectBudget = {
+  /** Derived from the plan, so it moves whenever the plan does. */
+  labour: {
+    by_role: {
+      role: string;
+      days: number;
+      hours: number;
+      cost: number;
+      currency: string | null;
+      /** false when no rate is recorded — the days still count, so the gap shows. */
+      rated: boolean;
+    }[];
+    totals: TMoney[];
+    unrated_roles: string[];
+  };
+  /** Entered by a person, and usually the only figure with a receipt behind it. */
+  expenses: {
+    by_category: { category: TExpenseCategory; planned: number; actual: number; currency: string }[];
+    planned: TMoney[];
+    actual: TMoney[];
+    count: number;
+  };
+};

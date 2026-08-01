@@ -268,6 +268,17 @@ class ProjectTeamMember(models.Model):
     email = models.CharField(max_length=255, blank=True, default="")
     roles = models.JSONField(default=list, blank=True)
     is_lead = models.BooleanField(default=False)
+
+    # How much of a week this person actually gives the project. The scheduler
+    # assumed five days for everyone, which is how a plan built around a
+    # three-day-a-week engineer comes out nearly twice as fast as it runs.
+    days_per_week = models.PositiveSmallIntegerField(default=5)
+
+    # Leave, as [{"start": "2027-02-01", "end": "2027-02-14"}, ...]. JSON rather
+    # than a table because nothing queries it: the scheduler reads the whole roster
+    # into memory anyway, and a second table would buy an endpoint and a join for
+    # a list that is never filtered on.
+    leave = models.JSONField(default=list, blank=True)
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default=MANUAL)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -386,3 +397,133 @@ class ProjectStatusUpdate(models.Model):
 
     def __str__(self):
         return f"{self.project_id} {self.status} @ {self.created_at:%Y-%m-%d}"
+
+
+class WorkspaceNonWorkingDay(models.Model):
+    """A day nobody works: a public holiday, a company shutdown, a site closure.
+
+    Workspace-wide rather than per project, because a holiday is a fact about the
+    calendar and not about the work. Without it the scheduler counted Mon-Fri and
+    nothing else, so every plan crossing Christmas or a national holiday came out
+    optimistic by exactly the number of days it did not know about — the error is
+    small per week and compounds over a quarter.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE, related_name="arribada_non_working_days"
+    )
+    date = models.DateField()
+    name = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_non_working_day"
+        # One row per day: the same holiday entered twice is one holiday.
+        unique_together = ("workspace", "date")
+        ordering = ("date",)
+
+    def __str__(self):
+        return f"{self.date} {self.name}".strip()
+
+
+class WorkspaceRoleRate(models.Model):
+    """What an hour of a discipline costs.
+
+    Workspace-wide, because a rate is a fact about the organisation and not about
+    one project — and because entering it per project is how twenty projects end
+    up with twenty different numbers for the same engineer.
+
+    Keyed on the discipline string the roster and the task catalogue already use
+    (lowercased), so a rate attaches to "hardware engineer" without a second
+    vocabulary to keep in step.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE, related_name="arribada_role_rates"
+    )
+    role = models.CharField(max_length=80)
+    hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Stored per rate rather than globally: a subcontractor billed in dollars sits
+    # beside a salaried engineer costed in euros, and summing them blindly would be
+    # worse than showing them apart.
+    currency = models.CharField(max_length=3, default="EUR")
+    # A working day is not 24 hours and it is rarely 8. Per rate because a field
+    # day and a bench day are not the same length.
+    hours_per_day = models.DecimalField(max_digits=4, decimal_places=2, default=7)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_role_rate"
+        unique_together = ("workspace", "role")
+        ordering = ("role",)
+
+    def __str__(self):
+        return f"{self.role} @ {self.hourly_rate} {self.currency}/h"
+
+
+class ProjectExpense(models.Model):
+    """Money a project spends that is not somebody's time.
+
+    Hardware, tooling, a field trip, shipping, a subcontracted service. Kept apart
+    from the labour estimate on purpose: labour is *derived* from the plan and moves
+    whenever the plan moves, while these are entered by a person and are the only
+    numbers in the system somebody actually has a receipt for.
+
+    `planned` distinguishes a budget line from a spend that happened, so a project
+    can be costed before it starts and tracked against that afterwards.
+    """
+
+    HARDWARE = "hardware"
+    TRAVEL = "travel"
+    FIELD = "field"
+    SERVICES = "services"
+    SHIPPING = "shipping"
+    OTHER = "other"
+    CATEGORY_CHOICES = [
+        (HARDWARE, "Hardware & components"),
+        (TRAVEL, "Travel"),
+        (FIELD, "Field trip"),
+        (SERVICES, "Services & subcontracting"),
+        (SHIPPING, "Shipping & customs"),
+        (OTHER, "Other"),
+    ]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_expenses"
+    )
+    category = models.CharField(max_length=16, choices=CATEGORY_CHOICES, default=OTHER)
+    label = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    currency = models.CharField(max_length=3, default="EUR")
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    # True = budgeted, not yet spent. False = it happened.
+    planned = models.BooleanField(default=True)
+    incurred_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_project_expense"
+        ordering = ("-incurred_on", "-created_at")
+        indexes = [models.Index(fields=["project", "planned"])]
+
+    @property
+    def total(self):
+        """Line total. Quantity defaults to 1, so a one-off is just its amount."""
+        return self.amount * self.quantity
+
+    def __str__(self):
+        return f"{self.label} {self.total} {self.currency}"

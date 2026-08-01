@@ -26,6 +26,7 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectOverview } from "@/plane-web/types/arribada";
 import { CleanProjectModal } from "./clean-project-modal";
 import { OverviewJumpBar } from "./jump-bar";
+import { OverviewBudgetBlock } from "./budget-block";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewProgressSections } from "./progress-sections";
 import { OverviewRecentPages } from "./recent-pages";
@@ -158,6 +159,13 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           </div>
         </OverviewSection>
       )}
+
+      {/* Cost sits after the counts and before the sprints: it is a summary of the
+          project, not a detail of its schedule. Collapsed by default — most days
+          nobody is looking at money. */}
+      <OverviewSection title="What it costs">
+        <OverviewBudgetBlock />
+      </OverviewSection>
 
       <OverviewSection title="The numbers">
         <div className="px-4 py-3">

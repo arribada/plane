@@ -5,6 +5,11 @@
 from django.urls import path
 
 from .views import (
+    ProjectBudgetEndpoint,
+    ProjectExpenseDetailEndpoint,
+    ProjectExpensesEndpoint,
+    WorkspaceCalendarEndpoint,
+    WorkspaceRoleRatesEndpoint,
     AdoptIssuesEndpoint,
     GithubInboxEndpoint,
     ProjectAiDraftEndpoint,
@@ -199,5 +204,30 @@ urlpatterns = [
         "workspaces/<str:slug>/project-folders/<uuid:folder_id>/",
         ProjectFolderDetailEndpoint.as_view(),
         name="arribada-project-folder-detail",
+    ),
+    path(
+        "workspaces/<str:slug>/calendar/",
+        WorkspaceCalendarEndpoint.as_view(),
+        name="arribada-workspace-calendar",
+    ),
+    path(
+        "workspaces/<str:slug>/role-rates/",
+        WorkspaceRoleRatesEndpoint.as_view(),
+        name="arribada-workspace-role-rates",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/expenses/",
+        ProjectExpensesEndpoint.as_view(),
+        name="arribada-project-expenses",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/expenses/<uuid:expense_id>/",
+        ProjectExpenseDetailEndpoint.as_view(),
+        name="arribada-project-expense-detail",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/budget/",
+        ProjectBudgetEndpoint.as_view(),
+        name="arribada-project-budget",
     ),
 ]

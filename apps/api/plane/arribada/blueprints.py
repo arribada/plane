@@ -19,7 +19,7 @@
 # nobody will notice which.
 
 from collections import defaultdict, deque
-from datetime import timedelta
+from datetime import date, timedelta
 
 # ---------------------------------------------------------------------------
 # Tracks
@@ -789,7 +789,7 @@ def build_agile_tasks(
 
     for task in AGILE_CLOSING:
         tasks.append(
-            make(task["key"], task["name"], task["role"], task["days"], [previous_review] if previous_review else [], task["phase"])
+            make(task["key"], task.get("name", key), task["role"], task["days"], [previous_review] if previous_review else [], task["phase"])
         )
 
     present = {t["key"] for t in tasks}
@@ -873,19 +873,63 @@ def default_selection(tracks):
 # ---------------------------------------------------------------------------
 
 
-def next_working_day(day):
-    while day.weekday() >= 5:
+def next_working_day(day, holidays=None):
+    """The first day on or after `day` that anybody works.
+
+    `holidays` is the set of dates nobody works — public holidays, a company
+    shutdown, a site closure. Without it this counted Mon-Fri and nothing else, so
+    every plan crossing Christmas came out optimistic by exactly the days it did
+    not know about: small per week, and it compounds over a quarter.
+    """
+    holidays = holidays or frozenset()
+    # Bounded: a holiday table that somehow covered a whole year must not spin.
+    for _ in range(400):
+        if day.weekday() < 5 and day not in holidays:
+            return day
         day += timedelta(days=1)
     return day
 
 
-def add_working_days(start, days):
+def add_working_days(start, days, holidays=None):
     """Target date of a task that starts on `start` and lasts `days` working days,
     counted inclusively — a one-day task starts and ends the same day."""
-    day = next_working_day(start)
+    day = next_working_day(start, holidays)
     for _ in range(max(1, int(days)) - 1):
-        day = next_working_day(day + timedelta(days=1))
+        day = next_working_day(day + timedelta(days=1), holidays)
     return day
+
+
+def _parse_leave(entries):
+    """[(start, end), ...] from the roster's JSON leave list, bad rows dropped."""
+    out = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            start = date.fromisoformat(str(entry.get("start")))
+            end = date.fromisoformat(str(entry.get("end") or entry.get("start")))
+        except (TypeError, ValueError):
+            continue
+        if end >= start:
+            out.append((start, end))
+    return out
+
+
+def _stretch_for_part_time(days, days_per_week):
+    """Elapsed working days for `days` of work at `days_per_week` a week.
+
+    Three days a week means five working days pass for every three worked. The
+    scheduler assumed five for everyone, which is how a plan built around a
+    part-time engineer comes out nearly twice as fast as it runs.
+    """
+    try:
+        per_week = int(days_per_week or 5)
+    except (TypeError, ValueError):
+        per_week = 5
+    per_week = max(1, min(5, per_week))
+    if per_week >= 5:
+        return days
+    return -(-int(days) * 5 // per_week)
 
 
 # ---------------------------------------------------------------------------
@@ -914,7 +958,7 @@ def _topo(keys, edges):
     return order, [k for k in keys if k not in set(order)]
 
 
-def _earliest_free(busy, capacity, earliest, days):
+def _earliest_free(busy, capacity, earliest, days, holidays=None):
     """First start on or after `earliest` where the role still has a free hand.
 
     `busy` is that role's list of (start, end) intervals already committed. With a
@@ -923,19 +967,19 @@ def _earliest_free(busy, capacity, earliest, days):
     This is the whole reason the proposed end date moves when the lead says how many
     engineers they actually have.
     """
-    candidate = next_working_day(earliest)
+    candidate = next_working_day(earliest, holidays)
     for _ in range(len(busy) + 1):
-        end = add_working_days(candidate, days)
+        end = add_working_days(candidate, days, holidays)
         overlapping = [b for b in busy if b[0] <= end and candidate <= b[1]]
         if len(overlapping) < capacity:
             return candidate, end
         # Wait for the earliest of the blocking tasks to free a slot.
-        candidate = next_working_day(min(b[1] for b in overlapping) + timedelta(days=1))
-    end = add_working_days(candidate, days)
+        candidate = next_working_day(min(b[1] for b in overlapping) + timedelta(days=1), holidays)
+    end = add_working_days(candidate, days, holidays)
     return candidate, end
 
 
-def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
+def schedule(tasks, start_date, capacity=None, people=None, fixed=None, holidays=None):
     """Give every task a start, a target and — where somebody can be named — an owner.
 
     `tasks`    [{key, days, after, role, assignee_id?}] — `after` already filtered to
@@ -964,6 +1008,8 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
     capacity = capacity or {}
     people = people or []
     fixed = fixed or {}
+    # Dates nobody works. Frozen so the helpers can hold it without copying.
+    holidays = frozenset(holidays or ())
     warnings = []
     keys = [t["key"] for t in tasks]
     by_key = {t["key"]: t for t in tasks}
@@ -992,14 +1038,41 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
 
     busy_by_person = defaultdict(list)
     busy_by_role = defaultdict(list)
+
+    # Reserve what is already spoken for BEFORE placing anything.
+    #
+    # Two things were previously discovered mid-pass, which is too late to act on:
+    # a person's leave was not modelled at all, and a pinned date only entered
+    # `busy_by_person` when the loop happened to reach that key — so a task placed
+    # earlier in the order was free to occupy a slot the pin had already claimed,
+    # and the scheduler then warned about a clash it had invented itself.
+    for person in people:
+        for leave_start, leave_end in _parse_leave(person.get("leave")):
+            busy_by_person[person["id"]].append((leave_start, leave_end))
+
+    for key, window in fixed.items():
+        task = by_key.get(key)
+        if not task:
+            continue
+        owner_id = task.get("assignee_id")
+        if owner_id and owner_id in person_by_id:
+            busy_by_person[owner_id].append(window)
+        else:
+            role_key = (task.get("role") or "").strip().lower()
+            holder = holders.get(role_key) or []
+            if len(holder) == 1:
+                busy_by_person[holder[0]["id"]].append(window)
+            else:
+                busy_by_role[role_key].append(window)
+
     placed = {}
     for key in order:
         task = by_key[key]
-        earliest = next_working_day(start_date)
+        earliest = next_working_day(start_date, holidays)
         for pred in preds[key]:
             done = placed.get(pred)
             if done:
-                earliest = max(earliest, next_working_day(done["target"] + timedelta(days=1)))
+                earliest = max(earliest, next_working_day(done["target"] + timedelta(days=1), holidays))
 
         role = (task.get("role") or "").strip().lower()
         pinned = task.get("assignee_id")
@@ -1015,19 +1088,28 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
             start, end = pin
             if start < earliest:
                 warnings.append(
-                    f'"{task["name"]}" is pinned to {start.isoformat()}, before the work it waits on finishes.'
+                    f'"{task.get("name", key)}" is pinned to {start.isoformat()}, before the work it waits on finishes.'
                 )
             owner = candidates[0] if candidates else None
             if owner:
-                clash = any(b[0] <= end and start <= b[1] for b in busy_by_person[owner["id"]])
+                # This pin's own window is already in the list — it was reserved
+                # before the pass so nothing else could take the slot — so compare
+                # against everything except itself, or every pin reports a clash
+                # with the reservation that exists to protect it.
+                clash = any(
+                    b != (start, end) and b[0] <= end and start <= b[1]
+                    for b in busy_by_person[owner["id"]]
+                )
                 if clash:
                     warnings.append(
                         f'{owner["name"]} is on two things at once around {start.isoformat()} '
-                        f'because "{task["name"]}" is pinned there.'
+                        f'because "{task.get("name", key)}" is pinned there.'
                     )
-                busy_by_person[owner["id"]].append((start, end))
+                # Already reserved above; adding it twice would make the person
+                # look doubly busy to everything scheduled after this point.
+                pass
             else:
-                busy_by_role[role].append((start, end))
+                pass
             placed[key] = {"start": start, "target": end, "assignee_id": owner["id"] if owner else None}
             continue
 
@@ -1038,7 +1120,10 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
             for person in sorted(
                 candidates, key=lambda p: ((p.get("name") or "").lower(), p["id"])
             ):
-                slot = _earliest_free(busy_by_person[person["id"]], 1, earliest, task["days"])
+                # Elapsed days, not worked days: three days a week means five
+                # working days pass for every three the person gives you.
+                elapsed = _stretch_for_part_time(task["days"], person.get("days_per_week"))
+                slot = _earliest_free(busy_by_person[person["id"]], 1, earliest, elapsed, holidays)
                 if best is None or slot[0] < best[0]:
                     best = (slot[0], slot[1], person)
             start, end, owner = best
@@ -1049,7 +1134,7 @@ def schedule(tasks, start_date, capacity=None, people=None, fixed=None):
             # pool so the plan still holds together; the item records the discipline
             # and finds its owner the day somebody picks it up.
             seats = max(1, int(capacity.get(role, 1) or 1))
-            start, end = _earliest_free(busy_by_role[role], seats, earliest, task["days"])
+            start, end = _earliest_free(busy_by_role[role], seats, earliest, task["days"], holidays)
             busy_by_role[role].append((start, end))
             placed[key] = {"start": start, "target": end, "assignee_id": None}
 

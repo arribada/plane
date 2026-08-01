@@ -35,8 +35,11 @@ from .models import (
     ProjectSchedule,
     ProjectStatusUpdate,
     ProjectTeamMember,
+    ProjectExpense,
     ProjectWikiDoc,
     WorkspaceAiSettings,
+    WorkspaceNonWorkingDay,
+    WorkspaceRoleRate,
 )
 from .scheduling import build_edges, cascade, critical_path, slack_for_issues
 from .serializers import ProjectScheduleSerializer
@@ -2577,6 +2580,12 @@ def _schedulable_people(project_id):
                 "id": user_id,
                 "name": names.get(user_id) or row.name,
                 "roles": [r.strip().lower() for r in _clean_roles(row.roles)],
+                # How much of a week this person gives the project, and when they
+                # are away. The scheduler assumed five days and no absences for
+                # everyone, which is how a plan around a three-day-a-week engineer
+                # came out nearly twice as fast as it runs.
+                "days_per_week": row.days_per_week,
+                "leave": row.leave or [],
             }
         )
     return people
@@ -2816,7 +2825,10 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
                 assignees=pinned,
                 dependency_overrides=dependency_overrides,
             )
-        placed, warnings = schedule(tasks, start, capacity, people, pinned_dates)
+        # The plan is only as honest as the calendar it is built on: holidays,
+        # part-time weeks and booked leave all move the end date, and none of them
+        # were known to the scheduler before.
+        placed, warnings = schedule(tasks, start, capacity, people, pinned_dates, _holidays_for(slug))
         end = max((v["target"] for v in placed.values()), default=start)
 
         # How much each task can slip. Derived from the dates that were just placed,
@@ -3391,3 +3403,353 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+# ---------------------------------------------------------------------------
+# Cost: what a plan is worth in money, not only in days
+# ---------------------------------------------------------------------------
+
+
+def _holidays_for(slug):
+    """Dates nobody in this workspace works. Read once per plan, not per task."""
+    return {
+        row.date
+        for row in WorkspaceNonWorkingDay.objects.filter(workspace__slug=slug).only("date")
+    }
+
+
+def _rate_map(slug):
+    """{discipline: {hourly, hours_per_day, currency}} for a workspace."""
+    return {
+        row.role.strip().lower(): {
+            "hourly_rate": float(row.hourly_rate),
+            "hours_per_day": float(row.hours_per_day) or 7.0,
+            "currency": row.currency,
+        }
+        for row in WorkspaceRoleRate.objects.filter(workspace__slug=slug)
+    }
+
+
+def _labour_cost(tasks, rates):
+    """Cost of the human time in a task list, grouped by discipline.
+
+    Days x hours-per-day x hourly rate. Deliberately from the *plan* rather than
+    from anything recorded afterwards: this is an estimate, and the honest thing
+    is that it moves whenever the plan moves.
+
+    Currencies are kept apart rather than summed. A subcontractor billed in
+    dollars beside a salaried engineer costed in euros has no meaningful total,
+    and inventing one would be worse than showing two numbers.
+    """
+    by_role = {}
+    for task in tasks:
+        role = (task.get("role") or "").strip().lower()
+        if not role:
+            continue
+        rate = rates.get(role)
+        days = max(1, int(task.get("days") or 1))
+        entry = by_role.setdefault(
+            role,
+            {"role": role, "days": 0, "hours": 0.0, "cost": 0.0, "currency": None, "rated": False},
+        )
+        entry["days"] += days
+        if not rate:
+            # No rate recorded: the days still count, so the gap is visible rather
+            # than the discipline silently vanishing from the estimate.
+            continue
+        hours = days * rate["hours_per_day"]
+        entry["hours"] += hours
+        entry["cost"] += hours * rate["hourly_rate"]
+        entry["currency"] = rate["currency"]
+        entry["rated"] = True
+
+    rows = sorted(by_role.values(), key=lambda r: (-r["cost"], r["role"]))
+    totals = {}
+    for row in rows:
+        if not row["rated"]:
+            continue
+        totals[row["currency"]] = totals.get(row["currency"], 0.0) + row["cost"]
+    return {
+        "by_role": rows,
+        "totals": [{"currency": c, "amount": round(v, 2)} for c, v in sorted(totals.items())],
+        "unrated_roles": sorted(r["role"] for r in rows if not r["rated"]),
+    }
+
+
+class WorkspaceCalendarEndpoint(BaseAPIView):
+    """The days nobody works. Workspace-wide: a holiday is a fact about the
+    calendar, not about a project."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        rows = WorkspaceNonWorkingDay.objects.filter(workspace__slug=slug)
+        return Response(
+            {"days": [{"id": str(r.id), "date": r.date.isoformat(), "name": r.name} for r in rows]},
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if not workspace:
+            return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+        day = _parse_date(request.data.get("date"))
+        if not day:
+            return Response({"error": "A valid date is required"}, status=status.HTTP_400_BAD_REQUEST)
+        row, _created = WorkspaceNonWorkingDay.objects.update_or_create(
+            workspace=workspace,
+            date=day,
+            defaults={"name": str(request.data.get("name") or "")[:120]},
+        )
+        return Response({"id": str(row.id), "date": row.date.isoformat(), "name": row.name}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug):
+        day = _parse_date(request.query_params.get("date"))
+        if not day:
+            return Response({"error": "A valid date is required"}, status=status.HTTP_400_BAD_REQUEST)
+        WorkspaceNonWorkingDay.objects.filter(workspace__slug=slug, date=day).delete()
+        return Response({"deleted": True}, status=status.HTTP_200_OK)
+
+
+class WorkspaceRoleRatesEndpoint(BaseAPIView):
+    """What an hour of each discipline costs. Reading is open to anyone who can see
+    the workspace; writing is admin-only — a rate is a commercial fact."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        rows = WorkspaceRoleRate.objects.filter(workspace__slug=slug)
+        return Response(
+            {
+                "rates": [
+                    {
+                        "role": r.role,
+                        "hourly_rate": float(r.hourly_rate),
+                        "hours_per_day": float(r.hours_per_day),
+                        "currency": r.currency,
+                    }
+                    for r in rows
+                ],
+                # The vocabulary a rate can attach to, so the UI offers the
+                # disciplines that exist rather than a free-text box.
+                "known_roles": list(PROJECT_ROLES),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN], level="WORKSPACE")
+    def put(self, request, slug):
+        workspace = Workspace.objects.filter(slug=slug).first()
+        if not workspace:
+            return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = request.data.get("rates")
+        if not isinstance(rows, list):
+            return Response({"error": "rates must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        saved = []
+        for entry in rows[:100]:
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role") or "").strip().lower()[:80]
+            if not role:
+                continue
+            try:
+                hourly = max(0, min(100000, float(entry.get("hourly_rate") or 0)))
+                per_day = max(0.5, min(24, float(entry.get("hours_per_day") or 7)))
+            except (TypeError, ValueError):
+                continue
+            row, _ = WorkspaceRoleRate.objects.update_or_create(
+                workspace=workspace,
+                role=role,
+                defaults={
+                    "hourly_rate": hourly,
+                    "hours_per_day": per_day,
+                    "currency": str(entry.get("currency") or "EUR").strip().upper()[:3],
+                },
+            )
+            saved.append(
+                {
+                    "role": row.role,
+                    "hourly_rate": float(row.hourly_rate),
+                    "hours_per_day": float(row.hours_per_day),
+                    "currency": row.currency,
+                }
+            )
+        return Response({"rates": saved}, status=status.HTTP_200_OK)
+
+
+class ProjectExpensesEndpoint(BaseAPIView):
+    """Everything a project spends that is not somebody's time."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = ProjectExpense.objects.filter(project_id=project_id)
+        return Response({"expenses": [_serialize_expense(r) for r in rows]}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        label = str(request.data.get("label") or "").strip()[:255]
+        if not label:
+            return Response({"error": "A label is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
+            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            return Response({"error": "Amount and quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
+
+        row = ProjectExpense.objects.create(
+            project=project,
+            category=str(request.data.get("category") or ProjectExpense.OTHER)[:16],
+            label=label,
+            amount=amount,
+            quantity=quantity,
+            currency=str(request.data.get("currency") or "EUR").strip().upper()[:3],
+            planned=bool(request.data.get("planned", True)),
+            incurred_on=_parse_date(request.data.get("incurred_on")),
+            notes=str(request.data.get("notes") or "")[:2000],
+            created_by=request.user,
+        )
+        return Response(_serialize_expense(row), status=status.HTTP_201_CREATED)
+
+
+class ProjectExpenseDetailEndpoint(BaseAPIView):
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def patch(self, request, slug, project_id, expense_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        row = ProjectExpense.objects.filter(id=expense_id, project_id=project_id).first()
+        if not row:
+            return Response({"error": "Expense not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if "label" in request.data:
+            label = str(request.data.get("label") or "").strip()[:255]
+            if not label:
+                return Response({"error": "A label is required"}, status=status.HTTP_400_BAD_REQUEST)
+            row.label = label
+        for field, cap in (("amount", 10**9), ("quantity", 100000)):
+            if field in request.data:
+                try:
+                    setattr(row, field, max(0, min(cap, float(request.data.get(field) or 0))))
+                except (TypeError, ValueError):
+                    return Response({"error": f"{field} must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+        if "category" in request.data:
+            row.category = str(request.data.get("category") or ProjectExpense.OTHER)[:16]
+        if "currency" in request.data:
+            row.currency = str(request.data.get("currency") or "EUR").strip().upper()[:3]
+        if "planned" in request.data:
+            row.planned = bool(request.data.get("planned"))
+        if "incurred_on" in request.data:
+            row.incurred_on = _parse_date(request.data.get("incurred_on"))
+        if "notes" in request.data:
+            row.notes = str(request.data.get("notes") or "")[:2000]
+        row.save()
+        return Response(_serialize_expense(row), status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id, expense_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        ProjectExpense.objects.filter(id=expense_id, project_id=project_id).delete()
+        return Response({"deleted": True}, status=status.HTTP_200_OK)
+
+
+def _serialize_expense(row):
+    return {
+        "id": str(row.id),
+        "category": row.category,
+        "label": row.label,
+        "amount": float(row.amount),
+        "quantity": float(row.quantity),
+        "total": float(row.total),
+        "currency": row.currency,
+        "planned": row.planned,
+        "incurred_on": row.incurred_on.isoformat() if row.incurred_on else None,
+        "notes": row.notes,
+    }
+
+
+class ProjectBudgetEndpoint(BaseAPIView):
+    """What this project costs: the human time its plan implies, plus what it spends.
+
+    The two halves are reported apart and never blended, because they are known to
+    different degrees. Labour is *derived* — it moves the moment somebody drags a
+    bar — while an expense is a number a person typed and often has a receipt for.
+    Presenting a single figure would give the estimate the authority of the receipt.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Labour from the work items that exist, not from a plan preview: this is
+        # the cost of what the project actually holds.
+        rows = list(
+            Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
+            .filter(start_date__isnull=False, target_date__isnull=False)
+            .values("id", "start_date", "target_date")
+        )
+        roles = {
+            str(r.issue_id): r.role
+            for r in IssueRole.objects.filter(issue__project_id=project_id).only("issue_id", "role")
+        }
+        tasks = [
+            {
+                "role": roles.get(str(r["id"])),
+                # Working days the item occupies, which is what a rate is applied to.
+                "days": _working_days_between(r["start_date"], r["target_date"]),
+            }
+            for r in rows
+        ]
+        labour = _labour_cost(tasks, _rate_map(slug))
+
+        expenses = list(ProjectExpense.objects.filter(project_id=project_id))
+        by_category = {}
+        spend_totals = {}
+        for row in expenses:
+            bucket = by_category.setdefault(
+                row.category, {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": row.currency}
+            )
+            bucket["planned" if row.planned else "actual"] += float(row.total)
+            key = (row.currency, row.planned)
+            spend_totals[key] = spend_totals.get(key, 0.0) + float(row.total)
+
+        return Response(
+            {
+                "labour": labour,
+                "expenses": {
+                    "by_category": sorted(
+                        by_category.values(), key=lambda c: -(c["planned"] + c["actual"])
+                    ),
+                    "planned": [
+                        {"currency": c, "amount": round(v, 2)}
+                        for (c, planned), v in sorted(spend_totals.items())
+                        if planned
+                    ],
+                    "actual": [
+                        {"currency": c, "amount": round(v, 2)}
+                        for (c, planned), v in sorted(spend_totals.items())
+                        if not planned
+                    ],
+                    "count": len(expenses),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+def _working_days_between(start, end):
+    """Inclusive working days between two dates; 1 when they are the same day."""
+    if not start or not end or end < start:
+        return 1
+    day, count = start, 0
+    while day <= end:
+        if day.weekday() < 5:
+            count += 1
+        day += timedelta(days=1)
+    return max(1, count)

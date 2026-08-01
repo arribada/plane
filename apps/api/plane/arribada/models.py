@@ -28,6 +28,17 @@ class ProjectSchedule(models.Model):
     )
     start_date = models.DateField(null=True, blank=True)
     target_date = models.DateField(null=True, blank=True)
+
+    # What this project has been given to spend. Null means nobody has said — which
+    # is different from zero, and the difference matters: a project with no budget
+    # recorded should not be reported as 100% over.
+    #
+    # Beside the dates rather than in its own table because it is the same kind of
+    # fact: a planned figure a human entered, against which the derived numbers are
+    # read. The dates say when, this says how much.
+    budget_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    budget_currency = models.CharField(max_length=3, default="EUR")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

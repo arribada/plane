@@ -3719,8 +3719,42 @@ class ProjectBudgetEndpoint(BaseAPIView):
             key = (row.currency, row.planned)
             spend_totals[key] = spend_totals.get(key, 0.0) + float(row.total)
 
+        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+        allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
+        allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
+
+        # What has been committed against the allocation, in the allocation's own
+        # currency only. Anything billed in another currency is counted separately
+        # and named, rather than converted at a rate nobody in this system chose.
+        committed = 0.0
+        other_currencies = set()
+        for row in labour["totals"]:
+            if row["currency"] == allocation_currency:
+                committed += row["amount"]
+            else:
+                other_currencies.add(row["currency"])
+        for row in expenses:
+            if row.currency == allocation_currency:
+                committed += float(row.total)
+            else:
+                other_currencies.add(row.currency)
+
         return Response(
             {
+                "allocation": {
+                    "amount": allocated,
+                    "currency": allocation_currency,
+                    "committed": round(committed, 2),
+                    # None rather than 0 when nothing is allocated: a project with no
+                    # budget recorded is not a project that is 100% over.
+                    "remaining": None if allocated is None else round(allocated - committed, 2),
+                    "percent": None
+                    if not allocated
+                    else round(100 * committed / allocated),
+                    # Named so a figure that does not count toward the allocation is
+                    # visible rather than quietly missing from it.
+                    "excluded_currencies": sorted(other_currencies),
+                },
                 "labour": labour,
                 "expenses": {
                     "by_category": sorted(

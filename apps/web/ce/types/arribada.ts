@@ -91,6 +91,10 @@ export type TProjectStatusUpdate = {
 };
 
 export type TProjectSchedule = {
+  /** What the project was given to spend. Null means nobody has said, which the
+   *  budget view reports differently from zero. */
+  budget_amount?: number | null;
+  budget_currency?: string;
   id: string;
   project: string;
   start_date: string | null;
@@ -393,6 +397,16 @@ export type TProjectExpense = {
 export type TMoney = { currency: string; amount: number };
 
 export type TProjectBudget = {
+  /** The allocation and what is left of it. `amount` null = none recorded. */
+  allocation: {
+    amount: number | null;
+    currency: string;
+    committed: number;
+    remaining: number | null;
+    percent: number | null;
+    /** Figures billed in another currency: counted apart, never converted. */
+    excluded_currencies: string[];
+  };
   /** Derived from the plan, so it moves whenever the plan does. */
   labour: {
     by_role: {

@@ -542,7 +542,7 @@ export class ArribadaService extends APIService {
   async updateSchedule(
     workspaceSlug: string,
     projectId: string,
-    data: Partial<Pick<TProjectSchedule, "start_date" | "target_date">>
+    data: Partial<Pick<TProjectSchedule, "start_date" | "target_date" | "budget_amount" | "budget_currency">>
   ): Promise<TProjectSchedule> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`, data)
       .then((response) => response?.data)

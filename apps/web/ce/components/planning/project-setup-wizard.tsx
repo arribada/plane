@@ -16,7 +16,7 @@
  *
  * Every answer lives in this component, so stepping back never loses what was typed.
  */
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Sparkles, Users, X } from "lucide-react";
@@ -143,6 +143,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [dependencies, setDependencies] = useState<Record<string, string[]>>({});
   const [endOverride, setEndOverride] = useState("");
   const [created, setCreated] = useState<TSetupApplyResult | null>(null);
+  // Whether the lead has typed a delivery date. A ref, not state: nothing renders
+  // from it, and it must not make the plan rebuild.
+  const endTouched = useRef(false);
   // 6 — work already in the project
   const [undatedCount, setUndatedCount] = useState<number | null>(null);
   // Latched when the wizard opens. The step list must not change shape underneath
@@ -173,6 +176,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setFixedDates({});
     setDependencies({});
     setCreated(null);
+    endTouched.current = false;
     setApplied(null);
     setReflowed(null);
     setAiPlan(null);
@@ -434,7 +438,16 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         extra_tasks: reflow ? plan?.tasks.filter((t) => t.added) : undefined,
       });
       setPlan(result);
-      if (!reflow) setEndOverride(result.end_date);
+      // A new plan is not the one that was created. Leaving `created` set showed
+      // the "Created N work items" screen over a plan that had never been applied,
+      // and the Create button is hidden behind that screen — so the second plan
+      // could not be created at all.
+      setCreated(null);
+      // Seed the delivery date from the schedule only while the lead has not set
+      // one. Overwriting it on every rebuild wiped the date they had just typed —
+      // including the deadline a warning had told them to work toward, which is
+      // the one moment they are most likely to press Rebuild.
+      if (!reflow && !endTouched.current) setEndOverride(result.end_date);
     } catch (e) {
       setError(errorMessage(e, "Could not build a plan."));
     } finally {
@@ -1139,7 +1152,12 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                   type="date"
                   className={cn(field, "w-44")}
                   value={endOverride}
-                  onChange={(e) => setEndOverride(e.target.value)}
+                  onChange={(e) => {
+                    // From here on this date is the lead's, and a rebuild must not
+                    // overwrite it with whatever the schedule happened to produce.
+                    endTouched.current = true;
+                    setEndOverride(e.target.value);
+                  }}
                 />
               </div>
               <button type="button" onClick={() => buildPlan()} disabled={!!busy} className={actionBtn}>

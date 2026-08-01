@@ -679,6 +679,19 @@ def agile_catalogue():
     }
 
 
+def _model_days(value, fallback=5):
+    """Working days from something a language model wrote.
+
+    Everything else the model sends is parsed defensively; this one was not, so a
+    `days` of "five" or "3-5" raised ValueError out of the builder and turned the
+    whole plan step into a 500 — for one bad field in one suggested task.
+    """
+    try:
+        return max(1, min(365, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
 def build_agile_tasks(
     tracks,
     *,
@@ -794,7 +807,7 @@ def build_agile_tasks(
                 "track": str(item.get("track") or "pm")[:40],
                 "phase": str(item.get("phase") or "implementation")[:40],
                 "role": str(item.get("role") or "")[:80],
-                "days": max(1, min(365, int(item.get("days") or 5))),
+                "days": _model_days(item.get("days")),
                 "after": after,
                 "assignee_id": assignees.get(key),
                 "added": True,
@@ -1198,7 +1211,7 @@ def build_tasks(
                 "track": str(item.get("track") or "pm")[:40],
                 "phase": str(item.get("phase") or "implementation")[:40],
                 "role": str(item.get("role") or "")[:80],
-                "days": max(1, min(365, int(item.get("days") or 5))),
+                "days": _model_days(item.get("days")),
                 "after": after,
                 "assignee_id": assignees.get(key),
                 "added": True,

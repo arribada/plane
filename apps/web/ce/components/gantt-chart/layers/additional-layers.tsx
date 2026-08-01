@@ -52,6 +52,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           const map: Record<string, number> = {};
           for (const r of rows || []) map[r.issue_id] = r.percent;
           setProgress(map);
+          return undefined;
         })
         .catch(() => {
           if (!cancelled) setProgress({});
@@ -63,6 +64,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           const map: Record<string, { start: string | null; target: string | null }> = {};
           for (const r of rows || []) map[r.issue_id] = { start: r.start_date, target: r.target_date };
           setBaseline(map);
+          return undefined;
         })
         .catch(() => {
           if (!cancelled) setBaseline({});
@@ -77,6 +79,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   if (!view) return null;
 
   const height = Math.max(blockCount, 1) * BLOCK_HEIGHT;
+  const active = store.activeBlockId;
   const blockIds = store.blockIds ?? [];
 
   // progress fills: a darker inset bar covering `percent` of each item's bar
@@ -99,7 +102,9 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   // weekend bands, day-accurate, only when a day column is wide enough to read
   const dayWidth: number = view.data?.dayWidth ?? 0;
   const bands: { x: number; w: number }[] = [];
-  if (dayWidth >= 12 && view.data?.startDate) {
+  // Respects the display switch. Without this, turning weekends off cleared them
+  // from the header strip and left them shaded across the bars.
+  if (store.showWeekends && dayWidth >= 12 && view.data?.startDate) {
     const start = new Date(view.data.startDate);
     const days = Math.ceil(itemsContainerWidth / dayWidth) + 1;
     for (let i = 0; i < days; i++) {
@@ -124,8 +129,21 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   // cross-project dependency arrows (portfolio "critical path" mode). Drawn only
   // between two currently-positioned bars; critical edges in red, cross-project in
   // purple dashed, in-project in grey. predecessor end -> successor start.
-  const arrows: { path: string; hx: number; hy: number; color: string; width: number; dash?: string }[] = [];
-  if (isPortfolio && portfolio.showCriticalPath && portfolio.crossEdges.length) {
+  const arrows: {
+    path: string;
+    hx: number;
+    hy: number;
+    color: string;
+    width: number;
+    dash?: string;
+    opacity: number;
+    from: string;
+    to: string;
+  }[] = [];
+  // Drawn whenever there are edges. Gating them on the critical-path switch meant a
+  // portfolio of six projects showed no dependencies until somebody pressed a button
+  // whose label promises something else entirely.
+  if (isPortfolio && portfolio.crossEdges.length) {
     const idx = new Map<string, number>();
     blockIds.forEach((id, i) => idx.set(id, i));
     for (const e of portfolio.crossEdges) {
@@ -139,21 +157,39 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       const x2 = bb.position.marginLeft; // successor start
       const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
       const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      // elbow that drops just before the successor start, then arrives pointing right into it
-      const midx = Math.max(x1 + 6, x2 - 8);
-      const color = e.critical ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
+      // Rounded elbow: drop just before the successor's start, then arrive pointing
+      // into it. Square corners at this density read as a circuit diagram.
+      const midx = Math.max(x1 + 8, x2 - 10);
+      const r = Math.min(5, Math.abs(y2 - y1) / 2, Math.max(0, midx - x1));
+      const down = y2 >= y1 ? 1 : -1;
+      const path =
+        r > 1
+          ? `M ${x1} ${y1} H ${midx - r} a ${r} ${r} 0 0 ${down > 0 ? 1 : 0} ${r} ${down * r} V ${y2 - down * r} a ${r} ${r} 0 0 ${down > 0 ? 0 : 1} ${r} ${down * r} H ${x2}`
+          : `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`;
+      // Red is the critical chain and nothing else; a cross-project link is dashed
+      // because crossing a project boundary is a fact about the link, not a severity.
+      const highlighted = portfolio.showCriticalPath && e.critical;
+      const related = active === e.from || active === e.to;
+      const color = highlighted ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
       arrows.push({
-        path: `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`,
+        path,
         hx: x2,
         hy: y2,
         color,
-        width: e.critical ? 2 : 1.25,
-        dash: e.cross_project && !e.critical ? "4 2" : undefined,
+        width: highlighted ? 2 : related ? 1.75 : 1,
+        dash: e.cross_project && !highlighted ? "4 2" : undefined,
+        // Same three states as the project gantt: at rest they sit back far enough
+        // to read the bars through, and pointing at one bar lights only its own.
+        opacity: related ? 0.95 : active ? 0.08 : highlighted ? 0.85 : 0.32,
+        from: e.from,
+        to: e.to,
       });
     }
   }
 
   // milestones: zero-duration items (start === target) drawn as named diamonds
+  // Ids the bar renderer should not draw at all: a diamond replaces the bar, it
+  // does not decorate it, and a 3px sliver poking out from under it reads as a bug.
   const milestones: { x: number; y: number; name: string }[] = [];
   for (let i = 0; i < blockIds.length; i++) {
     const block = store.getBlockById(blockIds[i]);
@@ -165,15 +201,15 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
 
   return (
     <svg
-      className="pointer-events-none absolute left-0 top-0"
+      className="pointer-events-none absolute top-0 left-0"
       style={{ width: itemsContainerWidth, height, overflow: "visible", zIndex: 4 }}
     >
-      {bands.map((b, i) => (
-        <rect key={`wk-${i}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
+      {bands.map((b) => (
+        <rect key={`wk-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
       ))}
-      {ghosts.map((g, i) => (
+      {ghosts.map((g) => (
         <rect
-          key={`bl-${i}`}
+          key={`bl-${g.x}-${g.y}`}
           x={g.x}
           y={g.y}
           width={g.w}
@@ -186,20 +222,40 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           opacity={0.75}
         />
       ))}
-      {fills.map((f, i) => (
-        <rect key={`pf-${i}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />
+      {fills.map((f) => (
+        <rect key={`pf-${f.x}-${f.y}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />
       ))}
       {typeof todayX === "number" && (
-        <line x1={todayX} y1={0} x2={todayX} y2={height} stroke="#ef4444" strokeWidth={1} opacity={0.7} />
+        <g>
+          {/* Dashed and capped. A plain hairline was easy to mistake for a month
+              gridline, and easier still to lose now the bars carry full colour. */}
+          <line
+            x1={todayX}
+            y1={0}
+            x2={todayX}
+            y2={height}
+            stroke="#ef4444"
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            opacity={0.85}
+          />
+          <circle cx={todayX} cy={3} r={3} fill="#ef4444" />
+        </g>
       )}
-      {arrows.map((a, i) => (
-        <g key={`dep-${i}`}>
-          <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} opacity={0.85} />
+      {arrows.map((a) => (
+        // The "fade dependency arrows" switch applies here too, so the portfolio
+        // and the per-project chart answer it the same way.
+        <g
+          key={`dep-${a.from}-${a.to}`}
+          opacity={store.dimDependencies ? a.opacity : Math.max(a.opacity, 0.7)}
+          style={{ transition: "opacity .12s" }}
+        >
+          <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} />
           <path d={`M ${a.hx} ${a.hy} l -5 -3 l 0 6 z`} fill={a.color} />
         </g>
       ))}
-      {milestones.map((m, i) => (
-        <g key={`ms-${i}`}>
+      {milestones.map((m) => (
+        <g key={`ms-${m.x}-${m.y}`}>
           <path
             d={`M ${m.x} ${m.y - DIAMOND} L ${m.x + DIAMOND} ${m.y} L ${m.x} ${m.y + DIAMOND} L ${m.x - DIAMOND} ${m.y} Z`}
             fill="#f59e0b"
@@ -207,7 +263,13 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
             strokeWidth={1}
           />
           {m.name && (
-            <text x={m.x + DIAMOND + 4} y={m.y + 3} fontSize={10} className="fill-secondary" style={{ fontWeight: 500 }}>
+            <text
+              x={m.x + DIAMOND + 4}
+              y={m.y + 3}
+              fontSize={10}
+              className="fill-secondary"
+              style={{ fontWeight: 500 }}
+            >
               {m.name.length > 28 ? m.name.slice(0, 28) + "…" : m.name}
             </text>
           )}

@@ -211,13 +211,39 @@ export const downloadCsv = (csv: string, filename: string): void => {
   triggerDownload(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }), filename);
 };
 
+/**
+ * The largest canvas dimension and area browsers will actually allocate. Beyond
+ * either, `toBlob` hands back a blank image rather than failing — so a two-year
+ * plan with three hundred rows would have downloaded a white rectangle and said
+ * nothing. Chrome and Firefox differ; these are the conservative floors.
+ */
+const MAX_CANVAS_SIDE = 16_384;
+const MAX_CANVAS_AREA = 268_435_456; // 16384²
+
+export class CanvasTooLargeError extends Error {
+  constructor() {
+    super("canvas too large");
+    this.name = "CanvasTooLargeError";
+  }
+}
+
 /** Rasterise via an off-screen canvas — browser-native, no dependency. */
 export const downloadPng = (svg: string, filename: string): Promise<void> =>
   new Promise((resolve, reject) => {
     const image = new Image();
     const svgUrl = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
     image.addEventListener("load", () => {
-      const scale = 2; // legible when zoomed, and printable
+      // Drop to 1x before giving up — a plan that will not fit at retina density
+      // usually fits at one, and a slightly soft PNG beats no PNG.
+      const fits = (factor: number) =>
+        image.width * factor <= MAX_CANVAS_SIDE &&
+        image.height * factor <= MAX_CANVAS_SIDE &&
+        image.width * factor * image.height * factor <= MAX_CANVAS_AREA;
+      const scale = fits(2) ? 2 : 1;
+      if (!fits(scale)) {
+        reject(new CanvasTooLargeError());
+        return;
+      }
       const canvas = document.createElement("canvas");
       canvas.width = image.width * scale;
       canvas.height = image.height * scale;
@@ -236,3 +262,130 @@ export const downloadPng = (svg: string, filename: string): Promise<void> =>
     image.addEventListener("error", () => reject(new Error("svg render failed")));
     image.src = svgUrl;
   });
+
+/**
+ * MS Project XML (the `http://schemas.microsoft.com/project` namespace Project has
+ * read since 2003, and which Primavera, Smartsheet and GanttProject all import).
+ *
+ * Two things make it work rather than merely parse. Tasks need a contiguous 1..n
+ * `UID` and a `PredecessorLink` referring to those UIDs, not to our own ids — so
+ * the edges are remapped. And Project treats a task with no `Duration` as a
+ * milestone, which is exactly right for a same-day item and exactly wrong if
+ * emitted by accident, so the duration is always written.
+ */
+export const buildMsProjectXml = (rows: TExportRow[], edges: TExportEdge[], title: string): string => {
+  const items = rows.filter((r) => r.kind === "item" && r.start && r.end);
+  if (items.length === 0) return "";
+
+  const uidById = new Map(items.map((row, index) => [row.id, index + 1] as const));
+  // Project wants a full dateTime; the day itself is what we hold.
+  const at = (d: Date, endOfDay = false) => `${iso(d)}T${endOfDay ? "17:00:00" : "08:00:00"}`;
+
+  const predecessors = new Map<number, number[]>();
+  for (const edge of edges) {
+    const from = uidById.get(edge.from);
+    const to = uidById.get(edge.to);
+    if (!from || !to) continue;
+    const list = predecessors.get(to);
+    if (list) list.push(from);
+    else predecessors.set(to, [from]);
+  }
+
+  const parts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<Project xmlns="http://schemas.microsoft.com/project">',
+    `<Name>${esc(title)}</Name>`,
+    `<Title>${esc(title)}</Title>`,
+    "<ScheduleFromStart>1</ScheduleFromStart>",
+    `<StartDate>${at(items.reduce((a, b) => (a.start! < b.start! ? a : b)).start!)}</StartDate>`,
+    "<CalendarUID>1</CalendarUID>",
+    "<Tasks>",
+  ];
+
+  items.forEach((row, index) => {
+    const uid = index + 1;
+    // Inclusive day count, expressed the way Project reads it: PT<hours>H0M0S at
+    // eight hours a day. Writing days directly is not part of the schema.
+    const days = Math.max(1, Math.round((row.end!.getTime() - row.start!.getTime()) / DAY) + 1);
+    parts.push(
+      "<Task>",
+      `<UID>${uid}</UID>`,
+      `<ID>${uid}</ID>`,
+      `<Name>${esc(row.identifier ? `${row.identifier} ${row.label}` : row.label)}</Name>`,
+      "<Active>1</Active>",
+      "<Type>1</Type>",
+      "<OutlineLevel>1</OutlineLevel>",
+      `<Start>${at(row.start!)}</Start>`,
+      `<Finish>${at(row.end!, true)}</Finish>`,
+      `<Duration>PT${days * 8}H0M0S</Duration>`,
+      "<DurationFormat>7</DurationFormat>",
+      `<Milestone>${days === 1 ? 1 : 0}</Milestone>`,
+      `<PercentComplete>${row.state ? "" : ""}0</PercentComplete>`
+    );
+    for (const from of predecessors.get(uid) ?? []) {
+      // Type 1 is finish-to-start, which is what every edge we draw means.
+      parts.push(
+        "<PredecessorLink>",
+        `<PredecessorUID>${from}</PredecessorUID>`,
+        "<Type>1</Type>",
+        "</PredecessorLink>"
+      );
+    }
+    parts.push("</Task>");
+  });
+
+  parts.push("</Tasks>", "</Project>");
+  return parts.join("");
+};
+
+const stamp = (d: Date) => iso(d).replace(/-/g, "");
+// RFC 5545 §3.3.11: backslash first, or it would escape the escapes added after
+// it. A task named "Field trip; day 2, Praia" becomes two properties otherwise.
+const escapeText = (value: string) =>
+  value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const fold = (line: string): string => {
+  if (line.length <= 75) return line;
+  const chunks = [line.slice(0, 75)];
+  for (let i = 75; i < line.length; i += 74) chunks.push(" " + line.slice(i, i + 74));
+  return chunks.join("\r\n");
+};
+
+/**
+ * iCalendar. One all-day VEVENT per dated item, so a plan can be subscribed to or
+ * dropped into a calendar without anybody re-typing it.
+ *
+ * DTEND is exclusive in RFC 5545 — a task finishing on the 20th ends on the 21st —
+ * and getting that wrong is how every exported plan ends a day early. Lines are
+ * folded at 75 octets because Outlook is strict about it where Google is not.
+ */
+export const buildIcs = (rows: TExportRow[], title: string): string => {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Arribada//Timeline//EN",
+    "CALSCALE:GREGORIAN",
+    `X-WR-CALNAME:${escapeText(title)}`,
+  ];
+
+  for (const row of rows) {
+    if (row.kind !== "item" || !row.start || !row.end) continue;
+    const exclusiveEnd = new Date(row.end.getTime() + DAY);
+    lines.push(
+      "BEGIN:VEVENT",
+      // Stable per item, so re-importing updates the event instead of duplicating it.
+      `UID:${row.id}@arribada`,
+      `DTSTART;VALUE=DATE:${stamp(row.start)}`,
+      `DTEND;VALUE=DATE:${stamp(exclusiveEnd)}`,
+      `SUMMARY:${escapeText(row.identifier ? `${row.identifier} ${row.label}` : row.label)}`,
+      row.assignee ? `DESCRIPTION:${escapeText(`Owner: ${row.assignee}`)}` : "DESCRIPTION:",
+      "END:VEVENT"
+    );
+  }
+
+  lines.push("END:VCALENDAR");
+  return lines.map((line) => fold(line)).join("\r\n");
+};
+
+export const downloadText = (text: string, filename: string, mime: string): void => {
+  triggerDownload(new Blob([text], { type: `${mime};charset=utf-8` }), filename);
+};

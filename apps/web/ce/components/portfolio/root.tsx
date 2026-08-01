@@ -50,6 +50,14 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
     if (workspaceSlug) portfolio.fetchPortfolio(workspaceSlug.toString());
   }, [workspaceSlug, portfolio]);
 
+  // The dependency edges arrive with the board, not with the critical-path switch.
+  // They were loaded only by that toggle and drawn only in that mode, so a portfolio
+  // of six projects showed no dependencies at all until somebody happened to press
+  // a button whose label says nothing about showing them.
+  useEffect(() => {
+    if (workspaceSlug) void portfolio.fetchCriticalPath(workspaceSlug.toString());
+  }, [workspaceSlug, portfolio]);
+
   return (
     <>
       <div className="flex h-full w-full flex-col">

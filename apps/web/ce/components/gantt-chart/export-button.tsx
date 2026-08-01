@@ -9,14 +9,18 @@
  */
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
-import { Download, FileImage, FileSpreadsheet, FileCode2 } from "lucide-react";
+import { CalendarDays, Download, FileCode2, FileImage, FileSpreadsheet, GanttChartSquare } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import {
   buildGanttCsv,
   buildGanttSvg,
+  buildIcs,
+  buildMsProjectXml,
+  CanvasTooLargeError,
   downloadCsv,
   downloadPng,
   downloadSvg,
+  downloadText,
   type TExportEdge,
   type TExportRow,
 } from "./export";
@@ -47,7 +51,7 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const run = async (kind: "svg" | "png" | "csv") => {
+  const run = async (kind: "svg" | "png" | "csv" | "mpp" | "ics") => {
     setOpen(false);
     setBusy(true);
     try {
@@ -55,6 +59,19 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
       const name = slug(title);
       if (kind === "csv") {
         downloadCsv(buildGanttCsv(rows), `${name}.csv`);
+        return;
+      }
+      if (kind === "mpp") {
+        const xml = buildMsProjectXml(rows, edges, title);
+        if (!xml) {
+          setToast({ type: TOAST_TYPE.WARNING, title: "Nothing to export", message: "No dated work items." });
+          return;
+        }
+        downloadText(xml, `${name}.xml`, "application/xml");
+        return;
+      }
+      if (kind === "ics") {
+        downloadText(buildIcs(rows, title), `${name}.ics`, "text/calendar");
         return;
       }
       const svg = buildGanttSvg(rows, edges, { title, showWeekends });
@@ -70,11 +87,17 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
       }
       if (kind === "svg") downloadSvg(svg, `${name}.svg`);
       else await downloadPng(svg, `${name}.png`);
-    } catch {
+    } catch (error) {
+      // A long plan can exceed what a browser will allocate for a canvas, and
+      // toBlob answers that with a blank image rather than an error — so this is
+      // caught and named instead of quietly downloading a white rectangle.
+      const tooBig = error instanceof CanvasTooLargeError;
       setToast({
         type: TOAST_TYPE.ERROR,
-        title: "Couldn't build the file",
-        message: "Nothing was downloaded. Try again, or export as CSV.",
+        title: tooBig ? "Too large for a PNG" : "Couldn't build the file",
+        message: tooBig
+          ? "This plan is past what a browser can rasterise. Export as SVG — it stays sharp at any size."
+          : "Nothing was downloaded. Try again, or export as CSV.",
       });
     } finally {
       setBusy(false);
@@ -115,6 +138,21 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
             <button type="button" className={item} onClick={() => void run("csv")}>
               <FileSpreadsheet className="size-3.5 text-tertiary" />
               CSV (dates and owners)
+            </button>
+            <div className="my-1 border-t border-subtle" />
+            <button type="button" className={item} onClick={() => void run("mpp")}>
+              <GanttChartSquare className="size-3.5 text-tertiary" />
+              <span>
+                MS Project XML
+                <span className="block text-11 text-tertiary">Also opens in Primavera, Smartsheet</span>
+              </span>
+            </button>
+            <button type="button" className={item} onClick={() => void run("ics")}>
+              <CalendarDays className="size-3.5 text-tertiary" />
+              <span>
+                Calendar (.ics)
+                <span className="block text-11 text-tertiary">One all-day event per item</span>
+              </span>
             </button>
           </div>
         </>

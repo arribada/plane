@@ -522,11 +522,11 @@ export class PortfolioStore implements IPortfolioStore {
 
   isCriticalIssue = computedFn((id: string): boolean => this.showCriticalPath && this.criticalIssueIds.has(id));
 
+  /** Highlights the critical chain. It does not decide whether dependencies are
+   *  drawn at all — the board loads its edges up front now. */
   setShowCriticalPath = (workspaceSlug: string, value: boolean): void => {
     this.showCriticalPath = value;
-    if (value && this.criticalIssueIds.size === 0 && this.crossEdges.length === 0) {
-      void this.fetchCriticalPath(workspaceSlug);
-    }
+    if (value && this.criticalIssueIds.size === 0) void this.fetchCriticalPath(workspaceSlug);
   };
 
   fetchCriticalPath = async (workspaceSlug: string): Promise<void> => {

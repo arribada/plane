@@ -27,6 +27,7 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // local imports
+import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
 import { ganttBarColor, ganttDisplay } from "@/plane-web/store/gantt-display";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
@@ -62,6 +63,8 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const { blockStyle } = getBlockViewDetails(issueDetails, stateDetails?.color ?? "");
   // user-selected "colour by" (state keeps the default); overrides just the fill.
   const colorOverride = ganttBarColor(ganttDisplay.colorBy, issueDetails, (id) => getLabelById(id)?.color);
+  const fill = colorOverride || stateDetails?.color || "#3b82f6";
+  const look = barLook(issueDetails, fill, stateDetails?.group);
   const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
@@ -91,10 +94,20 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
             onClick={handleIssuePeekOverview}
             onKeyDown={handleBlockKeyDown}
           >
-            <div className="absolute top-0 left-0 h-full w-full bg-surface-1/50" />
+            {/* A finished bar steps back rather than shouting: what is left to do is
+                the part of a plan you read. Overdue does the opposite. */}
+            {look.done && <div className="absolute top-0 left-0 h-full w-full rounded-sm bg-surface-1/55" />}
+            {look.overdue && (
+              <div
+                className="ring-danger-primary pointer-events-none absolute top-0 left-0 h-full w-full rounded-sm ring-2 ring-inset"
+                title="Past its due date and not finished"
+              />
+            )}
             <div
-              className="sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13 text-primary"
-              style={{ left: `${sidebarPaneWidth}px` }}
+              className="sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
+              // Chosen against the bar's own fill. The 50% veil that used to make one
+              // fixed text colour work also drained every colour-by palette to pastel.
+              style={{ left: `${sidebarPaneWidth}px`, color: look.done ? undefined : look.text }}
             >
               {issueDetails?.name}
             </div>

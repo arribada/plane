@@ -29,6 +29,7 @@ import {
   GanttAdditionalLayers,
 } from "@/plane-web/components/gantt-chart";
 import { GanttChartRowList } from "@/plane-web/components/gantt-chart/blocks/block-row-list";
+import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { GanttChartBlocksList } from "@/plane-web/components/gantt-chart/blocks/blocks-list";
 import { IssueBulkOperationsRoot } from "@/plane-web/components/issues/bulk-operations";
 // plane web hooks
@@ -110,6 +111,10 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
         canScroll: ({ source }) => source.data.dragInstanceId === "GANTT_REORDER",
       })
     );
+    // Depending on a ref's .current is what the rule objects to, and it is right
+    // that this cannot re-run when the node changes — but the node here is the
+    // scroll container, mounted once for the life of the chart.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [ganttContainerRef?.current]);
 
   // handling scroll functionality
@@ -167,7 +172,11 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
       <MultipleSelectGroup
         containerRef={ganttContainerRef}
         entities={{
-          [GANTT_SELECT_GROUP]: blockIds ?? [],
+          // Group headers occupy a row but are not work items. Feeding their
+          // synthetic ids in made "select all" claim more items than exist and
+          // hand ids to every bulk action that follows. The toolbar's own count
+          // already filters them; this is the other half of the same guard.
+          [GANTT_SELECT_GROUP]: (blockIds ?? []).filter((id) => !isGroupRowId(id)),
         }}
         disabled={!isBulkOperationsEnabled || isEpic}
       >

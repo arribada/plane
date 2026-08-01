@@ -28,6 +28,7 @@ import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/iss
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // local imports
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
+import { useProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { ganttBarColor, ganttDisplay } from "@/plane-web/store/gantt-display";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
@@ -65,6 +66,10 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const colorOverride = ganttBarColor(ganttDisplay.colorBy, issueDetails, (id) => getLabelById(id)?.color);
   const fill = colorOverride || stateDetails?.color || "#3b82f6";
   const look = barLook(issueDetails, fill, stateDetails?.group);
+  // Inside the bar, not in the overlay. The overlay sits at zIndex 4 and the bars
+  // above it: the fill was only ever visible through the 50% veil that used to
+  // cover every bar, and removing that veil made it invisible outright.
+  const percent = useProjectProgress(issueId);
   const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
@@ -86,7 +91,10 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
           <div
             id={`issue-${issueId}`}
             className="space-between relative flex h-full w-full cursor-pointer items-center rounded-sm"
-            style={style}
+            // A one-day item is drawn as a diamond by the overlay. The bar behind it
+            // is a 3px sliver poking out from under the marker, which reads as a
+            // rendering fault — so it steps aside and leaves the shape to the diamond.
+            style={look.milestone ? { ...style, backgroundColor: "transparent" } : style}
             // a real button element would restyle the bar (UA text-align/appearance) and cannot legally wrap these divs
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
             role="button"
@@ -96,6 +104,13 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
           >
             {/* A finished bar steps back rather than shouting: what is left to do is
                 the part of a plan you read. Overdue does the opposite. */}
+            {percent > 0 && percent < 100 && (
+              <div
+                className="pointer-events-none absolute top-0 left-0 h-full rounded-l-sm bg-black/25"
+                style={{ width: `${percent}%` }}
+                title={`${percent}% of its sub-items are done`}
+              />
+            )}
             {look.done && <div className="absolute top-0 left-0 h-full w-full rounded-sm bg-surface-1/55" />}
             {look.overdue && (
               <div

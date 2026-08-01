@@ -40,7 +40,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
   const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
   const service = useMemo(() => new ArribadaService(), []);
-  const [progress, setProgress] = useState<Record<string, number>>({});
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
 
   useEffect(() => {
@@ -48,18 +47,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     if (workspaceSlug && projectId) {
       const ws = workspaceSlug.toString();
       const pid = projectId.toString();
-      service
-        .getProjectProgress(ws, pid)
-        .then((rows) => {
-          if (cancelled) return;
-          const map: Record<string, number> = {};
-          for (const r of rows || []) map[r.issue_id] = r.percent;
-          setProgress(map);
-          return undefined;
-        })
-        .catch(() => {
-          if (!cancelled) setProgress({});
-        });
       service
         .getBaseline(ws, pid)
         .then((rows) => {
@@ -86,19 +73,9 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const blockIds = store.blockIds ?? [];
   const dayWidthForTails: number = view.data?.dayWidth ?? 0;
 
-  // progress fills: a darker inset bar covering `percent` of each item's bar
-  const fills: { x: number; y: number; w: number }[] = [];
-  for (let i = 0; i < blockIds.length; i++) {
-    const pct = progress[blockIds[i]];
-    if (!pct) continue;
-    const block = store.getBlockById(blockIds[i]);
-    if (!block?.position || !block.position.width) continue;
-    fills.push({
-      x: block.position.marginLeft,
-      y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2,
-      w: (block.position.width * Math.min(pct, 100)) / 100,
-    });
-  }
+  // Progress fills moved into the bar itself (IssueGanttBlock): drawn here they sat
+  // in an overlay at zIndex 4, underneath bars that are opaque now the 50% veil is
+  // gone — so they were computed on every render and never seen.
 
   // Slack tails: a hairline continuing past a bar to where it could still finish
   // without moving anything else. This is what turns dates into a decision — "four
@@ -250,9 +227,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           strokeDasharray="3 2"
           opacity={0.75}
         />
-      ))}
-      {fills.map((f) => (
-        <rect key={`pf-${f.x}-${f.y}`} x={f.x} y={f.y} width={f.w} height={BAR} rx={3} fill="#0f0f0f" opacity={0.22} />
       ))}
       {tails.map((t) => (
         <g key={`sl-${t.x}-${t.y}`} opacity={0.75}>

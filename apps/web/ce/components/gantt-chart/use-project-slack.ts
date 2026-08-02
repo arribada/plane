@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { bumpProjectRevision, useProjectRevision } from "./derived-revision";
 
 export type TIssueSlack = { free: number; total: number; critical: boolean };
 
@@ -41,10 +42,14 @@ const service = new ArribadaService();
 /** Drop the cached answer — the dates it was derived from have changed. */
 export const invalidateProjectSlack = (workspaceSlug: string, projectId: string): void => {
   cache.delete(`${workspaceSlug}/${projectId}`);
+  // Dropping the entry only helps the NEXT mount; this is what reaches the
+  // components already on screen.
+  bumpProjectRevision(workspaceSlug, projectId);
 };
 
 export const useProjectSlack = (workspaceSlug: string | undefined, projectId: string | undefined): TProjectSlack => {
   const key = workspaceSlug && projectId ? `${workspaceSlug}/${projectId}` : null;
+  const revision = useProjectRevision(workspaceSlug, projectId);
   const [value, setValue] = useState<TProjectSlack>(() => (key && cache.get(key)?.value) || EMPTY);
 
   useEffect(() => {
@@ -90,7 +95,7 @@ export const useProjectSlack = (workspaceSlug: string | undefined, projectId: st
     return () => {
       cancelled = true;
     };
-  }, [key, workspaceSlug, projectId]);
+  }, [key, workspaceSlug, projectId, revision]);
 
   return value;
 };

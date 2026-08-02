@@ -13,11 +13,14 @@
  */
 import { useEffect, useRef } from "react";
 import { observer } from "mobx-react";
+import { useParams } from "next/navigation";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { ganttLinking } from "@/plane-web/store/gantt-linking";
+import { invalidateProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
+import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 
 type Props = {
   blockId: string;
@@ -37,9 +40,22 @@ const targetIssueAt = (x: number, y: number): string | null => {
 
 export const DependencyHandle = observer(function DependencyHandle({ blockId, side }: Props) {
   const store = useTimeLineChartStore();
+  const { workspaceSlug, projectId } = useParams();
   const {
     relation: { createCurrentRelation },
   } = useIssueDetail();
+
+  /**
+   * The arrows and the critical path are derived server-side and cached per
+   * project, so a new link is invisible until the cache is dropped. Without this
+   * the line the user just drew saves correctly and never appears — which reads
+   * as the drag having failed, and invites them to draw it again.
+   */
+  const refreshDerived = () => {
+    if (typeof workspaceSlug !== "string" || typeof projectId !== "string") return;
+    invalidateProjectRelations(workspaceSlug, projectId);
+    invalidateProjectSlack(workspaceSlug, projectId);
+  };
 
   // teardown for a drag that is still in flight (used on unmount)
   const dragCleanup = useRef<(() => void) | null>(null);
@@ -60,13 +76,15 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
     // A dependency the server refused — a cycle, a cross-project link, a lost
     // connection — used to disappear without a word: the line the user had just
     // drawn was simply gone at the next refresh, with nothing to explain it.
-    createCurrentRelation(target, "blocked_by", from).catch(() => {
-      setToast({
-        type: TOAST_TYPE.ERROR,
-        title: "Couldn't link these two",
-        message: "The dependency wasn't saved. It may create a loop, or the connection dropped.",
+    createCurrentRelation(target, "blocked_by", from)
+      .then(refreshDerived)
+      .catch(() => {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "Couldn't link these two",
+          message: "The dependency wasn't saved. It may create a loop, or the connection dropped.",
+        });
       });
-    });
   };
 
   const onPointerDown = (e: React.PointerEvent) => {

@@ -40,7 +40,14 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
   const issueId = notification?.data?.issue?.id || undefined;
   const workspace = getWorkspaceBySlug(workspaceSlug);
 
-  const notificationField = notification?.data?.issue_activity.field || undefined;
+  const notificationField = notification?.data?.issue_activity?.field || undefined;
+  // Whether there is anything at all to render. A notification sent by something
+  // other than the issue-activity pipeline — the fork's own deadline reminders,
+  // for one — carries no `data`, so the field is absent and this component used
+  // to hard-return an empty fragment. The row rendered as nothing while the bell
+  // still counted it, and a count that cannot be cleared by clicking teaches
+  // people to dismiss the whole inbox.
+  const hasBody = !!notificationField || !!notification?.title || !!notification?.message_html;
   const notificationTriggeredBy = notification.triggered_by_details || undefined;
 
   const handleNotificationIssuePeekOverview = async () => {
@@ -65,8 +72,7 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
     }
   };
 
-  if (!workspaceSlug || !notificationId || !notification?.id || !notificationField || !workspace?.id || !projectId)
-    return <></>;
+  if (!workspaceSlug || !notificationId || !notification?.id || !hasBody || !workspace?.id || !projectId) return <></>;
 
   return (
     <Row

@@ -119,7 +119,12 @@ export const ANALYTICS_DURATION_FILTER_OPTIONS = [
     name: "Last 3 months",
     value: "last_3_months",
   },
-];
+  // `as const` so the values stay literals. The analytics store derives its
+  // DurationType from this array, and without it every value widened to `string`
+  // — which meant nothing checked that what the client sends is a period the
+  // backend's date_utils actually branches on. An unrecognised value there does
+  // not error; it falls through and filters nothing.
+] as const;
 
 export const ANALYTICS_X_AXIS_VALUES: { value: ChartXAxisProperty; label: string }[] = [
   {

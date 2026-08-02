@@ -43,7 +43,7 @@ const CreatedVsResolved = observer(function CreatedVsResolved() {
         workspaceSlug,
         "work-items",
         {
-          // date_filter: selectedDuration,
+          date_filter: selectedDuration,
           ...(selectedProjects?.length > 0 && { project_ids: selectedProjects?.join(",") }),
           ...(selectedCycle ? { cycle_id: selectedCycle } : {}),
           ...(selectedModule ? { module_id: selectedModule } : {}),
@@ -63,12 +63,16 @@ const CreatedVsResolved = observer(function CreatedVsResolved() {
 
   const areas = useMemo(
     () => [
+      // Distinct stackIds so the two are drawn against the same baseline. Sharing
+      // one stacked them, which on a chart called "Created VS Resolved" put the
+      // Created area at created+resolved — so the gap between the two lines, the
+      // one thing anybody reads off it, was the wrong size and always too small.
       {
         key: "completed_issues",
         label: "Resolved",
         fill: "#19803833",
         fillOpacity: 1,
-        stackId: "bar-one",
+        stackId: "resolved",
         showDot: false,
         smoothCurves: true,
         strokeColor: "#198038",
@@ -79,7 +83,7 @@ const CreatedVsResolved = observer(function CreatedVsResolved() {
         label: "Created",
         fill: "#1192E833",
         fillOpacity: 1,
-        stackId: "bar-one",
+        stackId: "created",
         showDot: false,
         smoothCurves: true,
         strokeColor: "#1192E8",

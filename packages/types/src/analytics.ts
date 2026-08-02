@@ -49,6 +49,17 @@ export type TAnalyticsFilterParams = {
   project_ids?: string;
   cycle_id?: string;
   module_id?: string;
+  /**
+   * The reporting period. The backend has always implemented these — see
+   * plane/utils/date_utils.py — but the frontend never sent one, so every figure
+   * on the analytics page was an all-time total presented as if it were the
+   * selected period's. Values must match that module's branches exactly; a value
+   * it does not recognise falls through and silently filters nothing.
+   */
+  date_filter?: "yesterday" | "last_7_days" | "last_30_days" | "last_3_months" | "custom";
+  /** Only read when date_filter is "custom". */
+  start_date?: string;
+  end_date?: string;
 };
 
 // service types

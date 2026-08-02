@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { bumpProjectRevision, useProjectRevision } from "./derived-revision";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
 
 type Entry = { promise: Promise<TIssueRelationEdge[]>; edges: TIssueRelationEdge[] | null };
@@ -22,6 +23,9 @@ const service = new ArribadaService();
 /** Drop a project's cached edges — call after anything that rewrites them. */
 export const invalidateProjectRelations = (workspaceSlug: string, projectId: string): void => {
   cache.delete(`${workspaceSlug}/${projectId}`);
+  // Dropping the entry only helps the NEXT mount; this is what reaches the
+  // components already on screen.
+  bumpProjectRevision(workspaceSlug, projectId);
 };
 
 export const useProjectRelations = (
@@ -29,6 +33,7 @@ export const useProjectRelations = (
   projectId: string | undefined
 ): TIssueRelationEdge[] => {
   const key = workspaceSlug && projectId ? `${workspaceSlug}/${projectId}` : null;
+  const revision = useProjectRevision(workspaceSlug, projectId);
   const [edges, setEdges] = useState<TIssueRelationEdge[]>(() => (key && cache.get(key)?.edges) || []);
 
   useEffect(() => {
@@ -63,7 +68,7 @@ export const useProjectRelations = (
     return () => {
       cancelled = true;
     };
-  }, [key, workspaceSlug, projectId]);
+  }, [key, workspaceSlug, projectId, revision]);
 
   return edges;
 };

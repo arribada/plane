@@ -54,7 +54,11 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
   return (
     <Row
       className="relative flex w-full flex-shrink-0 flex-wrap items-center gap-2 bg-surface-1 py-2 whitespace-nowrap"
-      style={{ height: `${GANTT_BREADCRUMBS_HEIGHT}px` }}
+      // minHeight, not height: this row is flex-wrap, so below roughly 600px the
+      // controls wrap onto a second line — and a fixed height meant that line
+      // rendered OUTSIDE the box, painting over the chart. Growing is the correct
+      // behaviour for a container whose children are allowed to wrap.
+      style={{ minHeight: `${GANTT_BREADCRUMBS_HEIGHT}px` }}
     >
       <div className="ml-auto">
         <div className="ml-auto text-11 font-medium text-tertiary">

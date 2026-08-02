@@ -13,7 +13,6 @@ import { useTranslation } from "@plane/i18n";
 // types
 import type { IIssueDisplayFilterOptions, IIssueDisplayProperties, TIssueOrderByOptions } from "@plane/types";
 import { CustomMenu, Row } from "@plane/ui";
-import useLocalStorage from "@/hooks/use-local-storage";
 import { SpreadSheetPropertyIcon } from "../../utils";
 
 interface Props {
@@ -28,21 +27,26 @@ export function HeaderColumn(props: Props) {
   const { displayFilters, handleDisplayFilterUpdate, property, onClose, isEpic = false } = props;
   // i18n
   const { t } = useTranslation();
-  const { storedValue: selectedMenuItem, setValue: setSelectedMenuItem } = useLocalStorage(
-    "spreadsheetViewSorting",
-    ""
-  );
-  const { storedValue: activeSortingProperty, setValue: setActiveSortingProperty } = useLocalStorage(
-    "spreadsheetViewActiveSortingProperty",
-    ""
-  );
   const propertyDetails = SPREADSHEET_PROPERTY_DETAILS[property];
 
-  const handleOrderBy = (order: TIssueOrderByOptions, itemKey: string) => {
-    handleDisplayFilterUpdate({ order_by: order });
+  /**
+   * Which way this column is sorted, read from the filter that actually sorts it.
+   *
+   * This used to come from two unscoped localStorage keys written only by the
+   * menu handler below. useLocalStorage does no key scoping, so one string was
+   * shared by every project, view and layout in the browser: sort project A by
+   * due date, open project B, and B's due-date column drew a confident ascending
+   * arrow whatever B was really sorted by. And order_by can also be set from
+   * Display > Order by and is persisted on shared saved views — so a colleague
+   * opening someone else's sorted view saw no arrow at all and read the sheet as
+   * unsorted. The truth was in `displayFilters` the whole time.
+   */
+  const sortedAscending = propertyDetails && displayFilters.order_by === propertyDetails.ascendingOrderKey;
+  const sortedDescending = propertyDetails && displayFilters.order_by === propertyDetails.descendingOrderKey;
+  const isSortedByThisColumn = sortedAscending || sortedDescending;
 
-    setSelectedMenuItem(`${order}_${itemKey}`);
-    setActiveSortingProperty(order === "-created_at" ? "" : itemKey);
+  const handleOrderBy = (order: TIssueOrderByOptions) => {
+    handleDisplayFilterUpdate({ order_by: order });
   };
 
   if (!propertyDetails) return null;
@@ -59,9 +63,9 @@ export function HeaderColumn(props: Props) {
             {property === "sub_issue_count" && isEpic ? t("issue.label", { count: 2 }) : t(propertyDetails.i18n_title)}
           </div>
           <div className="ml-3 flex">
-            {activeSortingProperty === property && (
+            {isSortedByThisColumn && (
               <div className="flex h-3.5 w-3.5 items-center justify-center rounded-full">
-                {propertyDetails.ascendingOrderKey === displayFilters.order_by ? (
+                {sortedAscending ? (
                   <ArrowDownWideNarrow className="h-3 w-3" />
                 ) : (
                   <ArrowUpNarrowWide className="h-3 w-3" />
@@ -76,12 +80,10 @@ export function HeaderColumn(props: Props) {
       placement="bottom-start"
       closeOnSelect
     >
-      <CustomMenu.MenuItem onClick={() => handleOrderBy(propertyDetails.ascendingOrderKey, property)}>
+      <CustomMenu.MenuItem onClick={() => handleOrderBy(propertyDetails.ascendingOrderKey)}>
         <div
           className={`flex items-center justify-between gap-1.5 px-1 ${
-            selectedMenuItem === `${propertyDetails.ascendingOrderKey}_${property}`
-              ? "text-primary"
-              : "text-secondary hover:text-primary"
+            sortedAscending ? "text-primary" : "text-secondary hover:text-primary"
           }`}
         >
           <div className="flex items-center gap-2">
@@ -91,15 +93,13 @@ export function HeaderColumn(props: Props) {
             <span>{propertyDetails.descendingOrderTitle}</span>
           </div>
 
-          {selectedMenuItem === `${propertyDetails.ascendingOrderKey}_${property}` && <CheckIcon className="h-3 w-3" />}
+          {sortedAscending && <CheckIcon className="h-3 w-3" />}
         </div>
       </CustomMenu.MenuItem>
-      <CustomMenu.MenuItem onClick={() => handleOrderBy(propertyDetails.descendingOrderKey, property)}>
+      <CustomMenu.MenuItem onClick={() => handleOrderBy(propertyDetails.descendingOrderKey)}>
         <div
           className={`flex items-center justify-between gap-1.5 px-1 ${
-            selectedMenuItem === `${propertyDetails.descendingOrderKey}_${property}`
-              ? "text-primary"
-              : "text-secondary hover:text-primary"
+            sortedDescending ? "text-primary" : "text-secondary hover:text-primary"
           }`}
         >
           <div className="flex items-center gap-2">
@@ -109,26 +109,19 @@ export function HeaderColumn(props: Props) {
             <span>{propertyDetails.ascendingOrderTitle}</span>
           </div>
 
-          {selectedMenuItem === `${propertyDetails.descendingOrderKey}_${property}` && (
-            <CheckIcon className="h-3 w-3" />
-          )}
+          {sortedDescending && <CheckIcon className="h-3 w-3" />}
         </div>
       </CustomMenu.MenuItem>
-      {selectedMenuItem &&
-        selectedMenuItem !== "" &&
-        displayFilters?.order_by !== "-created_at" &&
-        selectedMenuItem.includes(property) && (
-          <CustomMenu.MenuItem
-            className={`mt-0.5 ${selectedMenuItem === `-created_at_${property}` ? "bg-layer-1" : ""}`}
-            key={property}
-            onClick={() => handleOrderBy("-created_at", property)}
-          >
-            <div className="flex items-center gap-2 px-1">
-              <Eraser className="h-3 w-3" />
-              <span>{t("common.actions.clear_sorting")}</span>
-            </div>
-          </CustomMenu.MenuItem>
-        )}
+      {/* Offered only where it would do something: this column is the sort key, and
+          the sort is not already the default. */}
+      {isSortedByThisColumn && displayFilters?.order_by !== "-created_at" && (
+        <CustomMenu.MenuItem className="mt-0.5" key={property} onClick={() => handleOrderBy("-created_at")}>
+          <div className="flex items-center gap-2 px-1">
+            <Eraser className="h-3 w-3" />
+            <span>{t("common.actions.clear_sorting")}</span>
+          </div>
+        </CustomMenu.MenuItem>
+      )}
     </CustomMenu>
   );
 }

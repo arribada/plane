@@ -24,7 +24,13 @@ export type TChartMargin = {
 
 export type TChartData<K extends string, T extends string> = {
   // required key
-  [key in K]: string | number;
+  //
+  // null is a gap, and gaps are real: a burndown has no value for a day that has
+  // not happened yet, and the API sends null for exactly those. The type said
+  // `string | number`, so the one call site that received nulls coerced them with
+  // `?? 0` and drew a running cycle as finished. Recharts already skips null
+  // points; the type was the only thing forbidding them.
+  [key in K]: string | number | null;
 } & Record<T, any>;
 
 export type TBaseChartProps<K extends string, T extends string> = {

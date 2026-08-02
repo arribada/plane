@@ -23,7 +23,7 @@ import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-cont
 import { orderByDependency } from "@/plane-web/components/gantt-chart/dependency-order";
 import { GanttExportButton } from "@/plane-web/components/gantt-chart/export-button";
 import type { TExportEdge, TExportRow } from "@/plane-web/components/gantt-chart/export";
-import { groupKeyFromRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
+import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
 import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
@@ -46,6 +46,8 @@ import { useIssuesActions } from "@/hooks/use-issues-actions";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 // plane web hooks
 import { useBulkOperationStatus } from "@/plane-web/hooks/use-bulk-operation-status";
+import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
+import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 
 import { IssueLayoutHOC } from "../issue-layout-HOC";
 import { GanttQuickAddIssueButton, QuickAddIssueRoot } from "../quick-add";
@@ -143,6 +145,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     [orderedIds, groups, groupBy, collapsedGroups]
   );
 
+  // Read here rather than further down: the export needs it to know whether the
+  // file it is about to build would stop short.
+  const nextPageResults = issues.getPaginationData(undefined, undefined)?.nextPageResults;
+
   // Built at click time, not kept in state: the export must be the chart as it is
   // at that instant — same order, same bands, same filters — and nothing here is
   // worth recomputing on every render for a button that is rarely pressed.
@@ -152,7 +158,17 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? null : date;
     };
-    const exportRows: TExportRow[] = rowIds.map((id) => {
+    // The EXPORT set, not the DISPLAY set. rowIds is what the panes paint, so it
+    // omits a collapsed band's items entirely — and the gantt pages a hundred at a
+    // time, so on a large project it is also only as much as has been scrolled
+    // into view. Exporting it produced a clean-looking CSV / PNG / MS-Project file
+    // that silently stopped at 100 rows, with a success toast. A wrong artefact
+    // that looks right is worse than a refusal, and blueprint-generated
+    // catalogues put >100 items well inside the normal case here.
+    const exportIds =
+      groupBy === "none" ? orderedIds : groups.flatMap((group) => [groupRowId(group.key), ...group.ids]);
+
+    const exportRows: TExportRow[] = exportIds.map((id) => {
       if (isGroupRowId(id)) {
         const group = groups.find((g) => g.key === groupKeyFromRowId(id));
         return { id, kind: "group" as const, label: group?.label ?? "", start: null, end: null };
@@ -172,7 +188,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         state: state?.name,
       };
     });
-    const visible = new Set(rowIds);
+    const visible = new Set(exportIds);
     const exportEdges: TExportEdge[] = relations
       .map((edge) =>
         edge.relation_type === "blocked_by"
@@ -186,8 +202,21 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       edges: exportEdges,
       title: projectDetails?.name ?? "Timeline",
       showWeekends: true,
+      // True when the server still has pages the client has not fetched, so the
+      // button can say so rather than hand over a partial plan as a whole one.
+      partial: !!nextPageResults,
     };
-  }, [rowIds, groups, getIssueById, getStateById, getUserDetails, relations, projectDetails]);
+  }, [
+    orderedIds,
+    groupBy,
+    groups,
+    nextPageResults,
+    getIssueById,
+    getStateById,
+    getUserDetails,
+    relations,
+    projectDetails,
+  ]);
 
   const groupContext = useMemo(
     () => ({
@@ -197,7 +226,6 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     }),
     [groups, collapsedGroups]
   );
-  const nextPageResults = issues.getPaginationData(undefined, undefined)?.nextPageResults;
 
   const { enableIssueCreation } = issues?.viewFlags || {};
 
@@ -275,13 +303,24 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         target_date?: string;
       }[]
     ) =>
-      issues.updateIssueDates(workspaceSlug.toString(), updates, projectId.toString()).catch(() => {
-        setToast({
-          type: TOAST_TYPE.ERROR,
-          title: t("toast.error"),
-          message: "Error while updating work item dates, Please try again Later",
-        });
-      }),
+      issues
+        .updateIssueDates(workspaceSlug.toString(), updates, projectId.toString())
+        .then(() => {
+          // Float, the critical path and rolled-up progress are all derived from
+          // these dates and cached per project. Without this the tails and the red
+          // arrows keep painting the pre-drag answer until a hard reload — the
+          // module-scope cache survives client-side navigation.
+          invalidateProjectSlack(workspaceSlug.toString(), projectId.toString());
+          invalidateProjectProgress(workspaceSlug.toString(), projectId.toString());
+          return undefined;
+        })
+        .catch(() => {
+          setToast({
+            type: TOAST_TYPE.ERROR,
+            title: t("toast.error"),
+            message: "Error while updating work item dates, Please try again Later",
+          });
+        }),
     [issues, projectId, workspaceSlug, t]
   );
 

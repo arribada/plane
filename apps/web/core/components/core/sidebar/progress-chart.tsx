@@ -18,11 +18,29 @@ type Props = {
 };
 
 function ProgressChart({ distribution, totalIssues, className = "", plotTitle = "work items" }: Props) {
-  const chartData: TChartData<string, string>[] = Object.keys(distribution ?? []).map((key, index) => ({
+  const points = Object.keys(distribution ?? []);
+  // The backend writes null for every day after today, on purpose. `?? 0` turned
+  // that into a real zero, so on day 3 of a 14-day cycle the remaining-work area
+  // dropped to the axis and stayed there — the chart declared the cycle finished
+  // for the whole window it exists to report on. null lets the line simply stop.
+  //
+  // The ideal line is drawn over the elapsed points only, for the same reason,
+  // and `index / (points.length - 1)` is division by zero on a one-day cycle.
+  const lastPoint = points.length - 1;
+  const chartData: TChartData<string, string>[] = points.map((key, index) => ({
     name: renderFormattedDateWithoutYear(key),
-    current: distribution[key] ?? 0,
-    ideal: totalIssues * (1 - index / (Object.keys(distribution ?? []).length - 1)),
+    current: distribution[key] ?? null,
+    ideal: lastPoint > 0 ? totalIssues * (1 - index / lastPoint) : totalIssues,
   }));
+
+  // Two points is the minimum that can describe a trend. One draws a dot the eye
+  // reads as a flat line; zero draws an empty box that looks like a failure.
+  if (points.length < 2)
+    return (
+      <div className={`flex w-full items-center justify-center py-8 ${className}`}>
+        <p className="text-13 text-tertiary">Not enough data yet to chart {plotTitle}.</p>
+      </div>
+    );
 
   return (
     <div className={`flex w-full items-center justify-center ${className}`}>

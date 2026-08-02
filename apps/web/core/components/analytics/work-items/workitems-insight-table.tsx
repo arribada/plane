@@ -54,7 +54,7 @@ const WorkItemsInsightTable = observer(function WorkItemsInsightTable() {
         workspaceSlug,
         "work-items",
         {
-          // date_filter: selectedDuration,
+          date_filter: selectedDuration,
           ...(selectedProjects?.length > 0 ? { project_ids: selectedProjects.join(",") } : {}),
           ...(selectedCycle ? { cycle_id: selectedCycle } : {}),
           ...(selectedModule ? { module_id: selectedModule } : {}),

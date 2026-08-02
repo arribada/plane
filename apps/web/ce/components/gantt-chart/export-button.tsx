@@ -35,7 +35,14 @@ const slug = (name: string) =>
 
 type Props = {
   /** Rebuilt on demand so the export always reflects the chart as it is now. */
-  collect: () => { rows: TExportRow[]; edges: TExportEdge[]; title: string; showWeekends: boolean };
+  collect: () => {
+    rows: TExportRow[];
+    edges: TExportEdge[];
+    title: string;
+    showWeekends: boolean;
+    /** The server has pages the client has not fetched — the file would stop short. */
+    partial?: boolean;
+  };
 };
 
 export const GanttExportButton = observer(function GanttExportButton({ collect }: Props) {
@@ -55,7 +62,20 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
     setOpen(false);
     setBusy(true);
     try {
-      const { rows, edges, title, showWeekends } = collect();
+      const { rows, edges, title, showWeekends, partial } = collect();
+      if (partial) {
+        // Refusing beats handing over a plan that looks whole and is not. The
+        // server still has pages the client has not fetched, so the file would
+        // stop wherever scrolling stopped — and nothing in a CSV or an MS-Project
+        // XML says how much is missing.
+        setToast({
+          type: TOAST_TYPE.WARNING,
+          title: "Not everything is loaded yet",
+          message:
+            "This timeline has more work items than have been fetched. Scroll to the bottom of the list so they all load, then export — otherwise the file would silently stop short.",
+        });
+        return;
+      }
       const name = slug(title);
       if (kind === "csv") {
         downloadCsv(buildGanttCsv(rows), `${name}.csv`);

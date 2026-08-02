@@ -230,25 +230,50 @@ class AdvanceAnalyticsChartEndpoint(AdvanceAnalyticsBaseView):
             start_date, end_date = self.filters["chart_period_range"]
             queryset = queryset.filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
 
-        # Annotate by month and count
-        monthly_stats = (
+        # Two aggregations, deliberately, over two different dates.
+        #
+        # Both counts used to come off one TruncMonth("created_at") bucket, so
+        # "resolved in March" actually meant "raised in March and closed by now" —
+        # work closed in March but raised in January was invisible, and a month
+        # could not report a completion until the month it was raised in. The line
+        # answered "how much of what we started then is done now", while the label
+        # and every reader said "how much did we deliver that month". On a team
+        # whose work routinely spans a quarter, those are not close.
+        created_stats = (
             queryset.annotate(month=TruncMonth("created_at"))
             .values("month")
-            .annotate(
-                created_count=Count("id"),
-                completed_count=Count("id", filter=Q(state__group="completed")),
+            .annotate(created_count=Count("id"))
+            .order_by("month")
+        )
+
+        # Completions belong to the month they were completed in, so this one is
+        # NOT bounded by the created_at window applied above — a period's deliveries
+        # include work raised before it.
+        completed_queryset = Issue.issue_objects.filter(**self.filters["base_filters"]).filter(
+            state__group="completed", completed_at__isnull=False
+        )
+        if self.filters["chart_period_range"]:
+            period_start, period_end = self.filters["chart_period_range"]
+            completed_queryset = completed_queryset.filter(
+                completed_at__date__gte=period_start, completed_at__date__lte=period_end
             )
+        completed_stats = (
+            completed_queryset.annotate(month=TruncMonth("completed_at"))
+            .values("month")
+            .annotate(completed_count=Count("id"))
             .order_by("month")
         )
 
         # Create dictionary of month -> counts
-        stats_dict = {
-            stat["month"].strftime("%Y-%m-%d"): {
-                "created_count": stat["created_count"],
-                "completed_count": stat["completed_count"],
-            }
-            for stat in monthly_stats
-        }
+        stats_dict = {}
+        for stat in created_stats:
+            key = stat["month"].strftime("%Y-%m-%d")
+            stats_dict.setdefault(key, {"created_count": 0, "completed_count": 0})
+            stats_dict[key]["created_count"] = stat["created_count"]
+        for stat in completed_stats:
+            key = stat["month"].strftime("%Y-%m-%d")
+            stats_dict.setdefault(key, {"created_count": 0, "completed_count": 0})
+            stats_dict[key]["completed_count"] = stat["completed_count"]
 
         # Generate monthly data (ensure months with 0 count are included)
         data = []

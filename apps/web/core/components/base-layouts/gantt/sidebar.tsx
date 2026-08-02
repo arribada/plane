@@ -94,7 +94,9 @@ export const BaseGanttSidebar = observer(function BaseGanttSidebar<T extends IBa
                   onDrop={handleOnDrop}
                 >
                   {(isDragging: boolean) => {
-                    const block = getBlockById(blockId);
+                    // `block` from the enclosing map, not a second getBlockById with the
+                    // same argument: the outer one is already narrowed non-null a few
+                    // lines up, and shadowing it made the two look independent.
                     const isBlockComplete = !!block?.start_date && !!block?.target_date;
                     const duration = isBlockComplete ? getNumberOfDaysFromPosition(block?.position?.width) : undefined;
                     const isBlockHoveredOn = isBlockActive(blockId);
@@ -106,6 +108,13 @@ export const BaseGanttSidebar = observer(function BaseGanttSidebar<T extends IBa
                         })}
                         onMouseEnter={() => updateActiveBlockId(blockId)}
                         onMouseLeave={() => updateActiveBlockId(null)}
+                        // Touch has no hover, so nothing here ever ran on a phone and every
+                        // dependency arrow stayed dimmed at rest — the critical path could not
+                        // be brought forward at all. Mouse keeps using enter/leave; a finger
+                        // gets the same effect from the press that is already happening.
+                        onPointerDown={(event) => {
+                          if (event.pointerType !== "mouse") updateActiveBlockId(blockId);
+                        }}
                       >
                         <Row
                           className={cn(

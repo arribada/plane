@@ -248,7 +248,16 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   private restoreSidebarPreferences() {
     try {
       const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-      if (!stored) return;
+      if (!stored) {
+        // Nothing saved, so this is a first visit. On a 390px phone the default
+        // sidebar takes the whole viewport and the first paint is a list of task
+        // names with no chart beside it — the one thing the page is for. Start
+        // collapsed there; the Collapse/expand button is always visible, so a
+        // reader who wants the names back is one tap away, and this choice is
+        // persisted the moment they make it.
+        this.isSidebarCollapsed = typeof window !== "undefined" && window.innerWidth < 768;
+        return;
+      }
 
       const { width, collapsed, showWeekends, dimDependencies, zoom } = JSON.parse(
         stored

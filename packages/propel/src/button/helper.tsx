@@ -8,7 +8,7 @@ import type { VariantProps } from "class-variance-authority";
 import { cva } from "class-variance-authority";
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none",
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-accent-strong focus-visible:outline-none disabled:pointer-events-none",
   {
     variants: {
       variant: {
@@ -23,8 +23,8 @@ export const buttonVariants = cva(
         tertiary:
           "bg-layer-3 text-secondary hover:bg-layer-3-hover active:bg-layer-3-active disabled:bg-layer-transparent disabled:text-disabled",
         ghost:
-          "bg-layer-transparent text-secondary hover:bg-layer-transparent-hover focus:bg-layer-transparent-active active:bg-layer-transparent-active disabled:bg-layer-transparent disabled:text-disabled",
-        link: "px-0 text-link-primary underline hover:text-link-primary-hover focus:text-link-primary-hover active:text-link-primary-hover disabled:text-disabled",
+          "bg-layer-transparent text-secondary hover:bg-layer-transparent-hover focus-visible:bg-layer-transparent-active active:bg-layer-transparent-active disabled:bg-layer-transparent disabled:text-disabled",
+        link: "px-0 text-link-primary underline hover:text-link-primary-hover focus-visible:text-link-primary-hover active:text-link-primary-hover disabled:text-disabled",
       },
       size: {
         sm: "h-5 rounded-sm px-1.5 text-caption-md-medium",

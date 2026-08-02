@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { bumpProjectRevision, useProjectRevision } from "./derived-revision";
 
 type Entry = { promise: Promise<Record<string, number>>; value: Record<string, number> | null };
 
@@ -23,12 +24,16 @@ const service = new ArribadaService();
 /** Drop the cached answer — sub-item states have changed. */
 export const invalidateProjectProgress = (workspaceSlug: string, projectId: string): void => {
   cache.delete(`${workspaceSlug}/${projectId}`);
+  // Dropping the entry only helps the NEXT mount; this is what reaches the
+  // components already on screen.
+  bumpProjectRevision(workspaceSlug, projectId);
 };
 
 /** 0–100 for one issue; 0 when the project has not answered yet. */
 export const useProjectProgress = (issueId: string): number => {
   const { workspaceSlug, projectId } = useParams();
   const key = workspaceSlug && projectId ? `${workspaceSlug}/${projectId}` : null;
+  const revision = useProjectRevision(workspaceSlug, projectId);
   const [byIssue, setByIssue] = useState<Record<string, number>>(() => (key && cache.get(key)?.value) || EMPTY);
 
   useEffect(() => {
@@ -66,7 +71,7 @@ export const useProjectProgress = (issueId: string): number => {
     return () => {
       cancelled = true;
     };
-  }, [key, workspaceSlug, projectId]);
+  }, [key, workspaceSlug, projectId, revision]);
 
   return byIssue[issueId] ?? 0;
 };

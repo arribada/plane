@@ -9,6 +9,8 @@ import { ANALYTICS_DURATION_FILTER_OPTIONS } from "@plane/constants";
 import type { TAnalyticsTabsBase } from "@plane/types";
 
 type DurationType = (typeof ANALYTICS_DURATION_FILTER_OPTIONS)[number]["value"];
+/** The human label, e.g. "Last 30 days" — not the value sent to the API. */
+type DurationLabel = (typeof ANALYTICS_DURATION_FILTER_OPTIONS)[number]["name"];
 
 export interface IBaseAnalyticsStore {
   //observables
@@ -20,7 +22,7 @@ export interface IBaseAnalyticsStore {
   isPeekView?: boolean;
   isEpic?: boolean;
   //computed
-  selectedDurationLabel: DurationType | null;
+  selectedDurationLabel: DurationLabel | null;
 
   //actions
   updateSelectedProjects: (projects: string[]) => void;

@@ -91,6 +91,13 @@ export const GanttChartBlock = observer(function GanttChartBlock(props: Props) {
             className={cn("relative h-full w-full")}
             onMouseEnter={() => updateActiveBlockId(blockId)}
             onMouseLeave={() => updateActiveBlockId(null)}
+            // Touch has no hover, so nothing here ever ran on a phone and every
+            // dependency arrow stayed dimmed at rest — the critical path could not
+            // be brought forward at all. Mouse keeps using enter/leave; a finger
+            // gets the same effect from the press that is already happening.
+            onPointerDown={(event) => {
+              if (event.pointerType !== "mouse") updateActiveBlockId(blockId);
+            }}
           >
             <ChartDraggable
               block={block}

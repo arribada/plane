@@ -160,10 +160,38 @@ export function NotificationContent({
   renderCommentBox?: boolean;
 }) {
   const { data, triggered_by_details: triggeredBy } = notification;
-  const notificationField = data?.issue_activity.field;
-  const newValue = data?.issue_activity.new_value;
-  const oldValue = data?.issue_activity.old_value;
-  const verb = data?.issue_activity.verb;
+  const activity = data?.issue_activity;
+
+  /**
+   * Not every notification comes from the issue-activity pipeline.
+   *
+   * The fork sends its own — deadline reminders, planning results — with a title
+   * and message_html and no `data` at all, because upstream Plane never scans
+   * target_date and the reminder task exists to fill that gap. Everything below
+   * describes a field that changed, so those rows rendered as an author's name
+   * and nothing else while the bell still counted them. A count that cannot be
+   * cleared by clicking teaches people to mark the whole inbox read.
+   */
+  if (!activity) {
+    const body = notification.message_html || notification.message || "";
+    return (
+      <>
+        {notification.title && <span className="font-medium text-primary">{notification.title} </span>}
+        {body && (
+          <span
+            className="text-tertiary"
+            // Same treatment the rest of the inbox gives server-rendered copy.
+            dangerouslySetInnerHTML={{ __html: body }}
+          />
+        )}
+      </>
+    );
+  }
+
+  const notificationField = activity.field;
+  const newValue = activity.new_value;
+  const oldValue = activity.old_value;
+  const verb = activity.verb;
 
   const fieldData: TNotificationFieldData = {
     field: notificationField,

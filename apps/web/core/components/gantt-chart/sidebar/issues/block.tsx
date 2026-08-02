@@ -17,6 +17,9 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 // local imports
+import { useParams } from "next/navigation";
+import { MilestoneToggle } from "@/plane-web/components/gantt-chart/milestone-toggle";
+import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { BLOCK_HEIGHT, GANTT_SELECT_GROUP } from "../../constants";
 
 type Props = {
@@ -31,6 +34,8 @@ export const IssuesSidebarBlock = observer(function IssuesSidebarBlock(props: Pr
   const { block, enableSelection, isDragging, selectionHelpers, isEpic = false } = props;
   // store hooks
   const { updateActiveBlockId, isBlockActive, getNumberOfDaysFromPosition } = useTimeLineChartStore();
+  const { workspaceSlug, projectId } = useParams();
+  const milestones = useProjectMilestones(workspaceSlug?.toString(), projectId?.toString());
   const { getIsIssuePeeked } = useIssueDetail();
 
   const isBlockComplete = !!block?.start_date && !!block?.target_date;
@@ -51,6 +56,13 @@ export const IssuesSidebarBlock = observer(function IssuesSidebarBlock(props: Pr
       })}
       onMouseEnter={() => updateActiveBlockId(block.id)}
       onMouseLeave={() => updateActiveBlockId(null)}
+      // Touch has no hover, so this row never designated a block on a phone and
+
+      // every dependency arrow stayed dimmed. Mouse keeps enter/leave.
+
+      onPointerDown={(event) => {
+        if (event.pointerType !== "mouse") updateActiveBlockId(block.id);
+      }}
     >
       <Row
         className={cn(
@@ -84,6 +96,16 @@ export const IssuesSidebarBlock = observer(function IssuesSidebarBlock(props: Pr
           <div className="flex-grow truncate">
             <IssueGanttSidebarBlock issueId={block.data.id} isEpic={isEpic} />
           </div>
+          {/* Marking up a plan is one pass down the list, so the control belongs on
+              the row rather than behind a detail panel four clicks away. */}
+          {workspaceSlug && projectId && (
+            <MilestoneToggle
+              workspaceSlug={workspaceSlug.toString()}
+              projectId={projectId.toString()}
+              issueId={block.data.id}
+              current={milestones[block.data.id]?.kind ?? null}
+            />
+          )}
           {duration && (
             <div className="flex-shrink-0 text-13 text-secondary">
               <span>

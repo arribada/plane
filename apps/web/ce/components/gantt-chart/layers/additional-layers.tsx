@@ -16,6 +16,7 @@ import { useParams } from "next/navigation";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
+import { useWorkspaceHolidays } from "../use-workspace-holidays";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
@@ -103,11 +104,13 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   }
 
   // "today" marker
+  const holidays = useWorkspaceHolidays(workspaceSlug?.toString());
   const todayX = store.getPositionFromDateOnGantt(new Date(), 0);
 
   // weekend bands, day-accurate, only when a day column is wide enough to read
   const dayWidth: number = view.data?.dayWidth ?? 0;
   const bands: { x: number; w: number }[] = [];
+  const holidayBands: { x: number; w: number; name: string }[] = [];
   // Respects the display switch. Without this, turning weekends off cleared them
   // from the header strip and left them shaded across the bars.
   if (store.showWeekends && dayWidth >= 12 && view.data?.startDate) {
@@ -117,7 +120,20 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
       const d = new Date(start);
       d.setDate(start.getDate() + i);
       const dow = d.getDay();
-      if (dow === 0 || dow === 6) bands.push({ x: i * dayWidth, w: dayWidth });
+      if (dow === 0 || dow === 6) {
+        bands.push({ x: i * dayWidth, w: dayWidth });
+        continue;
+      }
+      // A public holiday or a workspace closure, shaded like a weekend because it
+      // IS one as far as the plan is concerned. The planner already steps over
+      // these; without drawing them the chart shows that plan on a calendar
+      // pretending they do not exist.
+      //
+      // Local date parts, never toISOString: that shifts the day for anyone east
+      // of Greenwich and would shade the wrong column.
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const name = holidays[iso];
+      if (name) holidayBands.push({ x: i * dayWidth, w: dayWidth, name });
     }
   }
 
@@ -212,6 +228,13 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     >
       {bands.map((b) => (
         <rect key={`wk-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
+      ))}
+      {/* A shade darker than a weekend, and it carries its name: "why is nothing
+          happening that week" is answerable by hovering rather than by asking. */}
+      {holidayBands.map((b) => (
+        <rect key={`hol-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.07}>
+          <title>{b.name}</title>
+        </rect>
       ))}
       {ghosts.map((g) => (
         <rect

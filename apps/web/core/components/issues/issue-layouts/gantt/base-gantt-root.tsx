@@ -22,6 +22,7 @@ import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
 import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
 import { orderByDependency } from "@/plane-web/components/gantt-chart/dependency-order";
 import { GanttExportButton } from "@/plane-web/components/gantt-chart/export-button";
+import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/violation-banner";
 import type { TExportEdge, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
@@ -146,6 +147,26 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     () => (groupBy === "none" ? orderedIds : flattenGroups(groups, collapsedGroups)),
     [orderedIds, groups, groupBy, collapsedGroups]
   );
+
+  // Links the current dates break: a successor that starts before its predecessor
+  // finishes. Computed from the two things already in hand — the relation set and
+  // each item's dates — so it costs nothing beyond a walk, and it is the only way
+  // a drag can be non-destructive AND honest: nothing moves, but nothing is
+  // quietly wrong either.
+  const violations = useMemo(() => {
+    const broken: { from: string; to: string }[] = [];
+    for (const edge of relations) {
+      const [from, to] =
+        edge.relation_type === "blocked_by"
+          ? [edge.related_issue_id, edge.issue_id]
+          : [edge.issue_id, edge.related_issue_id];
+      const predecessor = getIssueById(from);
+      const successor = getIssueById(to);
+      if (!predecessor?.target_date || !successor?.start_date) continue;
+      if (successor.start_date <= predecessor.target_date) broken.push({ from, to });
+    }
+    return broken;
+  }, [relations, getIssueById]);
 
   // Read here rather than further down: the export needs it to know whether the
   // file it is about to build would stop short.
@@ -349,42 +370,55 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   return (
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
-        <div className="relative h-full w-full">
-          <GanttLinkPreview />
-          <GanttGroupContext.Provider value={groupContext}>
-            <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
-              <GanttColorBy />
-              <GanttGroupBy />
-              <GanttExportButton collect={collectForExport} />
-              <GanttUndoButton onUndo={handleGanttUndo} />
-            </div>
-            <GanttChartRoot
-              border={false}
-              title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-              loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-              blockIds={rowIds}
-              blockUpdateHandler={updateIssueBlockStructure}
-              blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
-              sidebarToRender={(sidebarProps) => <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />}
-              enableBlockLeftResize={isAllowed}
-              enableBlockRightResize={isAllowed}
-              enableBlockMove={isAllowed}
-              // Dragging to reorder writes a sort_order derived from the rows either
-              // side. With bands on screen those neighbours can be headers, or sit in
-              // another group entirely, so the drag would mean something the user did
-              // not ask for. Grouping and manual order are exclusive.
-              enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed && groupBy === "none"}
-              enableAddBlock={isAllowed}
-              enableSelection={isBulkOperationsEnabled && isAllowed}
-              quickAdd={quickAdd}
-              loadMoreBlocks={loadMoreIssues}
-              canLoadMoreBlocks={nextPageResults}
-              updateBlockDates={updateBlockDates}
-              showAllBlocks
-              enableDependency
-              isEpic={isEpic}
+        <div className="relative flex h-full w-full flex-col">
+          {/* Named as soon as it exists, fixed only when asked. A drag that
+              silently cascaded twenty tasks is how people stop trusting a chart. */}
+          {workspaceSlug && projectId && (
+            <DependencyViolationBanner
+              workspaceSlug={workspaceSlug.toString()}
+              projectId={projectId.toString()}
+              violations={violations}
             />
-          </GanttGroupContext.Provider>
+          )}
+          <div className="relative min-h-0 flex-1">
+            <GanttLinkPreview />
+            <GanttGroupContext.Provider value={groupContext}>
+              <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
+                <GanttColorBy />
+                <GanttGroupBy />
+                <GanttExportButton collect={collectForExport} />
+                <GanttUndoButton onUndo={handleGanttUndo} />
+              </div>
+              <GanttChartRoot
+                border={false}
+                title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+                loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+                blockIds={rowIds}
+                blockUpdateHandler={updateIssueBlockStructure}
+                blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
+                sidebarToRender={(sidebarProps) => (
+                  <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />
+                )}
+                enableBlockLeftResize={isAllowed}
+                enableBlockRightResize={isAllowed}
+                enableBlockMove={isAllowed}
+                // Dragging to reorder writes a sort_order derived from the rows either
+                // side. With bands on screen those neighbours can be headers, or sit in
+                // another group entirely, so the drag would mean something the user did
+                // not ask for. Grouping and manual order are exclusive.
+                enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed && groupBy === "none"}
+                enableAddBlock={isAllowed}
+                enableSelection={isBulkOperationsEnabled && isAllowed}
+                quickAdd={quickAdd}
+                loadMoreBlocks={loadMoreIssues}
+                canLoadMoreBlocks={nextPageResults}
+                updateBlockDates={updateBlockDates}
+                showAllBlocks
+                enableDependency
+                isEpic={isEpic}
+              />
+            </GanttGroupContext.Provider>
+          </div>
         </div>
       </TimeLineTypeContext.Provider>
     </IssueLayoutHOC>

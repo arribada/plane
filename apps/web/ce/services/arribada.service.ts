@@ -730,8 +730,21 @@ export class ArribadaService extends APIService {
 
   // --- cost -----------------------------------------------------------------
 
-  async getCalendar(workspaceSlug: string): Promise<{ days: TNonWorkingDay[] }> {
-    return this.get(`/api/arribada/workspaces/${workspaceSlug}/calendar/`)
+  /** The workspace's own closures AND the statutory holidays of a country,
+   *  kept apart: one is a decision that applies to everyone, the other is law
+   *  and differs between the two countries this team works from. */
+  async getCalendar(
+    workspaceSlug: string,
+    country?: string
+  ): Promise<{
+    days: TNonWorkingDay[];
+    country?: string;
+    countries?: { value: string; label: string }[];
+    statutory?: { date: string; name: string }[];
+  }> {
+    return this.get(
+      `/api/arribada/workspaces/${workspaceSlug}/calendar/${country ? `?country=${encodeURIComponent(country)}` : ""}`
+    )
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;

@@ -73,7 +73,16 @@ export class ArribadaService extends APIService {
   async getProjectMilestones(
     workspaceSlug: string,
     projectId: string
-  ): Promise<{ issue_id: string; kind: "gate" | "delivery" | "review"; label: string }[]> {
+  ): Promise<
+    {
+      issue_id: string;
+      kind: "gate" | "delivery" | "review";
+      label: string;
+      start_date: string | null;
+      target_date: string | null;
+      done: boolean;
+    }[]
+  > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`)
       .then((r) => r?.data?.milestones ?? [])
       .catch((e) => {

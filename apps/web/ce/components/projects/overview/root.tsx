@@ -14,7 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { Eraser, Loader2, Settings2, Sparkles, Wand2, Printer } from "lucide-react";
+import { renderFormattedDate } from "@plane/utils";
+import { Eraser, FileText, Loader2, Printer, Settings2, Sparkles, Wand2 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -119,6 +120,64 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
     [service, slug, pid, refresh]
   );
 
+  // Built on demand rather than kept in state: it is a rarely-pressed button, and
+  // a report has to be the record as it is at the moment somebody asks for it.
+  const [reporting, setReporting] = useState(false);
+  const buildReport = async () => {
+    if (!data || !workspaceSlug || !projectId || reporting) return;
+    setReporting(true);
+    try {
+      const [budget, expenseRows, procurement, milestoneRows] = await Promise.all([
+        service.getBudget(workspaceSlug.toString(), projectId.toString()).catch(() => null),
+        service.getExpenses(workspaceSlug.toString(), projectId.toString()).catch(() => null),
+        service.getProcurement(workspaceSlug.toString(), projectId.toString()).catch(() => null),
+        service.getProjectMilestones(workspaceSlug.toString(), projectId.toString()).catch(() => []),
+      ]);
+      // Ordered by the date they land on, because that is how a funder reads a
+      // deliverable list. Undated ones sort last rather than being dropped: an
+      // undated deliverable is a real thing to report, and hiding it is how it
+      // stays undated. toSorted is ES2023 and this workspace targets below it.
+      const orderedMilestones = [...milestoneRows];
+      // oxlint-disable-next-line unicorn/no-array-sort -- fresh spread, nothing shared
+      orderedMilestones.sort((a, b) => (a.target_date ?? "9999").localeCompare(b.target_date ?? "9999"));
+
+      const { downloadFunderReport } = await import("./funder-report");
+      await downloadFunderReport({
+        overview: data,
+        budget,
+        expenses: expenseRows?.expenses ?? [],
+        requests: procurement?.requests ?? [],
+        milestones: orderedMilestones.map((m) => ({
+          id: m.issue_id,
+          name: m.label,
+          date: m.target_date,
+          kind: m.kind,
+          done: m.done,
+        })),
+        money: (amount, currency) => {
+          try {
+            return new Intl.NumberFormat(undefined, {
+              style: "currency",
+              currency,
+              maximumFractionDigits: 0,
+            }).format(amount);
+          } catch {
+            return `${Math.round(amount).toLocaleString()} ${currency}`;
+          }
+        },
+        generatedOn: renderFormattedDate(new Date()) ?? "",
+      });
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't build the report",
+        message: "Nothing was downloaded. Try again.",
+      });
+    } finally {
+      setReporting(false);
+    }
+  };
+
   const scrollToLinks = useCallback(() => {
     document.getElementById(LINKS_ANCHOR)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
@@ -147,7 +206,17 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       {/* The one control the print stylesheet keeps out of the printout itself.
           Ctrl-P works just as well; this exists because nobody discovers that a
           page prints properly unless something says so. */}
-      <div className="print-hide flex justify-end">
+      <div className="print-hide flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => void buildReport()}
+          disabled={reporting}
+          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
+          title="A PDF a funder can read: period, status, deliverables and the money as recorded"
+        >
+          <FileText className="size-3" />
+          {reporting ? "Building…" : "Funder report"}
+        </button>
         <button
           type="button"
           onClick={() => window.print()}

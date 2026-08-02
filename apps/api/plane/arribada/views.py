@@ -574,9 +574,35 @@ class ProjectMilestonesEndpoint(BaseAPIView):
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        rows = IssueMilestone.objects.filter(issue__project_id=project_id).values("issue_id", "kind", "label")
+        # The item's own name and dates travel with the mark. A caller that only got
+        # ids would have to fetch every item to render a list of deliverables, and
+        # a funder report is exactly that list — with the dates, since a deliverable
+        # with no date is not something anybody can be held to.
+        rows = IssueMilestone.objects.filter(issue__project_id=project_id).values(
+            "issue_id",
+            "kind",
+            "label",
+            "issue__name",
+            "issue__start_date",
+            "issue__target_date",
+            "issue__state__group",
+        )
         return Response(
-            {"milestones": [{"issue_id": str(r["issue_id"]), "kind": r["kind"], "label": r["label"]} for r in rows]},
+            {
+                "milestones": [
+                    {
+                        "issue_id": str(r["issue_id"]),
+                        "kind": r["kind"],
+                        # `label` is what a funder should read; the item's own name is
+                        # written for the team and is the fallback.
+                        "label": r["label"] or r["issue__name"],
+                        "start_date": r["issue__start_date"].isoformat() if r["issue__start_date"] else None,
+                        "target_date": r["issue__target_date"].isoformat() if r["issue__target_date"] else None,
+                        "done": r["issue__state__group"] == "completed",
+                    }
+                    for r in rows
+                ]
+            },
             status=status.HTTP_200_OK,
         )
 

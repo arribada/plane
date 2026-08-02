@@ -7,7 +7,8 @@
 import { useCallback } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ListFilter } from "lucide-react";
+import { LayoutGrid, List, ListFilter } from "lucide-react";
+import { useProjectsLayout } from "@/plane-web/components/projects/use-projects-layout";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import type { TProjectFilters } from "@plane/types";
@@ -36,6 +37,7 @@ const HeaderFilters = observer(function HeaderFilters({
 }: Props) {
   // i18n
   const { t } = useTranslation();
+  const { layout, setLayout } = useProjectsLayout();
   // router
   const { workspaceSlug } = useParams();
   const {
@@ -73,6 +75,26 @@ const HeaderFilters = observer(function HeaderFilters({
 
   return (
     <div className={cn("flex gap-3", classname)}>
+      {/* Cards or rows. Twenty-four projects is eight screens of gallery to answer
+          "which of these is late"; a table answers it in one look. The same
+          switch serves the archive page, which is this list with a filter. */}
+      <span className="flex items-center overflow-hidden rounded border border-subtle">
+        {(["cards", "list"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setLayout(option)}
+            aria-pressed={layout === option}
+            title={option === "cards" ? "Gallery" : "List, grouped by mission"}
+            className={cn(
+              "flex items-center px-2 py-1",
+              layout === option ? "bg-accent-primary text-white" : "text-secondary hover:bg-layer-1"
+            )}
+          >
+            {option === "cards" ? <LayoutGrid className="size-3.5" /> : <List className="size-3.5" />}
+          </button>
+        ))}
+      </span>
       <ProjectOrderByDropdown
         value={displayFilters?.order_by}
         onChange={(val) => {

@@ -20,6 +20,8 @@ import { useProjectFilter } from "@/hooks/store/use-project-filter";
 import { useUserPermissions } from "@/hooks/store/user";
 // local imports
 import { ProjectCard } from "./card";
+import { ProjectListView } from "@/plane-web/components/projects/project-list-view";
+import { useProjectsLayout } from "@/plane-web/components/projects/use-projects-layout";
 
 type TProjectCardListProps = {
   totalProjectIds?: string[];
@@ -41,6 +43,7 @@ export const ProjectCardList = observer(function ProjectCardList(props: TProject
   } = useProject();
   const { currentWorkspaceDisplayFilters, currentWorkspaceFilters } = useProjectFilter();
   const { allowPermissions } = useUserPermissions();
+  const { layout } = useProjectsLayout();
 
   // derived values
   const workspaceProjectIds = totalProjectIdsProps ?? storeWorkspaceProjectIds;
@@ -99,6 +102,12 @@ export const ProjectCardList = observer(function ProjectCardList(props: TProject
         assetClassName="size-40"
       />
     );
+
+  // Rows or cards. The gallery is three cards per row, so twenty-four projects is
+  // eight screens of scrolling to answer "which of these is late" — and no two
+  // cards line their dates up, because each is its own box. Same switch serves
+  // the archive page, which is this component with a display filter.
+  if (layout === "list") return <ProjectListView projectIds={filteredProjectIds} />;
 
   return (
     <ContentWrapper>

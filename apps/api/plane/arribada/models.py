@@ -940,3 +940,44 @@ class IssueAllocation(models.Model):
 
     def __str__(self):
         return f"{self.issue_id} {self.assignee_id} {self.percent}%"
+
+
+class CycleScopeSnapshot(models.Model):
+    """What a cycle held on one day.
+
+    The burndown recomputes every past point from the cycle's CURRENT total, so
+    adding ten items lifts the whole history by ten — the past changes shape
+    retroactively, and a cycle that held 10 items throughout draws identically to
+    one that grew from 5 to 20. Scope creep, the single most useful thing a
+    burndown can show, is the one thing it hides.
+
+    Fixing that needs a figure recorded on the day, because nothing in the current
+    schema remembers it. A nightly row per cycle is the cheapest honest source:
+    tiny, append-only, and it answers "what did we think this was on the 3rd".
+
+    History before the first run stays wrong and cannot be invented. The chart
+    says so rather than drawing a line through days it has no figure for.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    cycle = models.ForeignKey("db.Cycle", on_delete=models.CASCADE, related_name="arribada_scope_snapshots")
+    date = models.DateField()
+    total = models.PositiveIntegerField(default=0)
+    completed = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_cycle_scope_snapshot"
+        ordering = ("date",)
+        verbose_name = "Cycle scope snapshot"
+        verbose_name_plural = "Cycle scope snapshots"
+        constraints = [
+            # One row per cycle per day. The task is idempotent so a retry, or a
+            # beat that fires twice after a restart, updates rather than doubles.
+            models.UniqueConstraint(fields=["cycle", "date"], name="arribada_cycle_scope_unique_day")
+        ]
+
+    def __str__(self):
+        return f"{self.cycle_id} {self.date} {self.completed}/{self.total}"

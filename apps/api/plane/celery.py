@@ -77,6 +77,12 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.exporter_expired_task.delete_old_s3_link",
         "schedule": crontab(hour=3, minute=45),  # UTC 03:45
     },
+    "arribada-cycle-scope-snapshot": {
+        "task": "plane.arribada.scope_snapshot_task.cycle_scope_snapshot",
+        # 23:50 UTC: the last moment that is still today for the team, so the row
+        # records the day as it ended rather than as it started.
+        "schedule": crontab(hour=23, minute=50),
+    },
     "arribada-due-date-reminders": {
         "task": "plane.arribada.reminder_task.due_date_reminder",
         "schedule": crontab(hour=6, minute=0),  # UTC 06:00 daily

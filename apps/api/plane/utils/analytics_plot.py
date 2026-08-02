@@ -248,8 +248,32 @@ def burndown_plot(queryset, slug, project_id, plot_type, cycle_id=None, module_i
             else:
                 chart_data[str(date)] = cumulative_pending_issues
     else:
+        # What the cycle held on each past day, where it was recorded.
+        #
+        # Without this, every past point is computed from the cycle's CURRENT
+        # total, so adding ten items lifts the whole history by ten — the past
+        # changes shape retroactively, and a cycle that held 10 items throughout
+        # draws identically to one that grew from 5 to 20. Scope creep, the single
+        # most useful thing a burndown shows, was the one thing it hid.
+        #
+        # Days before the nightly snapshot task first ran have no row and fall back
+        # to the current total, which is the old behaviour: that history is wrong
+        # and cannot be invented.
+        recorded_scope = {}
+        if cycle_id:
+            try:
+                from plane.arribada.models import CycleScopeSnapshot
+
+                recorded_scope = {
+                    row["date"]: row["total"]
+                    for row in CycleScopeSnapshot.objects.filter(cycle_id=cycle_id).values("date", "total")
+                }
+            except Exception:  # noqa: BLE001
+                # The fork's own table. A burndown must not fail because of it.
+                recorded_scope = {}
+
         for date in date_range:
-            cumulative_pending_issues = total_issues
+            cumulative_pending_issues = recorded_scope.get(date, total_issues)
             total_completed = 0
             total_completed = sum(
                 item["total_completed"]

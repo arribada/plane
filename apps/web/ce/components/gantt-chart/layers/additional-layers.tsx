@@ -74,6 +74,12 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     };
   }, [workspaceSlug, projectId, service, selectedBaseline]);
 
+  // ABOVE the early return: this is a hook, and calling it only on the renders
+  // where currentViewData exists changes the hook count between renders, which
+  // React answers with "Rendered more hooks than during the previous render" —
+  // a crash, not a warning.
+  const holidays = useWorkspaceHolidays(workspaceSlug?.toString());
+
   const view = store.currentViewData;
   if (!view) return null;
 
@@ -112,7 +118,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   }
 
   // "today" marker
-  const holidays = useWorkspaceHolidays(workspaceSlug?.toString());
   const todayX = store.getPositionFromDateOnGantt(new Date(), 0);
 
   // weekend bands, day-accurate, only when a day column is wide enough to read

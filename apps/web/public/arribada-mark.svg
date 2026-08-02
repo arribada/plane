@@ -15,6 +15,12 @@
    * the tile is opaque navy. The header sits on bg-canvas, which is near-white
      in the light theme and near-black in the dark one, so a transparent mark
      would disappear in one of them.
+
+  The tile also carries a faint teal edge. #0a1929 measures 1.08:1 against the
+  dark theme's canvas, so without it the badge shape vanished there and the mark
+  read as a bare white A floating in the sidebar — the light theme got a logo and
+  the dark theme got a letter. The stroke is nearly invisible against the navy it
+  sits on, so the light theme is unchanged.
 -->
 <svg
   xmlns="http://www.w3.org/2000/svg"
@@ -24,7 +30,17 @@
   role="img"
   aria-label="Arribada"
 >
-  <rect width="64" height="64" rx="14" fill="#0a1929" />
+  <rect
+    x="0.75"
+    y="0.75"
+    width="62.5"
+    height="62.5"
+    rx="13.5"
+    fill="#0a1929"
+    stroke="#1de9b6"
+    stroke-opacity="0.4"
+    stroke-width="1.5"
+  />
   <!-- Letter A. fill-rule evenodd cuts the counter out of the outline in a
        single path, so the mark stays one shape at any size. -->
   <path

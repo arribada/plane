@@ -19,8 +19,12 @@ import { usePublish, usePublishList } from "@/hooks/store/publish";
 import { useIssueFilter } from "@/hooks/store/use-issue-filter";
 import type { Route } from "./+types/layout";
 
-const DEFAULT_TITLE = "Plane";
-const DEFAULT_DESCRIPTION = "Made with Plane, an AI-powered work management platform with publishing capabilities.";
+// This app is the only thing a funder, a partner institution or a subcontractor
+// can be shown without an account, so it is also the only place the reskin had
+// to reach — and it was the one place still saying Plane. These strings are what
+// a link unfurls as in an email or a chat, which is where they are read most.
+const DEFAULT_TITLE = "Arribada";
+const DEFAULT_DESCRIPTION = "Conservation technology programmes at the Arribada Initiative.";
 
 interface IssueMetadata {
   name?: string;

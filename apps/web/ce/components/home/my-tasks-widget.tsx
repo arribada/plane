@@ -20,7 +20,7 @@ import {
   LayoutGrid,
   List,
 } from "lucide-react";
-import { cn } from "@plane/utils";
+import { cn, renderFormattedDateWithoutYear } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { useUser } from "@/hooks/store/user";
 import { IssueService } from "@/services/issue/issue.service";
@@ -78,7 +78,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
         )}
       >
         <CalendarPlus className="size-3" />
-        {item.target_date && <span>{item.target_date.slice(5)}</span>}
+        {item.target_date && <span>{renderFormattedDateWithoutYear(item.target_date)}</span>}
       </button>
       {open && (
         <>
@@ -100,7 +100,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
                 className="hover:bg-neutral-500/10 flex justify-between rounded px-2 py-1 text-left text-12"
               >
                 <span>{p.label}</span>
-                <span className="text-tertiary">{p.value.slice(5)}</span>
+                <span className="text-tertiary">{renderFormattedDateWithoutYear(p.value)}</span>
               </button>
             ))}
             <label className="hover:bg-neutral-500/10 mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12">
@@ -146,6 +146,12 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   const [items, setItems] = useState<TMyWorkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"list" | "calendar">("list");
+  // Which buckets the reader has asked to see in full. "+3 more" used to be a
+  // plain <li> with no handler, sitting under six rows that are all buttons —
+  // the one thing on the first screen anyone lands on that looks clickable and
+  // is not. The header's "View all" goes to the whole workspace, not to the
+  // bucket that was truncated, so there was no route to those rows at all.
+  const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set());
 
   const setDue = (item: TMyWorkItem, value: string | null) => {
     setItems((prev) => prev.map((x) => (x.id === item.id ? { ...x, target_date: value } : x)));
@@ -291,7 +297,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                   <span className="text-secondary/70">· {b.items.length}</span>
                 </div>
                 <ul>
-                  {b.items.slice(0, 6).map((it) => (
+                  {(expandedBuckets.has(b.label) ? b.items : b.items.slice(0, 6)).map((it) => (
                     <li
                       key={it.id}
                       className="group hover:bg-neutral-500/5 flex w-full items-center gap-2 rounded-md px-1.5 py-1"
@@ -316,7 +322,22 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                     </li>
                   ))}
                   {b.items.length > 6 && (
-                    <li className="px-1.5 pt-0.5 text-[11px] text-secondary/70">+{b.items.length - 6} more</li>
+                    <li className="px-1.5 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedBuckets((current) => {
+                            const next = new Set(current);
+                            if (next.has(b.label)) next.delete(b.label);
+                            else next.add(b.label);
+                            return next;
+                          })
+                        }
+                        className="text-[11px] text-secondary/70 underline-offset-2 hover:text-primary hover:underline"
+                      >
+                        {expandedBuckets.has(b.label) ? "Show fewer" : `+${b.items.length - 6} more`}
+                      </button>
+                    </li>
                   )}
                 </ul>
               </div>

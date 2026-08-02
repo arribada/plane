@@ -19,6 +19,7 @@ import {
   CalendarOff,
   Check,
   Coins,
+  Download,
   Pencil,
   Plus,
   ShoppingCart,
@@ -29,7 +30,10 @@ import {
 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import { cn } from "@plane/utils";
+import { cn, renderFormattedDate } from "@plane/utils";
+import { downloadText } from "@/plane-web/components/gantt-chart/export";
+import { buildBudgetCsv } from "./budget-export";
+import { useProject } from "@/hooks/store/use-project";
 import { useUserPermissions } from "@/hooks/store/user";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type {
@@ -88,6 +92,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
   const { allowPermissions } = useUserPermissions();
+  // For the export filename and its title row — the budget payload carries
+  // figures, not the project's name.
+  const { getProjectById } = useProject();
   const slug = workspaceSlug?.toString() ?? "";
   const pid = projectId?.toString() ?? "";
 
@@ -439,11 +446,41 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               </button>
             ))}
           </span>
+          {/* Anyone who can see the sheet can take it away. Reading is not writing,
+              and the person assembling a funder's cost report is often not the lead. */}
+          {(expenses.length > 0 || requests.length > 0) && (
+            <button
+              type="button"
+              onClick={() =>
+                downloadText(
+                  buildBudgetCsv(expenses, requests, {
+                    projectName: getProjectById(pid)?.name ?? "Project",
+                    displayCurrency: disp ? shownCcy : "",
+                    rate: disp?.rate,
+                    rateCapturedOn: disp?.rate_captured_on,
+                    rateConfigured: disp?.rate_configured,
+                  }),
+                  `${
+                    (getProjectById(pid)?.name ?? "project")
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "-")
+                      .slice(0, 60) || "project"
+                  }-costs.csv`,
+                  "text/csv"
+                )
+              }
+              className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
+              title="Download the expenses and purchase requests as recorded"
+            >
+              <Download className="size-3" />
+              CSV
+            </button>
+          )}
           {canEdit && (
             <button
               type="button"
               onClick={() => setPanel(panel === "allocation" ? null : "allocation")}
-              className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+              className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
             >
               <Pencil className="size-3" />
               {alloc?.amount == null ? "Set a budget" : "Change"}
@@ -470,7 +507,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             ≈ approximate. Converted at 1 EUR = {disp.rate} GBP
             {disp.rate_configured
               ? disp.rate_captured_on
-                ? `, recorded ${disp.rate_captured_on}`
+                ? `, recorded ${renderFormattedDate(disp.rate_captured_on)}`
                 : ", date unrecorded"
               : " — a starting value nobody has set yet"}
             . Every amount is still stored in the currency it was entered in — only this reading is converted.
@@ -720,12 +757,17 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 {r.requested_by_name && (
                   <span className="flex-shrink-0 text-11 text-tertiary">by {r.requested_by_name}</span>
                 )}
+                {/* gap-2 and a taller hit box below: this is the money screen, "can I
+                    buy the 10 Linkit boards" is literally the form's placeholder, and
+                    it is a decision people make away from a desk. Approve was a 20px
+                    target 4px from Reject, and approving writes a line into the
+                    project's expenses. */}
                 {canApprove ? (
-                  <span className="flex flex-shrink-0 items-center gap-1">
+                  <span className="flex flex-shrink-0 items-center gap-2">
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "approved")}
-                      className="flex items-center gap-1 rounded bg-success-primary px-2 py-0.5 text-11 text-white"
+                      className="flex items-center gap-1 rounded bg-success-primary px-3 py-1.5 text-11 text-white"
                       title="Approve — this writes the line into the project's expenses"
                     >
                       <Check className="size-3" />
@@ -988,13 +1030,27 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 >
                   {e.planned ? "budgeted" : "spent"}
                 </span>
-                {e.incurred_on && <span className="flex-shrink-0 text-11 text-tertiary">{e.incurred_on}</span>}
+                {e.incurred_on && (
+                  <span className="flex-shrink-0 text-11 text-tertiary">{renderFormattedDate(e.incurred_on)}</span>
+                )}
                 {canEdit && (
                   <button
                     type="button"
-                    onClick={() => void remove(e.id)}
+                    onClick={() => {
+                      // A confirm on a 14px icon that deletes a recorded amount. The
+                      // sheet is what a grant is reconciled against and there is no
+                      // undo; naming the line and the figure is what makes a misfire
+                      // recoverable by simply saying no.
+                      if (
+                        !window.confirm(`Delete "${e.label}" — ${money(e.total, e.currency)}? This cannot be undone.`)
+                      )
+                        return;
+                      void remove(e.id);
+                    }}
                     aria-label={`Delete ${e.label}`}
-                    className="flex-shrink-0 text-tertiary hover:text-danger-primary"
+                    // p-2 -m-2 keeps the icon where it is and takes the tap target to
+                    // roughly 44px, which is what a finger needs.
+                    className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-danger-primary"
                   >
                     <Trash2 className="size-3.5" />
                   </button>
@@ -1321,7 +1377,7 @@ function CurrencyPanel({
         Saving stamps today&apos;s date on it, and every converted figure says so. Nothing recorded is rewritten — the
         amounts stay in the currency they were entered in, and only the reading changes.
         {settings.rate_captured_on
-          ? ` The rate on screen was recorded ${settings.rate_captured_on}.`
+          ? ` The rate on screen was recorded ${renderFormattedDate(settings.rate_captured_on)}.`
           : " Nobody has set this yet, so the figures use a starting value."}
       </p>
     </div>

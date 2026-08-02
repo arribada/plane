@@ -50,7 +50,15 @@ const defaultValues: Partial<TProfileSetupFormValues> = {
   avatar_url: "",
   password: undefined,
   confirm_password: undefined,
-  has_marketing_email_consent: true,
+  // false, matching the column default.
+  //
+  // Pre-ticked opt-in is not valid consent under UK GDPR/PECR, and it was worse
+  // than that here: the checkbox only renders when the instance is NOT
+  // self-managed, so on this deployment nobody was ever shown it and `true` was
+  // written to every new profile regardless — consent recorded with no
+  // interaction at all. This is a grant-funded organisation that answers
+  // funder questionnaires about data handling; it is an unforced finding.
+  has_marketing_email_consent: false,
 };
 
 export const ProfileSetupStep = observer(function ProfileSetupStep({ handleStepChange }: Props) {
@@ -141,8 +149,7 @@ export const ProfileSetupStep = observer(function ProfileSetupStep({ handleStepC
 
   // Check for all available fields validation and if password field is available, then checks for password validation (strength + confirmation).
   // Also handles the condition for optional password i.e if password field is optional it only checks for above validation if it's not empty.
-  const isButtonDisabled =
-    !isSubmitting && isValid ? (isPasswordAlreadySetup ? false : isValidPassword ? false : true) : true;
+  const isButtonDisabled = isSubmitting || !isValid || !(isPasswordAlreadySetup || isValidPassword);
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-10">
@@ -175,7 +182,6 @@ export const ProfileSetupStep = observer(function ProfileSetupStep({ handleStepC
           {userAvatar ? (
             <img
               src={getFileURL(userAvatar ?? "")}
-              onClick={() => setIsImageUploadModalOpen(true)}
               alt={user?.display_name}
               className="h-full w-full rounded-full object-cover"
             />
@@ -222,7 +228,6 @@ export const ProfileSetupStep = observer(function ProfileSetupStep({ handleStepC
                 type="text"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
-                autoFocus
                 className={cn(
                   "w-full rounded-md border border-strong bg-surface-1 px-3 py-2 text-secondary transition-all duration-200 placeholder:text-placeholder focus:border-transparent focus:ring-2 focus:ring-accent-strong focus:outline-none",
                   {

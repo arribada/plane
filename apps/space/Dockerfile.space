@@ -53,7 +53,11 @@ ENV VITE_WEB_BASE_URL=$VITE_WEB_BASE_URL
 ARG VITE_WEB_BASE_PATH=""
 ENV VITE_WEB_BASE_PATH=$VITE_WEB_BASE_PATH
 
-ARG VITE_WEBSITE_URL="https://plane.so"
+# Empty on purpose: PoweredBy renders nothing without it, and the AGPL requires
+# no UI attribution. This app is what Arribada shows a funder or a partner
+# without an account, and it was badging every one of those pages "Powered by
+# Plane Publish" with a link off to plane.so.
+ARG VITE_WEBSITE_URL=""
 ENV VITE_WEBSITE_URL=$VITE_WEBSITE_URL
 
 ARG VITE_SUPPORT_EMAIL="support@plane.so"

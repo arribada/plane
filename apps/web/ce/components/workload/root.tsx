@@ -32,7 +32,7 @@ export const WorkloadRoot = observer(function WorkloadRoot() {
     <div className="flex h-full min-h-0 w-full flex-col">
       <div className="flex flex-shrink-0 items-center justify-between gap-4 border-b border-subtle px-4 py-2.5 md:px-6">
         <div className="min-w-0">
-          <h2 className="text-lg leading-tight font-semibold text-primary">Workload</h2>
+          <h2 className="text-18 leading-tight font-semibold text-primary">Workload</h2>
           <p className="truncate text-12 text-secondary">{active.hint}</p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-0.5 rounded-md border border-subtle p-0.5">

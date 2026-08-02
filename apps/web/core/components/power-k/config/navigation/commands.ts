@@ -4,7 +4,18 @@
  * See the LICENSE file for details.
  */
 
-import { BarChart2, Briefcase, FileText, GanttChartSquare, Home, Inbox, Layers, PenSquare, Settings, Users } from "lucide-react";
+import {
+  BarChart2,
+  Briefcase,
+  FileText,
+  GanttChartSquare,
+  Home,
+  Inbox,
+  Layers,
+  PenSquare,
+  Settings,
+  Users,
+} from "lucide-react";
 // plane imports
 import { EUserPermissionsLevel } from "@plane/constants";
 import { ArchiveIcon, UserActivityIcon, LayersIcon, ContrastIcon, DiceIcon, Intake } from "@plane/propel/icons";
@@ -52,6 +63,12 @@ export type TPowerKNavigationCommandKeys =
 /**
  * Navigation commands - Navigate to all pages in the app
  */
+// Hoisted out of the hook: neither reads anything from its scope, so redefining
+// them on every render allocated two closures for a pure predicate.
+const baseWorkspaceConditions = (ctx: TPowerKContext) => Boolean(ctx.params.workspaceSlug?.toString());
+const baseProjectConditions = (ctx: TPowerKContext) =>
+  Boolean(ctx.params.workspaceSlug?.toString() && ctx.params.projectId?.toString());
+
 export const usePowerKNavigationCommandsRecord = (): Record<TPowerKNavigationCommandKeys, TPowerKCommandConfig> => {
   // store hooks
   const {
@@ -73,9 +90,6 @@ export const usePowerKNavigationCommandsRecord = (): Record<TPowerKNavigationCom
       ctx.params.workspaceSlug?.toString(),
       ctx.params.projectId?.toString()
     );
-  const baseWorkspaceConditions = (ctx: TPowerKContext) => Boolean(ctx.params.workspaceSlug?.toString());
-  const baseProjectConditions = (ctx: TPowerKContext) =>
-    Boolean(ctx.params.workspaceSlug?.toString() && ctx.params.projectId?.toString());
   const getContextProject = (ctx: TPowerKContext) => getPartialProjectById(ctx.params.projectId?.toString());
 
   return {
@@ -234,7 +248,11 @@ export const usePowerKNavigationCommandsRecord = (): Record<TPowerKNavigationCom
       group: "navigation",
       i18n_title: "power_k.navigation_actions.nav_portfolio",
       icon: GanttChartSquare,
-      keySequence: "gp",
+      // "gt" for timeline, not "gp": nav_projects_list already owns "gp" and both
+      // are always visible, so the registry's last-write-wins left the palette
+      // advertising "G then P" next to Go to Portfolio while the keystroke went to
+      // Projects. "gt" is free.
+      keySequence: "gt",
       action: (ctx) => handlePowerKNavigate(ctx, [ctx.params.workspaceSlug?.toString(), "portfolio"]),
       isEnabled: (ctx) => baseWorkspaceConditions(ctx),
       isVisible: (ctx) => baseWorkspaceConditions(ctx),

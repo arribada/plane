@@ -157,7 +157,7 @@ export const buildGanttSvg = (
 /** RFC-4180 quoting: a field holding a comma, a quote or a newline is wrapped and
  *  its own quotes doubled. A task called `Test "cold soak", -20 C` would otherwise
  *  quietly become two columns in whatever opened the file. */
-const cell = (value: string | undefined | null) => {
+export const cell = (value: string | undefined | null) => {
   const text = value ?? "";
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };

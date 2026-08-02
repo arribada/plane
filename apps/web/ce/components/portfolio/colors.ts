@@ -24,21 +24,27 @@ export const projectColor = (id: string): string => {
 
 // Project health from its planned vs derived dates: red = drifting or past due,
 // amber = due within a week, green = on track, gray = no dates to judge.
+//
+// `glyph` travels with the colour because red-and-green on an 8px dot is exactly
+// the pair a deuteranope cannot separate — roughly one person on a ten-person
+// team — and a dot has no shape to fall back on. It also survives a screenshot
+// pasted into a funder update, where the tooltip does not, and it is readable on
+// a phone, where hovering is not a thing.
 export const projectHealth = (p: {
   target_date: string | null;
   derived_target_date: string | null;
-}): { color: string; label: string } | null => {
+}): { color: string; label: string; glyph: string } | null => {
   const planned = p.target_date;
   const derived = p.derived_target_date;
   if (!planned && !derived) return null; // nothing to judge
   const today = new Date().toISOString().slice(0, 10);
   const end = derived ?? planned!;
-  if (planned && derived && derived > planned) return { color: "#dc2626", label: "Drifting past the plan" };
-  if (end < today) return { color: "#dc2626", label: "Past due" };
+  if (planned && derived && derived > planned) return { color: "#dc2626", label: "Drifting past the plan", glyph: "!" };
+  if (end < today) return { color: "#dc2626", label: "Past due", glyph: "!" };
   const soon = new Date();
   soon.setDate(soon.getDate() + 7);
-  if (end <= soon.toISOString().slice(0, 10)) return { color: "#f59e0b", label: "Due within a week" };
-  return { color: "#16a34a", label: "On track" };
+  if (end <= soon.toISOString().slice(0, 10)) return { color: "#f59e0b", label: "Due within a week", glyph: "•" };
+  return { color: "#16a34a", label: "On track", glyph: "✓" };
 };
 
 // Drift in days of the current derived target vs the frozen baseline target.

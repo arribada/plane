@@ -22,11 +22,16 @@ const LANE_GAP = 3;
 const ROW_PADDING = 7;
 const MIN_ROW_HEIGHT = 38;
 
-// Translucent literals rather than token classes: the ribbon has to sit *over* the
-// weekend shading and *under* the bars, and a flat alpha reads the same in both
-// themes. The solid red is the same one `ring-danger-strong` draws on a bar.
-const CONFLICT_FILL = "rgba(220,38,38,0.16)";
-const CONFLICT_EDGE = "rgba(220,38,38,0.55)";
+// Translucent, because the ribbon has to sit *over* the weekend shading and
+// *under* the bars — but mixed from the danger token rather than from a literal.
+// The hardcoded rgba(220,38,38,…) was a third red matching neither theme:
+// --border-danger-strong resolves to #e7000b in light and #ff6467 in dark, and
+// composited against the dark canvas the literal measured 1.11:1, so on the
+// fork's own default theme the double-booked region was effectively not drawn.
+// The redundant ring and the count badge meant nobody was misled — the warning
+// was just doing a third of its job.
+const CONFLICT_FILL = "color-mix(in srgb, var(--border-color-danger-strong) 16%, transparent)";
+const CONFLICT_EDGE = "color-mix(in srgb, var(--border-color-danger-strong) 55%, transparent)";
 const LEAVE_FILL = "rgba(120,135,160,0.28)";
 
 type Props = {

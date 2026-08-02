@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { Loader2, X } from "lucide-react";
-import { cn } from "@plane/utils";
+import { cn, renderFormattedDate } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatus, TProjectStatusUpdate } from "@/plane-web/types/arribada";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
@@ -147,7 +147,7 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
                     <div className="flex items-center gap-2 text-12">
                       <span className="font-medium text-primary">{STATUS_META[u.status]?.label}</span>
                       <span className="text-secondary/70">
-                        {u.author ?? "—"} · {new Date(u.created_at).toLocaleDateString()}
+                        {u.author ?? "—"} · {renderFormattedDate(u.created_at)}
                       </span>
                     </div>
                     {u.message && <p className="mt-0.5 text-13 whitespace-pre-wrap text-secondary">{u.message}</p>}

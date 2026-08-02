@@ -26,11 +26,27 @@ def _graph():
 
 
 def test_cascade_pushes_and_preserves_duration():
+    """B originally runs Mon 3 to Fri 7 August — five working days.
+
+    Both assertions below were stale and this test had been red since cascade
+    learned about weekends. The old ones read `.days == 4` and a C start of 11
+    August, which are the answers a cascade that steps over Saturdays cannot give:
+    B is pushed to Thu 6 and needs its five working days, so it ends Wed 12, and C
+    follows on Thu 13. Counting CALENDAR days was the mistake — it asks the
+    scheduler to either shorten the work or start somebody on a Saturday.
+    """
     issues, rels = _graph()
     changed = cascade(issues, rels)
     assert changed["B"]["start"] == D(2026, 8, 6)  # A target 8/5 + 1
-    assert (changed["B"]["target"] - changed["B"]["start"]).days == 4  # duration kept
-    assert changed["C"]["start"] == D(2026, 8, 11)  # propagated after new B target
+
+    span = [
+        changed["B"]["start"] + dt.timedelta(days=i)
+        for i in range((changed["B"]["target"] - changed["B"]["start"]).days + 1)
+    ]
+    assert len([d for d in span if d.weekday() < 5]) == 5  # working duration kept
+    assert changed["B"]["target"] == D(2026, 8, 12)
+
+    assert changed["C"]["start"] == D(2026, 8, 13)  # propagated after new B target
 
 
 def test_cascade_never_pulls_earlier():

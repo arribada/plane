@@ -309,6 +309,19 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     }
   };
 
+  const setDeliveryScheduling = async (on: boolean) => {
+    try {
+      await service.updateSchedule(slug, pid, { schedule_from_deliveries: on });
+      await load(displayCcy);
+    } catch {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't change that",
+        message: "The schedule still ignores deliveries.",
+      });
+    }
+  };
+
   const askFor = async () => {
     const label = draft.label.trim();
     const amount = Number(draft.amount);
@@ -843,6 +856,29 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             Expenses {expenses.length > 0 && <span className="text-tertiary">({expenses.length})</span>}
           </span>
           <div className="flex-grow" />
+          {/* Whether the plan waits for parts.
+          Off unless this project says otherwise, and offered here because this is
+          where deliveries are recorded — a reflow that moved somebody's dates
+          because a colleague typed a supplier's promise into a form is one nobody
+          would run twice. Most projects have no hardware waiting on anything. */}
+          {canEdit && (pending.length > 0 || decided.length > 0) && (
+            <label className="flex items-start gap-2 rounded-lg border border-subtle bg-layer-2 px-3 py-2 text-12 text-secondary">
+              <input
+                type="checkbox"
+                checked={!!budget?.schedule_from_deliveries}
+                onChange={(e) => void setDeliveryScheduling(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Let the schedule wait for deliveries
+                <span className="block text-11 text-tertiary">
+                  When Reflow runs, a work item linked to an approved purchase will not start before that purchase is
+                  expected. Nothing moves until somebody runs a reflow.
+                </span>
+              </span>
+            </label>
+          )}
+
           {/* What was already answered. A rejected request used to disappear from the
           product the second it was rejected, and an approved one became an
           anonymous expense line — so a grant audit asking who wanted a part, from

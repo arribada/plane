@@ -106,6 +106,10 @@ export type TProjectStatusUpdate = {
 };
 
 export type TProjectSchedule = {
+  /** Whether a reflow treats an expected delivery as a floor for the item waiting
+   *  on it. Off unless the project asked: most projects have no hardware waiting
+   *  on anything, and moving dates nobody opted into is how a planner loses trust. */
+  schedule_from_deliveries?: boolean;
   /** What the project was given to spend. Null means nobody has said, which the
    *  budget view reports differently from zero. */
   budget_amount?: number | null;
@@ -472,6 +476,8 @@ export type TProjectBudget = {
   display: TBudgetDisplay;
   /** The project's planned span, for anything drawn against time. */
   span: { start_date: string | null; target_date: string | null };
+  /** Whether a reflow waits for expected deliveries. Off unless asked for. */
+  schedule_from_deliveries: boolean;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {
     amount: number | null;
@@ -517,7 +523,18 @@ export type TProcurementRequest = {
   supplier: string;
   justification: string;
   needed_by: string | null;
-  status: "pending" | "approved" | "rejected";
+  /** The purchasing record past the money decision. */
+  order_reference?: string;
+  ordered_on?: string | null;
+  /** What the supplier promised — the date a schedule can be asked to respect. */
+  expected_on?: string | null;
+  /** What actually happened. Wins over expected_on once set. */
+  received_on?: string | null;
+  /** The work item this delivery unblocks; null for the ordinary consumable. */
+  issue_id?: string | null;
+  // ordered/received extend the record past the money decision: approving says
+  // the budget is committed, not that the parts have landed.
+  status: "pending" | "approved" | "rejected" | "ordered" | "received";
   requested_by: string | null;
   requested_by_name: string | null;
   decided_by_name: string | null;

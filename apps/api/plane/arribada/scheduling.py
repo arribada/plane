@@ -86,11 +86,22 @@ def _target_after(start, working_days):
     return day
 
 
-def cascade(issues, relations):
+def cascade(issues, relations, earliest_starts=None):
     """Forward pass. issues: {id: {"start": date|None, "target": date|None}}.
     Returns {id: {"start": date, "target": date}} for issues whose dates MOVED.
     Only pushes later, never earlier; preserves each issue's duration. Weekend-aware:
-    a successor never starts on a Sat/Sun (a Friday finish pushes it to Monday)."""
+    a successor never starts on a Sat/Sun (a Friday finish pushes it to Monday).
+
+    `earliest_starts` is {issue_id: date}: a floor this item cannot start before,
+    whatever its predecessors say. It exists for deliveries — a task that needs a
+    part cannot begin before the part is expected, and for a hardware organisation
+    that date moves a deployment further than any person-day does.
+
+    It is a SEPARATE argument rather than a synthetic relation on purpose. A
+    delivery is not a predecessor: it has no duration, nothing depends on it in
+    turn, and it must not appear in the critical-path walk or in the float
+    figures, where it would be read as work somebody has to do. Passing None —
+    which every existing caller does — leaves the behaviour exactly as it was."""
     dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
     edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
     order, _cycles = _topo_order(list(dated.keys()), edges)
@@ -99,6 +110,7 @@ def cascade(issues, relations):
     for p, s, k in edges:
         preds[s].append((p, k))
 
+    floors = earliest_starts or {}
     cur = {i: {"start": v["start"], "target": v["target"]} for i, v in dated.items()}
     changed = {}
     for node in order:
@@ -108,6 +120,12 @@ def cascade(issues, relations):
                 constraints.append(_next_working_day(cur[p]["target"] + timedelta(days=1)))
             else:  # SS
                 constraints.append(_next_working_day(cur[p]["start"]))
+        # Added BEFORE the empty check: an item waiting only on a delivery has no
+        # predecessors at all, and skipping it would be the whole feature not
+        # working for the simplest case there is.
+        floor = floors.get(node)
+        if floor:
+            constraints.append(_next_working_day(floor))
         if not constraints:
             continue
         earliest = _next_working_day(max(constraints))

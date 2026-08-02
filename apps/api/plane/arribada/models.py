@@ -38,6 +38,16 @@ class ProjectSchedule(models.Model):
     # read. The dates say when, this says how much.
     budget_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     budget_currency = models.CharField(max_length=3, default="EUR")
+    # Whether the scheduler should treat an expected delivery as a constraint on
+    # the work item waiting for it.
+    #
+    # Off by default, and deliberately per project rather than workspace-wide. A
+    # planner that silently pushed somebody's dates because a colleague typed a
+    # supplier's promise into a purchase form would be a planner nobody trusts —
+    # and most projects here have no hardware waiting on anything. A project that
+    # IS gated on a twelve-week chip lead time turns it on once and the constraint
+    # then holds for every reflow.
+    schedule_from_deliveries = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -556,7 +566,20 @@ class ProcurementRequest(models.Model):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
-    STATUS_CHOICES = [(PENDING, "Pending"), (APPROVED, "Approved"), (REJECTED, "Rejected")]
+    # Ordered and received extend the record past the decision. Approving says the
+    # money is committed; it says nothing about when the parts land, and for a
+    # hardware organisation that second date is the one that moves a deployment —
+    # a twelve-week Kineis chip lead time shifts a field season further than any
+    # person-day ever will.
+    ORDERED = "ordered"
+    RECEIVED = "received"
+    STATUS_CHOICES = [
+        (PENDING, "Pending"),
+        (APPROVED, "Approved"),
+        (REJECTED, "Rejected"),
+        (ORDERED, "Ordered"),
+        (RECEIVED, "Received"),
+    ]
 
     id = models.UUIDField(
         default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
@@ -581,6 +604,23 @@ class ProcurementRequest(models.Model):
 
     supplier = models.CharField(max_length=255, blank=True, default="")
     justification = models.TextField(blank=True, default="")
+    # The purchasing record past approval.
+    order_reference = models.CharField(max_length=255, blank=True, default="")
+    ordered_on = models.DateField(null=True, blank=True)
+    # What the supplier promised. This is the date the scheduler can be asked to
+    # respect; `received_on` is what actually happened.
+    expected_on = models.DateField(null=True, blank=True)
+    received_on = models.DateField(null=True, blank=True)
+    # The work item this delivery unblocks. Null is the ordinary case — most
+    # purchases are consumables nothing waits on — and only a linked request with
+    # an expected date can ever constrain a plan.
+    issue = models.ForeignKey(
+        "db.Issue",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="arribada_procurement",
+    )
     needed_by = models.DateField(null=True, blank=True)
 
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)

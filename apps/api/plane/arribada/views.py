@@ -696,7 +696,32 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         issues, relations = _project_graph(project_id, slug)
-        changed = cascade(issues, relations)
+
+        # Delivery floors, and ONLY when this project asked for them.
+        #
+        # Off by default and per project: a planner that silently pushed somebody's
+        # dates because a colleague typed a supplier's promise into a purchase form
+        # is a planner nobody trusts, and most projects here have no hardware
+        # waiting on anything. A project that IS gated on a twelve-week chip lead
+        # time turns it on once and the floor then holds for every reflow.
+        #
+        # `received_on` wins over `expected_on` where both exist: once the parts are
+        # on the bench, what the supplier promised is history.
+        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+        floors = {}
+        if schedule_row and schedule_row.schedule_from_deliveries:
+            for row in ProcurementRequest.objects.filter(
+                project_id=project_id, issue__isnull=False, status__in=[ProcurementRequest.APPROVED, ProcurementRequest.ORDERED, ProcurementRequest.RECEIVED]
+            ).only("issue_id", "expected_on", "received_on"):
+                landing = row.received_on or row.expected_on
+                if not landing:
+                    continue
+                key = str(row.issue_id)
+                # Two parts for one task: the later one is what it waits for.
+                if key not in floors or landing > floors[key]:
+                    floors[key] = landing
+
+        changed = cascade(issues, relations, earliest_starts=floors)
         moved = []
         for iid, dates in changed.items():
             # .update() bypasses per-issue activity/webhooks — intentional for a bulk reflow
@@ -704,7 +729,10 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
             moved.append(
                 {"issue_id": iid, "start_date": dates["start"], "target_date": dates["target"]}
             )
-        return Response({"rescheduled": len(moved), "issues": moved}, status=status.HTTP_200_OK)
+        return Response(
+            {"rescheduled": len(moved), "issues": moved, "delivery_constrained": len(floors)},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectCriticalPathEndpoint(BaseAPIView):
@@ -4202,6 +4230,10 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "start_date": schedule_row.start_date.isoformat() if schedule_row and schedule_row.start_date else None,
                     "target_date": schedule_row.target_date.isoformat() if schedule_row and schedule_row.target_date else None,
                 },
+                # Whether a reflow waits for deliveries. Surfaced here because this
+                # is the screen where deliveries are recorded, so it is where the
+                # question "should the plan care about this date" is asked.
+                "schedule_from_deliveries": bool(schedule_row and schedule_row.schedule_from_deliveries),
                 "allocation": {
                     "amount": allocated,
                     "currency": allocation_currency,
@@ -4262,6 +4294,11 @@ def _serialize_request(row):
         "supplier": row.supplier,
         "justification": row.justification,
         "needed_by": row.needed_by.isoformat() if row.needed_by else None,
+        "order_reference": row.order_reference,
+        "ordered_on": row.ordered_on.isoformat() if row.ordered_on else None,
+        "expected_on": row.expected_on.isoformat() if row.expected_on else None,
+        "received_on": row.received_on.isoformat() if row.received_on else None,
+        "issue_id": str(row.issue_id) if row.issue_id else None,
         "status": row.status,
         "requested_by": str(row.requested_by_id) if row.requested_by_id else None,
         "requested_by_name": (
@@ -4401,6 +4438,62 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
             row.decision_note = note
             row.save()
 
+        return Response(_serialize_request(row), status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def patch(self, request, slug, project_id, request_id):
+        """The purchasing record after the money decision: ordered, expected, arrived.
+
+        Separate from `post` on purpose. Approving is what commits the budget and
+        writes an expense line, and only the lead may do it. Recording that the
+        parts shipped is bookkeeping — whoever placed the order should be able to
+        say so — and it must not be able to spend anything.
+
+        `expected_on` is the date a schedule can be asked to respect; `received_on`
+        is what actually happened, and wins over it once set.
+        """
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        row = ProcurementRequest.objects.filter(id=request_id, project_id=project_id).first()
+        if not row:
+            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+        if row.status == ProcurementRequest.PENDING:
+            return Response(
+                {"error": "Nothing has been ordered yet — this request is still waiting for a decision."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if row.status == ProcurementRequest.REJECTED:
+            return Response(
+                {"error": "This request was rejected, so there is no order to track."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if "status" in request.data:
+            wanted = str(request.data.get("status") or "").strip().lower()
+            # Only the two tracking states. Approving and rejecting stay on `post`,
+            # where the expense-line side effects live.
+            if wanted not in {ProcurementRequest.APPROVED, ProcurementRequest.ORDERED, ProcurementRequest.RECEIVED}:
+                return Response(
+                    {"error": "status must be 'approved', 'ordered' or 'received'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row.status = wanted
+
+        for field in ("ordered_on", "expected_on", "received_on"):
+            if field in request.data:
+                setattr(row, field, _parse_date(request.data.get(field)))
+        if "order_reference" in request.data:
+            row.order_reference = str(request.data.get("order_reference") or "")[:255]
+
+        if "issue_id" in request.data:
+            issue_id = request.data.get("issue_id")
+            if issue_id and not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+                return Response(
+                    {"error": "That work item is not in this project"}, status=status.HTTP_400_BAD_REQUEST
+                )
+            row.issue_id = issue_id or None
+
+        row.save()
         return Response(_serialize_request(row), status=status.HTTP_200_OK)
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")

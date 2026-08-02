@@ -588,7 +588,12 @@ export class ArribadaService extends APIService {
   async updateSchedule(
     workspaceSlug: string,
     projectId: string,
-    data: Partial<Pick<TProjectSchedule, "start_date" | "target_date" | "budget_amount" | "budget_currency">>
+    data: Partial<
+      Pick<
+        TProjectSchedule,
+        "start_date" | "target_date" | "budget_amount" | "budget_currency" | "schedule_from_deliveries"
+      >
+    >
   ): Promise<TProjectSchedule> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`, data)
       .then((response) => response?.data)
@@ -736,6 +741,27 @@ export class ArribadaService extends APIService {
     data: Partial<TProcurementRequest>
   ): Promise<TProcurementRequest> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/`, data)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** The purchasing record past the money decision: ordered, expected, arrived. */
+  async trackPurchase(
+    workspaceSlug: string,
+    projectId: string,
+    requestId: string,
+    data: {
+      status?: "approved" | "ordered" | "received";
+      order_reference?: string;
+      ordered_on?: string | null;
+      expected_on?: string | null;
+      received_on?: string | null;
+      issue_id?: string | null;
+    }
+  ): Promise<TProcurementRequest> {
+    return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/${requestId}/`, data)
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;

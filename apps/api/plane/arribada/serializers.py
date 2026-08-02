@@ -18,6 +18,10 @@ class ProjectScheduleSerializer(serializers.ModelSerializer):
             # What the project was given to spend. Null means nobody has said,
             # which the budget view reports differently from zero.
             "budget_amount",
+            # Whether the reflow treats an expected delivery as a floor. Off by
+            # default and per project: a planner that moved dates because of a
+            # supplier's promise nobody opted into is one people stop using.
+            "schedule_from_deliveries",
             "budget_currency",
             "created_at",
             "updated_at",

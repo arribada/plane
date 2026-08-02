@@ -2330,6 +2330,95 @@ def _parse_date(value):
         return None
 
 
+class ProjectAiDraftItemEndpoint(BaseAPIView):
+    """Fill in a work item from its title, and hand the result back UNSAVED.
+
+    Nothing here writes. The client shows what came back in the create form with
+    every field editable, and only the human's Save creates anything — the same
+    contract the planning assistant follows when it proposes dates. A guessed
+    priority or discipline written straight to the database is a field nobody ever
+    re-reads, and on a plan that feeds a funder report that is worse than a blank.
+
+    The model is given the project's real vocabulary rather than left to invent
+    one: the roles below are what the roster routes work by, so a role it made up
+    would match nobody and silently lose the assignment.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        title = str(request.data.get("title") or "").strip()[:255]
+        if not title:
+            return Response({"error": "Give it a title first"}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .ai import chat_json, resolve_config
+
+        config = resolve_config(project.workspace_id)
+        if not config:
+            return Response(
+                {"error": "No AI provider is configured for this workspace."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        roles = ", ".join(value for value, _ in PROJECT_ROLES)
+        # Sibling titles give the model the project's register — a firmware project
+        # and a field programme use the same words for different work.
+        siblings = list(
+            Issue.issue_objects.filter(project_id=project_id).order_by("-created_at").values_list("name", flat=True)[:15]
+        )
+
+        system = (
+            "You fill in a work item for a conservation-technology engineering team "
+            "(GPS and satellite wildlife trackers, thermal cameras, field deployments). "
+            "Answer with a single JSON object and nothing else. Keys: "
+            "description (2-4 sentences of plain prose saying what doing this involves "
+            "and how somebody would know it is finished; no markdown headings), "
+            f"role (exactly one of: {roles}), "
+            "priority (one of: urgent, high, medium, low, none), "
+            "estimate_days (integer working days, 1-30), "
+            "is_milestone (true only if this is a deliverable a funder would track, "
+            "such as a design review or a hardware delivery — not for ordinary work), "
+            "confidence (one of: high, medium, low). "
+            "Set confidence to low when the title is too vague to judge, and keep the "
+            "description short rather than inventing specifics you were not given."
+        )
+        user = f"Project: {project.name}\nWork item title: {title}"
+        if siblings:
+            user += "\nOther work items in this project, for register only:\n- " + "\n- ".join(siblings)
+
+        data, error = chat_json(config, system, user, max_tokens=800)
+        if error:
+            return Response({"error": error}, status=status.HTTP_502_BAD_GATEWAY)
+
+        valid_roles = {value for value, _ in PROJECT_ROLES}
+        role = str(data.get("role") or "").strip().lower()
+        priority = str(data.get("priority") or "").strip().lower()
+        try:
+            estimate = max(1, min(30, int(data.get("estimate_days") or 0)))
+        except (TypeError, ValueError):
+            estimate = None
+
+        return Response(
+            {
+                "description": str(data.get("description") or "")[:4000],
+                # Dropped rather than coerced when the model invents one: a role the
+                # roster does not know assigns the work to nobody, and a wrong-but-
+                # plausible one is harder to notice than an empty field.
+                "role": role if role in valid_roles else None,
+                "priority": priority if priority in {"urgent", "high", "medium", "low", "none"} else None,
+                "estimate_days": estimate,
+                "is_milestone": bool(data.get("is_milestone")),
+                "confidence": str(data.get("confidence") or "low"),
+                "provider": config["provider"],
+                "model": config["model"],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class ProjectAiPlanEndpoint(BaseAPIView):
     """Ask the model to complete a project's work items: dates, and an owner.
 

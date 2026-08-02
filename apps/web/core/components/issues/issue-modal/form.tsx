@@ -6,6 +6,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { observer } from "mobx-react";
+import { AiFillButton, type TAiDraft } from "@/plane-web/components/issues/ai-fill-button";
 import { useParams } from "next/navigation";
 import { FormProvider, useForm } from "react-hook-form";
 // editor
@@ -155,6 +156,8 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
   } = methods;
 
   const projectId = watch("project_id");
+  // What the assistant suggested for fields this modal does not own.
+  const [aiSuggestion, setAiSuggestion] = useState<TAiDraft | null>(null);
   const activeAdditionalPropertiesLength = getActiveAdditionalPropertiesLength({
     projectId: projectId,
     workspaceSlug: workspaceSlug?.toString(),
@@ -270,6 +273,7 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
           });
           editorRef?.current?.clearEditor();
         }
+        return undefined;
       })
       .catch((error) => {
         console.error(error);
@@ -334,15 +338,15 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
     const issue = getIssueById(parentId);
     if (!issue) return;
 
-    const projectDetails = getProjectById(issue.project_id);
-    if (!projectDetails) return;
+    const parentProject = getProjectById(issue.project_id);
+    if (!parentProject) return;
 
     const stateDetails = getStateById(issue.state_id);
 
     setSelectedParentIssue(
-      convertWorkItemDataToSearchResponse(workspaceSlug?.toString(), issue, projectDetails, stateDetails)
+      convertWorkItemDataToSearchResponse(workspaceSlug?.toString(), issue, parentProject, stateDetails)
     );
-  }, [watch, getIssueById, getProjectById, selectedParentIssue, getStateById]);
+  }, [watch, getIssueById, getProjectById, selectedParentIssue, setSelectedParentIssue, getStateById, workspaceSlug]);
 
   // executing this useEffect when isDirty changes
   useEffect(() => {
@@ -380,7 +384,7 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
         <div className="w-full rounded-lg">
           <form
             ref={formRef}
-            onSubmit={handleSubmit((data) => handleFormSubmit(data))}
+            onSubmit={handleSubmit((values) => handleFormSubmit(values))}
             className="flex w-full flex-col"
           >
             <div className="rounded-t-lg bg-surface-1 p-5">
@@ -448,6 +452,38 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
                   formState={formState}
                   handleFormChange={handleFormChange}
                 />
+                {/* Proposes; never saves. What it returns lands in the fields below,
+                    still editable, and only Save creates anything. */}
+                {workspaceSlug && projectId && (
+                  <div className="flex items-center justify-end gap-2">
+                    {aiSuggestion && (
+                      // Discipline, estimate and deliverable are the fork's own
+                      // fields and live outside this modal — onSubmit resolves to
+                      // void, so there is no created id to apply them to from here.
+                      // Shown rather than silently dropped: a suggestion a reader
+                      // can act on beats a mechanism that half works.
+                      <span className="text-11 text-tertiary">
+                        also suggests
+                        {aiSuggestion.role ? ` ${aiSuggestion.role}` : ""}
+                        {aiSuggestion.estimate_days ? ` · ~${aiSuggestion.estimate_days} d` : ""}
+                        {aiSuggestion.is_milestone ? " · a deliverable" : ""}
+                      </span>
+                    )}
+                    <AiFillButton
+                      workspaceSlug={workspaceSlug.toString()}
+                      projectId={projectId.toString()}
+                      title={watch("name") ?? ""}
+                      onDraft={(draft) => {
+                        if (draft.description) {
+                          setValue("description_html", `<p>${draft.description}</p>`, { shouldValidate: true });
+                        }
+                        if (draft.priority) setValue("priority", draft.priority as never, { shouldValidate: true });
+                        handleFormChange();
+                        setAiSuggestion(draft);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <div
@@ -513,17 +549,14 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
                   tabIndex={getIndex("create_more")}
                 >
                   {!data?.id && (
-                    <div
+                    <button
+                      type="button"
                       className="inline-flex cursor-pointer items-center gap-1.5"
                       onClick={() => onCreateMoreToggleChange(!isCreateMoreToggleEnabled)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") onCreateMoreToggleChange(!isCreateMoreToggleEnabled);
-                      }}
-                      role="button"
                     >
                       <ToggleSwitch value={isCreateMoreToggleEnabled} onChange={() => {}} size="sm" />
                       <span className="text-caption-sm-regular">{t("create_more")}</span>
-                    </div>
+                    </button>
                   )}
                   <div className="flex items-center gap-2">
                     <div tabIndex={getIndex("discard_button")}>

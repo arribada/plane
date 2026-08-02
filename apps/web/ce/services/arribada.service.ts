@@ -69,6 +69,26 @@ export class ArribadaService extends APIService {
 
   // All planning relations (finish_before/start_before/blocked_by) of a project's
   // issues, in one call — so the gantt can draw dependency arrows without N fetches.
+  /** Propose a work item's fields from its title. Writes nothing. */
+  async aiDraftWorkItem(
+    workspaceSlug: string,
+    projectId: string,
+    title: string
+  ): Promise<{
+    description: string;
+    role: string | null;
+    priority: string | null;
+    estimate_days: number | null;
+    is_milestone: boolean;
+    confidence: string;
+  }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-draft-item/`, { title })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Every marked deliverable across the workspace, soonest first (Home widget). */
   async getWorkspaceDeliverables(workspaceSlug: string): Promise<
     {

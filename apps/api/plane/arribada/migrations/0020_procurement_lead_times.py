@@ -69,7 +69,9 @@ class Migration(migrations.Migration):
                     ("received", "Received"),
                 ],
                 default="pending",
-                max_length=16,
+                # 10, matching the model. Every value fits: the longest is
+                # "approved"/"rejected"/"received" at eight characters.
+                max_length=10,
             ),
         ),
     ]

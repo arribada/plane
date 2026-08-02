@@ -2,40 +2,27 @@
  * Copyright (c) 2023-present Plane Software, Inc. and contributors
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
+ *
+ * Billing and plans — removed on this instance.
+ *
+ * The page compares Plane's paid tiers and offers to buy one. Nobody on a
+ * self-hosted fork can act on that, and a settings screen that exists only to
+ * advertise is a screen somebody eventually reads as an obligation.
+ *
+ * A redirect rather than a deleted route: the route file is upstream's, the link
+ * has already been taken out of the settings navigation, and anyone reaching this
+ * from a bookmark or an old tab should land somewhere useful instead of a 404.
  */
+import { useEffect } from "react";
+import { useParams, useNavigate } from "react-router";
 
-import { observer } from "mobx-react";
-// component
-import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
-import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
-import { PageHead } from "@/components/core/page-title";
-import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
-// hooks
-import { useWorkspace } from "@/hooks/store/use-workspace";
-import { useUserPermissions } from "@/hooks/store/user";
-// plane web components
-import { BillingRoot } from "@/plane-web/components/workspace/billing";
-// local imports
-import { BillingWorkspaceSettingsHeader } from "./header";
+export default function BillingSettingsPage() {
+  const { workspaceSlug } = useParams();
+  const navigate = useNavigate();
 
-function BillingSettingsPage() {
-  // store hooks
-  const { workspaceUserInfo, allowPermissions } = useUserPermissions();
-  const { currentWorkspace } = useWorkspace();
-  // derived values
-  const canPerformWorkspaceAdminActions = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
-  const pageTitle = currentWorkspace?.name ? `${currentWorkspace.name} - Billing & Plans` : undefined;
+  useEffect(() => {
+    if (workspaceSlug) navigate(`/${workspaceSlug}/settings/`, { replace: true });
+  }, [workspaceSlug, navigate]);
 
-  if (workspaceUserInfo && !canPerformWorkspaceAdminActions) {
-    return <NotAuthorizedView section="settings" className="h-auto" />;
-  }
-
-  return (
-    <SettingsContentWrapper header={<BillingWorkspaceSettingsHeader />} hugging>
-      <PageHead title={pageTitle} />
-      <BillingRoot />
-    </SettingsContentWrapper>
-  );
+  return null;
 }
-
-export default observer(BillingSettingsPage);

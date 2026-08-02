@@ -66,7 +66,10 @@ export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWo
   [WORKSPACE_SETTINGS_CATEGORY.ADMINISTRATION]: [
     WORKSPACE_SETTINGS["general"],
     WORKSPACE_SETTINGS["members"],
-    WORKSPACE_SETTINGS["billing-and-plans"],
+    // "billing-and-plans" is deliberately absent. It compares Plane's paid tiers,
+    // which nobody on a self-hosted instance can buy or needs to read. The record
+    // entry above stays so the page's own header keeps compiling and the diff
+    // against upstream stays one line; the page itself redirects.
     WORKSPACE_SETTINGS["export"],
   ],
   [WORKSPACE_SETTINGS_CATEGORY.FEATURES]: [],

@@ -1563,6 +1563,19 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
         for a in IssueAllocation.objects.filter(issue_id__in=list(by_issue))
     }
 
+    # One holiday set per COUNTRY, computed once for the whole window.
+    #
+    # `_holidays_for` queries WorkspaceNonWorkingDay every call, and this used to
+    # sit inside the per-assignment loop below: two hundred dated items meant two
+    # hundred identical queries. There are two countries and one window, so there
+    # are two answers.
+    by_country = {}
+
+    def holidays_of(country):
+        if country not in by_country:
+            by_country[country] = _holidays_for(slug, country, today, window_end)
+        return by_country[country]
+
     committed = {}
     for issue_id, assignee_id in assignees:
         row = by_issue.get(str(issue_id))
@@ -1576,8 +1589,9 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
             continue
         person = str(assignee_id)
         country = (roster.get(person) or {}).get("work_country") or DEFAULT_COUNTRY
-        holidays = _holidays_for(slug, country, start, end)
-        days = _working_days_between(start, end, holidays)
+        # The window's set covers this item's span, which is inside it — days
+        # outside [start, end] are simply never looked at.
+        days = _working_days_between(start, end, holidays_of(country))
         share = shares.get((str(issue_id), person), 100) / 100.0
         committed[person] = committed.get(person, 0.0) + days * share
 
@@ -1586,7 +1600,7 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
         info = roster.get(person) or {}
         per_week = max(1, min(5, int(info.get("days_per_week") or 5)))
         country = info.get("work_country") or DEFAULT_COUNTRY
-        holidays = _holidays_for(slug, country, today, window_end)
+        holidays = holidays_of(country)
         # Available = the working days in the window this person actually works,
         # scaled by how many days a week they are here.
         full = _working_days_between(today, window_end, holidays)

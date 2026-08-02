@@ -65,7 +65,13 @@ export const barLook = (
   issue: TIssue | undefined | null,
   background: string,
   stateGroup: string | undefined | null,
-  today: Date = new Date()
+  today: Date = new Date(),
+  /**
+   * Whether this item has been MARKED a deliverable. Undefined means nobody has
+   * said, and only then does the same-day guess below apply — so a project
+   * nobody has marked up keeps drawing exactly what it drew before.
+   */
+  marked?: boolean
 ): TBarLook => {
   const done = stateGroup === "completed" || stateGroup === "cancelled";
   const start = midnight(issue?.start_date);
@@ -81,7 +87,10 @@ export const barLook = (
     text: readableOn(background),
     overdue: !done && end !== null && end < now.getTime(),
     done,
-    // Same day at both ends, or a single date given — the classic milestone.
-    milestone: start !== null && end !== null && Math.round((end - start) / DAY) === 0,
+    // A marked deliverable, or — where nobody has marked anything — the old
+    // same-day guess. The guess is wrong in both directions, which is why the
+    // mark exists: a one-day bench test is not a gate, and "PDR delivered" is one
+    // even though the review takes two days. It stays only as a fallback.
+    milestone: marked ?? (start !== null && end !== null && Math.round((end - start) / DAY) === 0),
   };
 };

@@ -658,3 +658,52 @@ class WorkspaceCurrencySettings(models.Model):
 
     def __str__(self):
         return f"{self.workspace_id} display={self.display_currency or 'project'} @ {self.eur_gbp_rate}"
+
+
+class IssueMilestone(models.Model):
+    """A work item that IS a deliverable, rather than a step toward one.
+
+    A milestone was inferred from a zero-day duration, which is wrong in both
+    directions. A one-day bench test drew as an amber diamond labelled like a gate,
+    and "PDR delivered" — a real funder deliverable that happens to span the two
+    days the review takes — got no marker at all. The MS Project export inherited
+    the same guess and stamped every one-day task as a Project milestone.
+
+    For a grant-funded organisation the milestone is the reporting unit: PDR, tag
+    delivery, the field deployment window. Those are the objects a funder tracks
+    and they cannot be a side effect of how long something happens to take.
+
+    Deliberately a row rather than a boolean column on the item: this fork does not
+    own db.Issue, and a separate table keeps the upstream schema untouched (the
+    same reasoning as IssueRole and ProjectSchedule). A row's existence is the
+    flag; `label` is what a report calls it when the item's own name is written for
+    the team rather than for the funder, and `kind` lets the chart tell a gate that
+    must be passed from a delivery that must arrive.
+    """
+
+    GATE = "gate"
+    DELIVERY = "delivery"
+    REVIEW = "review"
+    KIND_CHOICES = [(GATE, "Gate"), (DELIVERY, "Delivery"), (REVIEW, "Review")]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.OneToOneField(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_milestone"
+    )
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=DELIVERY)
+    # Empty means "use the work item's own name". Only worth filling when the
+    # internal name is not what a funder should read.
+    label = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_issue_milestone"
+        ordering = ("created_at",)
+        verbose_name = "Issue milestone"
+        verbose_name_plural = "Issue milestones"
+
+    def __str__(self):
+        return f"{self.issue_id} {self.kind}"

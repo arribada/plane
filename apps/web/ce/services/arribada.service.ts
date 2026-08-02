@@ -69,6 +69,37 @@ export class ArribadaService extends APIService {
 
   // All planning relations (finish_before/start_before/blocked_by) of a project's
   // issues, in one call — so the gantt can draw dependency arrows without N fetches.
+  /** Which of a project's work items are deliverables. Whole project in one call. */
+  async getProjectMilestones(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ issue_id: string; kind: "gate" | "delivery" | "review"; label: string }[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`)
+      .then((r) => r?.data?.milestones ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Mark or unmark one item. `kind: null` removes the mark. */
+  async setProjectMilestone(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    kind: "gate" | "delivery" | "review" | null,
+    label?: string
+  ): Promise<unknown> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`, {
+      issue_id: issueId,
+      kind,
+      label: label ?? "",
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   async getProjectRelations(workspaceSlug: string, projectId: string): Promise<TIssueRelationEdge[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/relations/`)
       .then((response) => response?.data)

@@ -29,6 +29,7 @@ from .models import (
     PROJECT_ROLES,
     canonical_role,
     IssueBaseline,
+    IssueMilestone,
     IssueRole,
     ProjectFolder,
     ProjectFolderItem,
@@ -553,6 +554,60 @@ class ProjectRelationsEndpoint(BaseAPIView):
             deleted_at__isnull=True,
         ).values("issue_id", "related_issue_id", "relation_type")
         return Response(list(edges), status=status.HTTP_200_OK)
+
+
+class ProjectMilestonesEndpoint(BaseAPIView):
+    """Which of a project's work items are deliverables, and what kind.
+
+    A milestone used to be inferred from a zero-day duration. That is wrong both
+    ways round: a one-day bench test drew as a gate, and a two-day review that IS
+    a funder deliverable drew as an ordinary bar. For an organisation whose
+    reporting unit is the deliverable — PDR, tag delivery, deployment window —
+    that is the most important distinction on the chart, and it cannot be a side
+    effect of how long something takes.
+
+    Whole project in one call, same reasoning as ProjectRelationsEndpoint: the
+    chart needs every bar's answer before it can draw any of them.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = IssueMilestone.objects.filter(issue__project_id=project_id).values("issue_id", "kind", "label")
+        return Response(
+            {"milestones": [{"issue_id": str(r["issue_id"]), "kind": r["kind"], "label": r["label"]} for r in rows]},
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        """Mark or unmark one item. `kind: null` removes the mark."""
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        issue_id = request.data.get("issue_id")
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        kind = request.data.get("kind")
+        if kind is None:
+            IssueMilestone.objects.filter(issue_id=issue_id).delete()
+            return Response({"issue_id": str(issue_id), "kind": None}, status=status.HTTP_200_OK)
+
+        valid = {choice for choice, _ in IssueMilestone.KIND_CHOICES}
+        if kind not in valid:
+            return Response(
+                {"error": f"kind must be one of {', '.join(sorted(valid))}"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        row, _ = IssueMilestone.objects.update_or_create(
+            issue_id=issue_id,
+            defaults={"kind": kind, "label": str(request.data.get("label") or "")[:255]},
+        )
+        return Response(
+            {"issue_id": str(row.issue_id), "kind": row.kind, "label": row.label}, status=status.HTTP_200_OK
+        )
 
 
 class ProjectProgressEndpoint(BaseAPIView):

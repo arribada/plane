@@ -28,6 +28,12 @@ export type TExportRow = {
   assignee?: string;
   state?: string;
   critical?: boolean;
+  /**
+   * Whether this item was MARKED a deliverable. Undefined means nobody has said,
+   * and the exporters fall back to the one-day guess — which is how every one-day
+   * bench test used to reach MS Project stamped as a Project milestone.
+   */
+  milestone?: boolean;
 };
 
 export type TExportEdge = { from: string; to: string; critical?: boolean };
@@ -319,7 +325,8 @@ export const buildMsProjectXml = (rows: TExportRow[], edges: TExportEdge[], titl
       `<Finish>${at(row.end!, true)}</Finish>`,
       `<Duration>PT${days * 8}H0M0S</Duration>`,
       "<DurationFormat>7</DurationFormat>",
-      `<Milestone>${days === 1 ? 1 : 0}</Milestone>`,
+      // The mark where there is one, the old duration guess where there is not.
+      `<Milestone>${(row.milestone ?? days === 1) ? 1 : 0}</Milestone>`,
       `<PercentComplete>${row.state ? "" : ""}0</PercentComplete>`
     );
     for (const from of predecessors.get(uid) ?? []) {

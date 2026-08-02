@@ -46,6 +46,7 @@ import { useIssuesActions } from "@/hooks/use-issues-actions";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 // plane web hooks
 import { useBulkOperationStatus } from "@/plane-web/hooks/use-bulk-operation-status";
+import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 
@@ -117,6 +118,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
 
   const { groupBy, collapsedGroups, rowOrder } = ganttDisplay;
   const relations = useProjectRelations(workspaceSlug?.toString(), projectId?.toString());
+  const milestones = useProjectMilestones(workspaceSlug?.toString(), projectId?.toString());
 
   // Along the graph before anything is grouped, so a band's rows read top-to-bottom
   // in the order the work actually has to happen.
@@ -153,6 +155,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // at that instant — same order, same bands, same filters — and nothing here is
   // worth recomputing on every render for a button that is rarely pressed.
   const collectForExport = useCallback(() => {
+    const hasMilestoneMarks = Object.keys(milestones).length > 0;
     const parsed = (value: string | null | undefined) => {
       if (!value) return null;
       const date = new Date(value);
@@ -183,6 +186,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         identifier: issue?.sequence_id ? `${projectDetails?.identifier ?? ""}-${issue.sequence_id}` : undefined,
         start: parsed(issue?.start_date),
         end: parsed(issue?.target_date),
+        // undefined when this project has no marks at all, so the exporters keep
+        // their old one-day guess rather than declaring nothing a milestone.
+        milestone: hasMilestoneMarks ? !!milestones[id] : undefined,
         color: state?.color ?? undefined,
         assignee: owner ? (getUserDetails(owner)?.display_name ?? undefined) : undefined,
         state: state?.name,
@@ -210,6 +216,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     orderedIds,
     groupBy,
     groups,
+    milestones,
     nextPageResults,
     getIssueById,
     getStateById,

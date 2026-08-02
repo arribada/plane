@@ -9,7 +9,10 @@ import { useState } from "react";
 import { observer } from "mobx-react";
 import type { IBaseLayoutsBaseItem, IBlockUpdateData } from "@plane/types";
 import { Loader, Row } from "@plane/ui";
+import { useParams } from "next/navigation";
 import { cn } from "@plane/utils";
+import { MilestoneToggle } from "@/plane-web/components/gantt-chart/milestone-toggle";
+import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import RenderIfVisible from "@/components/core/render-if-visible-HOC";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { GanttDnDHOC } from "@/components/gantt-chart/sidebar/gantt-dnd-HOC";
@@ -44,6 +47,8 @@ export const BaseGanttSidebar = observer(function BaseGanttSidebar<T extends IBa
   } = props;
 
   const { getBlockById, updateActiveBlockId, isBlockActive, getNumberOfDaysFromPosition } = useTimeLineChartStore();
+  const { workspaceSlug, projectId } = useParams();
+  const milestones = useProjectMilestones(workspaceSlug?.toString(), projectId?.toString());
 
   const [intersectionElement, setIntersectionElement] = useState<HTMLDivElement | null>(null);
 
@@ -135,6 +140,17 @@ export const BaseGanttSidebar = observer(function BaseGanttSidebar<T extends IBa
                                   {duration} day{duration > 1 ? "s" : ""}
                                 </span>
                               </div>
+                            )}
+                            {/* Marking up a plan is one pass down the list, so the
+                                control belongs on the row rather than behind a
+                                detail panel four clicks away. */}
+                            {workspaceSlug && projectId && (
+                              <MilestoneToggle
+                                workspaceSlug={workspaceSlug.toString()}
+                                projectId={projectId.toString()}
+                                issueId={blockId}
+                                current={milestones[blockId]?.kind ?? null}
+                              />
                             )}
                           </div>
                         </Row>

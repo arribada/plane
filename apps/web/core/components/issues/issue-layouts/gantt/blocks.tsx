@@ -27,6 +27,7 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // local imports
+import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
 import { useProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { ganttBarColor, ganttDisplay } from "@/plane-web/store/gantt-display";
@@ -65,7 +66,11 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   // user-selected "colour by" (state keeps the default); overrides just the fill.
   const colorOverride = ganttBarColor(ganttDisplay.colorBy, issueDetails, (id) => getLabelById(id)?.color);
   const fill = colorOverride || stateDetails?.color || "#3b82f6";
-  const look = barLook(issueDetails, fill, stateDetails?.group);
+  // undefined when this project has no marks at all, which is what makes barLook
+  // fall back to the same-day guess rather than declaring nothing a milestone.
+  const milestones = useProjectMilestones(workspaceSlug?.toString(), issueDetails?.project_id ?? undefined);
+  const marked = Object.keys(milestones).length > 0 ? !!milestones[issueId] : undefined;
+  const look = barLook(issueDetails, fill, stateDetails?.group, undefined, marked);
   // Inside the bar, not in the overlay. The overlay sits at zIndex 4 and the bars
   // above it: the fill was only ever visible through the 50% veil that used to
   // cover every bar, and removing that veil made it invisible outright.

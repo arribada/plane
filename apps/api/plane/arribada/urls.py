@@ -45,6 +45,7 @@ from .views import (
     ProjectFolderDetailEndpoint,
     ProjectFoldersEndpoint,
     ProjectProgressEndpoint,
+    IssueArtifactsEndpoint,
     ProjectAiDraftItemEndpoint,
     ProjectMilestonesEndpoint,
     WorkspaceDeliverablesEndpoint,
@@ -78,6 +79,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/ai-draft-item/",
         ProjectAiDraftItemEndpoint.as_view(),
         name="arribada-project-ai-draft-item",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/artifacts/",
+        IssueArtifactsEndpoint.as_view(),
+        name="arribada-issue-artifacts",
     ),
     path(
         "workspaces/<str:slug>/deliverables/",

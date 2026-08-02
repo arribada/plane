@@ -294,6 +294,18 @@ class ProjectTeamMember(models.Model):
     # assumed five days for everyone, which is how a plan built around a
     # three-day-a-week engineer comes out nearly twice as fast as it runs.
     days_per_week = models.PositiveSmallIntegerField(default=5)
+    # Which country's public holidays this person does not work.
+    #
+    # A CACHE of the central profile, never the place a human edits it: every user
+    # has one profile shared by the wiki, Zulip, Plane and the dashboard, and that
+    # is where the country is set. It is copied here because the scheduler runs on
+    # every reflow and must not make a network call to know whether the 14th of
+    # July is a working day.
+    #
+    # Empty means the workspace default, GB. The 14th of July is not a British
+    # engineer's day off and Boxing Day is not a French one's, which is the whole
+    # reason this is per person rather than per workspace.
+    work_country = models.CharField(max_length=2, blank=True, default="")
 
     # Leave, as [{"start": "2027-02-01", "end": "2027-02-14"}, ...]. JSON rather
     # than a table because nothing queries it: the scheduler reads the whole roster
@@ -744,6 +756,63 @@ class IssueMilestone(models.Model):
         ordering = ("created_at",)
         verbose_name = "Issue milestone"
         verbose_name_plural = "Issue milestones"
+
+    def __str__(self):
+        return f"{self.issue_id} {self.kind}"
+
+
+class IssueArtifact(models.Model):
+    """Evidence for a work item: where the proof of it lives.
+
+    The only external links this fork had were on the PROJECT — a wiki doc, a
+    Drive folder, a chat channel, some repos. So "show me the test evidence for
+    deliverable 3.2" had no answer finer than "here is the project's entire Drive
+    folder", which is not an answer a reviewer accepts.
+
+    The wiki remains the system of record for the durable stuff — hardware
+    catalogue, unit serials, orders (see the Colanode traceability work). These
+    rows are POINTERS, never a second copy: the boundary is written into
+    ARRIBADA.md so it does not survive only as folklore. What lands here is the
+    link from a task to the artefact that proves it: a test report, a BOM, a board
+    revision, a build.
+
+    `kind` is a closed set because it drives an icon and, more importantly, tells
+    a reader whether they are about to open a wiki page or a repository — three
+    destinations with three different access stories.
+    """
+
+    WIKI = "wiki"
+    DRIVE = "drive"
+    GITHUB = "github"
+    OTHER = "other"
+    KIND_CHOICES = [
+        (WIKI, "Wiki"),
+        (DRIVE, "Google Drive"),
+        (GITHUB, "GitHub"),
+        (OTHER, "Other link"),
+    ]
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.ForeignKey(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_artifacts"
+    )
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=OTHER)
+    url = models.URLField(max_length=2000)
+    # What to call it when the URL itself is unreadable, which a Drive link always
+    # is. Empty falls back to the host.
+    label = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_issue_artifact"
+        ordering = ("created_at",)
+        verbose_name = "Issue artifact"
+        verbose_name_plural = "Issue artifacts"
 
     def __str__(self):
         return f"{self.issue_id} {self.kind}"

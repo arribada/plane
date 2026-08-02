@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
+import { IssueEvidenceLinks } from "@/plane-web/components/issues/evidence-links";
 // plane imports
 import type { EditorRefApi } from "@plane/editor";
 import type { TNameDescriptionLoader } from "@plane/types";
@@ -156,6 +157,16 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
           workspaceSlug={workspaceSlug}
         />
 
+        {/* Where the proof of this work item lives. Pointers to the wiki, Drive or
+            GitHub — never a copy: the wiki stays the system of record and two
+            places holding the same fact is the drift a review catches. */}
+        <IssueEvidenceLinks
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          disabled={isArchived || !isEditable}
+        />
+
         <div className="flex items-center justify-between gap-2">
           {currentUser && (
             <IssueReaction
@@ -177,10 +188,10 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
                 isRestoreDisabled: !isEditable || isArchived,
               }}
               fetchHandlers={{
-                listDescriptionVersions: (issueId) =>
-                  workItemVersionService.listDescriptionVersions(workspaceSlug, projectId, issueId),
-                retrieveDescriptionVersion: (issueId, versionId) =>
-                  workItemVersionService.retrieveDescriptionVersion(workspaceSlug, projectId, issueId, versionId),
+                listDescriptionVersions: (id) =>
+                  workItemVersionService.listDescriptionVersions(workspaceSlug, projectId, id),
+                retrieveDescriptionVersion: (id, versionId) =>
+                  workItemVersionService.retrieveDescriptionVersion(workspaceSlug, projectId, id, versionId),
               }}
               handleRestore={(descriptionHTML) => editorRef.current?.setEditorValue(descriptionHTML, true)}
               projectId={projectId}

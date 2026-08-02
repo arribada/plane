@@ -69,6 +69,61 @@ export class ArribadaService extends APIService {
 
   // All planning relations (finish_before/start_before/blocked_by) of a project's
   // issues, in one call — so the gantt can draw dependency arrows without N fetches.
+  /** Where the proof of one work item lives. Pointers, never copies. */
+  async getIssueArtifacts(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string
+  ): Promise<
+    {
+      id: string;
+      kind: "wiki" | "drive" | "github" | "other";
+      url: string;
+      label: string;
+      created_by_name: string | null;
+    }[]
+  > {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/artifacts/`)
+      .then((r) => r?.data?.artifacts ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** The server guesses the kind from the host and refuses anything not http(s). */
+  async addIssueArtifact(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    url: string,
+    label: string
+  ): Promise<{
+    id: string;
+    kind: "wiki" | "drive" | "github" | "other";
+    url: string;
+    label: string;
+    created_by_name: string | null;
+  }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/artifacts/`, {
+      url,
+      label,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async removeIssueArtifact(workspaceSlug: string, projectId: string, issueId: string, id: string): Promise<unknown> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/artifacts/`, {
+      id,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Propose a work item's fields from its title. Writes nothing. */
   async aiDraftWorkItem(
     workspaceSlug: string,

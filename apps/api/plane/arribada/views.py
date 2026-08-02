@@ -25,10 +25,12 @@ from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
 
+from .holidays import COUNTRIES, DEFAULT_COUNTRY, holidays_for
 from .models import (
     PROJECT_ROLES,
     canonical_role,
     IssueBaseline,
+    IssueArtifact,
     IssueMilestone,
     IssueRole,
     ProjectFolder,
@@ -554,6 +556,101 @@ class ProjectRelationsEndpoint(BaseAPIView):
             deleted_at__isnull=True,
         ).values("issue_id", "related_issue_id", "relation_type")
         return Response(list(edges), status=status.HTTP_200_OK)
+
+
+class IssueArtifactsEndpoint(BaseAPIView):
+    """Where the evidence for one work item lives.
+
+    Pointers, never copies. The wiki stays the system of record for the durable
+    material — hardware catalogue, unit serials, orders — and these rows say which
+    page, file or repository proves THIS task. Two systems of record for the same
+    devices is exactly the drift a review catches.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = IssueArtifact.objects.filter(issue_id=issue_id, issue__project_id=project_id).select_related(
+            "created_by"
+        )
+        return Response(
+            {
+                "artifacts": [
+                    {
+                        "id": str(r.id),
+                        "kind": r.kind,
+                        "url": r.url,
+                        "label": r.label,
+                        "created_by_name": (
+                            r.created_by.display_name or r.created_by.email if r.created_by else None
+                        ),
+                        "created_at": r.created_at.isoformat(),
+                    }
+                    for r in rows
+                ]
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        url = str(request.data.get("url") or "").strip()
+        # Rejected rather than stored and rendered as a dead link: a link nobody can
+        # follow is worse than no link, because it looks like the evidence exists.
+        if not url.startswith(("http://", "https://")):
+            return Response({"error": "That needs to be a http(s) link"}, status=status.HTTP_400_BAD_REQUEST)
+
+        kind = str(request.data.get("kind") or "").strip().lower()
+        valid = {choice for choice, _ in IssueArtifact.KIND_CHOICES}
+        if kind not in valid:
+            # Guessed from the host rather than refused: the person pasting a Drive
+            # URL knows what it is, and making them say so twice is friction for
+            # nothing.
+            lowered = url.lower()
+            if "github.com" in lowered:
+                kind = IssueArtifact.GITHUB
+            elif "drive.google" in lowered or "docs.google" in lowered:
+                kind = IssueArtifact.DRIVE
+            elif "docs.arribada.org" in lowered:
+                kind = IssueArtifact.WIKI
+            else:
+                kind = IssueArtifact.OTHER
+
+        row = IssueArtifact.objects.create(
+            issue_id=issue_id,
+            kind=kind,
+            url=url[:2000],
+            label=str(request.data.get("label") or "")[:255],
+            created_by=request.user,
+        )
+        return Response(
+            {
+                "id": str(row.id),
+                "kind": row.kind,
+                "url": row.url,
+                "label": row.label,
+                "created_by_name": request.user.display_name or request.user.email,
+                "created_at": row.created_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        deleted, _ = IssueArtifact.objects.filter(
+            id=request.data.get("id"), issue_id=issue_id, issue__project_id=project_id
+        ).delete()
+        if not deleted:
+            return Response({"error": "Link not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"deleted": True}, status=status.HTTP_200_OK)
 
 
 class WorkspaceDeliverablesEndpoint(BaseAPIView):
@@ -3847,12 +3944,29 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
 # ---------------------------------------------------------------------------
 
 
-def _holidays_for(slug):
-    """Dates nobody in this workspace works. Read once per plan, not per task."""
-    return {
+def _holidays_for(slug, country=None, start=None, end=None):
+    """Dates this person does not work. Read once per plan, not per task.
+
+    Two sources, deliberately kept apart:
+
+    * WorkspaceNonWorkingDay — the organisation's own closures, entered by hand.
+      Those are decisions rather than law, they differ from one year to the next,
+      and they apply to everybody.
+    * the statutory holidays of the person's country, computed. The 14th of July
+      is not a British engineer's day off and Boxing Day is not a French one's,
+      so a single workspace calendar is wrong for a team that spans both.
+
+    `country` empty or unknown falls back to GB, the workspace default. A range is
+    needed to compute the statutory half; without one only the hand-entered days
+    come back, which is exactly what this function returned before.
+    """
+    days = {
         row.date
         for row in WorkspaceNonWorkingDay.objects.filter(workspace__slug=slug).only("date")
     }
+    if start and end:
+        days |= set(holidays_for(country or DEFAULT_COUNTRY, start, end))
+    return days
 
 
 def _rate_map(slug):
@@ -3920,8 +4034,24 @@ class WorkspaceCalendarEndpoint(BaseAPIView):
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         rows = WorkspaceNonWorkingDay.objects.filter(workspace__slug=slug)
+        # The statutory holidays alongside the hand-entered closures, so a chart can
+        # draw both. Two years forward and one back covers every timeline anyone
+        # scrolls to; computing more would be arithmetic nobody reads.
+        #
+        # `country` lets a caller ask for the other one — the two genuinely differ,
+        # which is why this is a parameter rather than a workspace-wide answer.
+        today = timezone.now().date()
+        wanted = (request.query_params.get("country") or DEFAULT_COUNTRY).upper()
+        statutory = holidays_for(wanted, today.replace(year=today.year - 1), today.replace(year=today.year + 2))
         return Response(
-            {"days": [{"id": str(r.id), "date": r.date.isoformat(), "name": r.name} for r in rows]},
+            {
+                "days": [{"id": str(r.id), "date": r.date.isoformat(), "name": r.name} for r in rows],
+                "country": wanted,
+                "countries": COUNTRIES,
+                "statutory": [
+                    {"date": day.isoformat(), "name": name} for day, name in sorted(statutory.items())
+                ],
+            },
             status=status.HTTP_200_OK,
         )
 

@@ -4139,6 +4139,14 @@ class ProjectBudgetEndpoint(BaseAPIView):
         return Response(
             {
                 "display": display,
+                # The project's own span, so a spend curve can run to the target
+                # rather than stopping at the last receipt — the gap between those
+                # two is most of the reading. Falls back to the schedule's dates,
+                # which is where this fork records a project's plan.
+                "span": {
+                    "start_date": schedule_row.start_date.isoformat() if schedule_row and schedule_row.start_date else None,
+                    "target_date": schedule_row.target_date.isoformat() if schedule_row and schedule_row.target_date else None,
+                },
                 "allocation": {
                     "amount": allocated,
                     "currency": allocation_currency,

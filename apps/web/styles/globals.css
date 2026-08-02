@@ -198,3 +198,88 @@
     0 0 4px --alpha(var(--background-color-accent-primary) / 40%) !important;
   will-change: transform, opacity;
 }
+
+/* ---------------------------------------------------------------------------
+   Printing a project overview.
+
+   There was no @media print anywhere in the repo, so Ctrl-P produced the app
+   chrome plus whatever slice of a scrollable pane happened to be in the
+   viewport. The Overview already renders five of the six things a funder report
+   needs — title and dates, the counts, the progress sections, the budget and the
+   latest status narrative — and none of it could leave the browser except by
+   somebody reading figures off a screen and retyping them.
+
+   The visibility trick rather than display:none on the chrome: it works whatever
+   the app nests the page inside, and the app's shell changes far more often than
+   this file does.
+   --------------------------------------------------------------------------- */
+@media print {
+  @page {
+    /* Portrait: the overview is a single max-w-4xl column, so landscape would
+       waste half the sheet. */
+    size: A4 portrait;
+    margin: 14mm;
+  }
+
+  /* A report printed from the dark theme comes out as white text on paper, or as
+     a solid black rectangle if the printer honours the background. Force light,
+     then ask the printer to keep the colours that carry meaning — the spend
+     curve and the state pills are not decoration. */
+  :root,
+  body {
+    color-scheme: light !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .print-root,
+  .print-root * {
+    visibility: visible;
+  }
+
+  .print-root {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-width: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Sections collapse by default and most days nobody is looking at money — but
+     a report with its budget folded away is not a report. */
+  .print-root .overview-section-body {
+    display: block !important;
+  }
+
+  /* Anything that only exists to be clicked. It cannot be used on paper and it
+     costs the space the figures need. */
+  .print-root button,
+  .print-root [role="button"],
+  .print-root input,
+  .print-root select,
+  .print-root textarea,
+  .print-root .print-hide {
+    display: none !important;
+  }
+
+  /* A block split across a page break is the one thing that makes a printout
+     look like an accident. */
+  .print-root section,
+  .print-root .recharts-wrapper,
+  .print-root [class*="rounded-lg"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Scrollable panes print as their visible slice unless told otherwise. */
+  .print-root [class*="overflow-"] {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+}

@@ -41,7 +41,9 @@ export const OverviewSection = observer(function OverviewSection({ title, badge,
           <span className="rounded-full bg-layer-2 px-2 py-0.5 text-11 text-secondary">{badge}</span>
         )}
       </button>
-      <div className={cn("border-t border-subtle", { hidden: !open })}>{children}</div>
+      {/* print:overview-body is the hook the print stylesheet uses to open every
+          section: a report with its budget collapsed is not a report. */}
+      <div className={cn("overview-section-body border-t border-subtle", { hidden: !open })}>{children}</div>
     </div>
   );
 });

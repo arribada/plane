@@ -55,11 +55,14 @@ export const NavbarControls = observer(function NavbarControls(props: NavbarCont
       const viewsAcceptable: string[] = [];
       let currentBoard: TIssueLayout | null = null;
 
+      // Only the two this app can actually draw. SITES_ISSUE_LAYOUTS holds list and
+      // kanban, and apps/space has exactly those two layout directories — so a
+      // board published with view_props.gantt used to put a Gantt button in the
+      // toolbar of the one surface Arribada can show a funder without an account,
+      // and clicking it landed on a blank pane. Offering a view that does not
+      // exist is worse on that page than anywhere else in the product.
       if (view_props?.list) viewsAcceptable.push("list");
       if (view_props?.kanban) viewsAcceptable.push("kanban");
-      if (view_props?.calendar) viewsAcceptable.push("calendar");
-      if (view_props?.gantt) viewsAcceptable.push("gantt");
-      if (view_props?.spreadsheet) viewsAcceptable.push("spreadsheet");
 
       if (board) {
         if (viewsAcceptable.includes(board.toString())) currentBoard = board.toString() as TIssueLayout;
@@ -74,7 +77,10 @@ export const NavbarControls = observer(function NavbarControls(props: NavbarCont
         if (activeLayout === undefined || activeLayout !== currentBoard) {
           const { query, queryParam } = queryParamGenerator({ board: currentBoard, peekId, priority, state, labels });
           const params: any = {
-            display_filters: { layout: (query?.board as string[])[0] },
+            // The `?.` was false comfort: an absent `query` makes this undefined and
+            // the index throws on the next character. currentBoard is what the board
+            // was derived from a few lines up, so it is the honest fallback.
+            display_filters: { layout: (query?.board as string[] | undefined)?.[0] ?? currentBoard },
             filters: {
               priority: query?.priority ?? undefined,
               state: query?.state ?? undefined,

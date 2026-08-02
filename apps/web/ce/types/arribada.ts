@@ -470,6 +470,8 @@ export type TBudgetDisplay = {
 export type TProjectBudget = {
   /** Approximate, single-currency view. The blocks below are the record. */
   display: TBudgetDisplay;
+  /** The project's planned span, for anything drawn against time. */
+  span: { start_date: string | null; target_date: string | null };
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {
     amount: number | null;

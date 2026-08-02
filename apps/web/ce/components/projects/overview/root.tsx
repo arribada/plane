@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { Eraser, Loader2, Settings2, Sparkles, Wand2 } from "lucide-react";
+import { Eraser, Loader2, Settings2, Sparkles, Wand2, Printer } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -143,7 +143,22 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   const sprintCount = data.cycles.length + data.modules.length;
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-6 md:px-6">
+    <div className="print-root mx-auto flex max-w-4xl flex-col gap-3 px-4 py-6 md:px-6">
+      {/* The one control the print stylesheet keeps out of the printout itself.
+          Ctrl-P works just as well; this exists because nobody discovers that a
+          page prints properly unless something says so. */}
+      <div className="print-hide flex justify-end">
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
+          title="Print this overview, or save it as a PDF — every section is expanded on paper"
+        >
+          <Printer className="size-3" />
+          Print / PDF
+        </button>
+      </div>
+
       <OverviewSummary overview={data} saving={savingSchedule} onScheduleChange={handleScheduleChange} />
 
       {/* The same panel the Pages view shows — one row per link, each editable in

@@ -33,6 +33,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn, renderFormattedDate } from "@plane/utils";
 import { downloadText } from "@/plane-web/components/gantt-chart/export";
 import { buildBudgetCsv } from "./budget-export";
+import { SpendCurve } from "./spend-curve";
 import { useProject } from "@/hooks/store/use-project";
 import { useUserPermissions } from "@/hooks/store/user";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -86,6 +87,12 @@ const EMPTY_DRAFT = {
   quantity: "1",
   currency: "EUR",
   planned: true,
+  // Stored, serialised and typed since the feature shipped, and read or written
+  // by nothing. They are the audit trail: a grant review asks who wanted this,
+  // from whom, why, and by when.
+  supplier: "",
+  needed_by: "",
+  justification: "",
 };
 
 export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
@@ -314,6 +321,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         amount,
         quantity: Number(draft.quantity) || 1,
         currency: draft.currency.trim().toUpperCase() || "EUR",
+        supplier: draft.supplier.trim(),
+        needed_by: draft.needed_by || null,
+        justification: draft.justification.trim(),
       });
       setDraft(EMPTY_DRAFT);
       setAsking(false);
@@ -376,6 +386,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong";
   // Only what still needs an answer: decided requests live on as expense lines.
   const pending = requests.filter((r) => r.status === "pending");
+  // Everything already answered. Filtering to "pending" made a rejected request
+  // vanish from the entire product the moment it was rejected, and an approved
+  // one become an anonymous expense line — so "why did we not buy the boards"
+  // and "who signed off on this" had no answer anywhere.
+  const decided = requests.filter((r) => r.status !== "pending");
   const alloc = budget?.allocation;
   // The same figures read in one currency. `converted` is false when everything
   // was already in it, in which case these ARE the recorded numbers and nothing
@@ -580,6 +595,23 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         )}
       </div>
 
+      {/* Money against time, above the two halves.
+          A percentage has no time in it: 60% spent is healthy at month 8 of 12
+          and a crisis at month 3, and everything below renders those identically. */}
+      {expenses.length > 0 && (
+        <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
+          <p className="mb-1 text-11 font-medium tracking-wide text-tertiary uppercase">Spend over time</p>
+          <SpendCurve
+            expenses={expenses}
+            startDate={budget?.span?.start_date ?? null}
+            targetDate={budget?.span?.target_date ?? null}
+            allocation={alloc?.amount ?? null}
+            currency={alloc?.currency ?? "EUR"}
+            money={money}
+          />
+        </div>
+      )}
+
       {/* The two halves, side by side and clearly separate. */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
@@ -757,6 +789,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 {r.requested_by_name && (
                   <span className="flex-shrink-0 text-11 text-tertiary">by {r.requested_by_name}</span>
                 )}
+                {r.supplier && <span className="flex-shrink-0 text-11 text-tertiary">{r.supplier}</span>}
+                {r.needed_by && (
+                  <span className="flex-shrink-0 text-11 text-tertiary">needed {renderFormattedDate(r.needed_by)}</span>
+                )}
+                {r.justification && <span className="w-full text-11 text-tertiary italic">{r.justification}</span>}
                 {/* gap-2 and a taller hit box below: this is the money screen, "can I
                     buy the 10 Linkit boards" is literally the form's placeholder, and
                     it is a decision people make away from a desk. Approve was a 20px
@@ -806,6 +843,70 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             Expenses {expenses.length > 0 && <span className="text-tertiary">({expenses.length})</span>}
           </span>
           <div className="flex-grow" />
+          {/* What was already answered. A rejected request used to disappear from the
+          product the second it was rejected, and an approved one became an
+          anonymous expense line — so a grant audit asking who wanted a part, from
+          whom, why, and who signed it off had nowhere to look. */}
+          {decided.length > 0 && (
+            <details className="rounded-lg border border-subtle bg-layer-2 p-2.5">
+              <summary className="cursor-pointer text-12 font-medium text-secondary">
+                {decided.length} decided purchase request{decided.length === 1 ? "" : "s"}
+              </summary>
+              <ul className="mt-1.5 flex flex-col gap-1.5">
+                {decided.map((r) => (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-subtle pt-1.5"
+                  >
+                    <span
+                      className={cn(
+                        "flex-shrink-0 rounded px-1.5 py-0.5 text-10 font-medium",
+                        r.status === "approved"
+                          ? "bg-success-subtle text-success-primary"
+                          : "bg-danger-subtle text-danger-primary"
+                      )}
+                    >
+                      {r.status === "approved" ? "Approved" : "Rejected"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-13 text-primary">{r.label}</span>
+                    <span className="flex-shrink-0 text-13 text-secondary tabular-nums">
+                      {money(r.total, r.currency)}
+                    </span>
+                    <span className="w-full text-11 text-tertiary">
+                      {r.requested_by_name && `Asked by ${r.requested_by_name}`}
+                      {r.supplier && ` · ${r.supplier}`}
+                      {r.decided_by_name &&
+                        ` · ${r.status === "approved" ? "approved" : "rejected"} by ${r.decided_by_name}`}
+                      {r.decided_at && ` on ${renderFormattedDate(r.decided_at)}`}
+                    </span>
+                    {(r.justification || r.decision_note) && (
+                      <span className="w-full text-11 text-tertiary italic">
+                        {r.justification}
+                        {r.justification && r.decision_note && " — "}
+                        {r.decision_note}
+                      </span>
+                    )}
+                    {canApprove && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (
+                            !window.confirm(`Remove the record of "${r.label}"? The audit trail for it goes with it.`)
+                          )
+                            return;
+                          void withdraw(r.id);
+                        }}
+                        className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           {canRequest && !asking && !adding && (
             <button
               type="button"
@@ -881,6 +982,33 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                   value={draft.quantity}
                   onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
                   className={cn(input, "w-16")}
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Supplier</span>
+                <input
+                  value={draft.supplier}
+                  onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
+                  placeholder="JLCPCB"
+                  className={cn(input, "w-36")}
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Needed by</span>
+                <input
+                  type="date"
+                  value={draft.needed_by}
+                  onChange={(e) => setDraft({ ...draft, needed_by: e.target.value })}
+                  className={cn(input, "w-36")}
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-10 text-tertiary uppercase">Why</span>
+                <input
+                  value={draft.justification}
+                  onChange={(e) => setDraft({ ...draft, justification: e.target.value })}
+                  placeholder="Replaces the boards lost in the Príncipe deployment"
+                  className={cn(input, "w-72")}
                 />
               </label>
               <button

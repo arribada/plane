@@ -69,6 +69,48 @@ export class ArribadaService extends APIService {
 
   // All planning relations (finish_before/start_before/blocked_by) of a project's
   // issues, in one call — so the gantt can draw dependency arrows without N fetches.
+  /** Every marked deliverable across the workspace, soonest first (Home widget). */
+  async getWorkspaceDeliverables(workspaceSlug: string): Promise<
+    {
+      issue_id: string;
+      kind: string;
+      label: string;
+      target_date: string | null;
+      done: boolean;
+      project_id: string;
+      project_name: string;
+      project_identifier: string;
+    }[]
+  > {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/deliverables/`)
+      .then((r) => r?.data?.deliverables ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Purchase requests waiting on THIS user's decision, across every project. */
+  async getMyApprovals(workspaceSlug: string): Promise<
+    {
+      id: string;
+      label: string;
+      total: number;
+      currency: string;
+      supplier: string;
+      requested_by_name: string | null;
+      needed_by: string | null;
+      created_at: string;
+      project_id: string;
+      project_name: string;
+    }[]
+  > {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-approvals/`)
+      .then((r) => r?.data?.requests ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Which of a project's work items are deliverables. Whole project in one call. */
   async getProjectMilestones(
     workspaceSlug: string,

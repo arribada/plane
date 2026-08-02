@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Max, Min, Q, Sum
+from django.db.models import Count, F, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -554,6 +554,99 @@ class ProjectRelationsEndpoint(BaseAPIView):
             deleted_at__isnull=True,
         ).values("issue_id", "related_issue_id", "relation_type")
         return Response(list(edges), status=status.HTTP_200_OK)
+
+
+class WorkspaceDeliverablesEndpoint(BaseAPIView):
+    """Every marked deliverable across the workspace, soonest first.
+
+    The Home widget's source. Per-project would be twenty-four requests to answer
+    "what is due next", which is the one question the widget exists for.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        visible = _visible_projects(request, slug)
+        rows = (
+            IssueMilestone.objects.filter(issue__project__in=visible)
+            .values(
+                "issue_id",
+                "kind",
+                "label",
+                "issue__name",
+                "issue__target_date",
+                "issue__state__group",
+                "issue__project_id",
+                "issue__project__name",
+                "issue__project__identifier",
+            )
+            # Undated deliverables sort last rather than being dropped: an undated
+            # deliverable is a real thing to chase, and hiding it is how it stays
+            # undated.
+            .order_by(F("issue__target_date").asc(nulls_last=True))[:40]
+        )
+        return Response(
+            {
+                "deliverables": [
+                    {
+                        "issue_id": str(r["issue_id"]),
+                        "kind": r["kind"],
+                        "label": r["label"] or r["issue__name"],
+                        "target_date": r["issue__target_date"].isoformat() if r["issue__target_date"] else None,
+                        "done": r["issue__state__group"] == "completed",
+                        "project_id": str(r["issue__project_id"]),
+                        "project_name": r["issue__project__name"],
+                        "project_identifier": r["issue__project__identifier"],
+                    }
+                    for r in rows
+                ]
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class WorkspaceMyApprovalsEndpoint(BaseAPIView):
+    """Purchase requests waiting on THIS user's decision, across every project.
+
+    Today somebody has to open each project in turn to discover they are blocking
+    a colleague. The lead test is the same one the project endpoint uses, asked
+    once per project rather than reimplemented.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        visible = _visible_projects(request, slug)
+        pending = (
+            ProcurementRequest.objects.filter(project__in=visible, status=ProcurementRequest.PENDING)
+            .select_related("requested_by", "project")
+            .order_by("created_at")
+        )
+        mine = []
+        # Cached per project: a lead of one project usually has several requests on
+        # it, and the roster lookup is the expensive half.
+        lead_of = {}
+        for row in pending:
+            key = str(row.project_id)
+            if key not in lead_of:
+                lead_of[key] = _is_project_lead(request.user, row.project_id)
+            if not lead_of[key]:
+                continue
+            mine.append(
+                {
+                    "id": str(row.id),
+                    "label": row.label,
+                    "total": float(row.total),
+                    "currency": row.currency,
+                    "supplier": row.supplier,
+                    "requested_by_name": (
+                        row.requested_by.display_name or row.requested_by.email if row.requested_by else None
+                    ),
+                    "needed_by": row.needed_by.isoformat() if row.needed_by else None,
+                    "created_at": row.created_at.isoformat(),
+                    "project_id": key,
+                    "project_name": row.project.name,
+                }
+            )
+        return Response({"requests": mine}, status=status.HTTP_200_OK)
 
 
 class ProjectMilestonesEndpoint(BaseAPIView):

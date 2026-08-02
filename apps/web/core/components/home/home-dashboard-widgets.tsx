@@ -21,6 +21,12 @@ import { useProject } from "@/hooks/store/use-project";
 // plane web components
 import { HomePageHeader } from "@/plane-web/components/home/header";
 import { MyTasksWidget } from "@/plane-web/components/home/my-tasks-widget";
+import {
+  ConflictsWidget,
+  DeliverablesWidget,
+  DriftWidget,
+  MyApprovalsWidget,
+} from "@/plane-web/components/home/arribada-widgets";
 // local imports
 import { StickiesWidget } from "../stickies/widget";
 import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widgets";
@@ -58,6 +64,28 @@ export const HOME_WIDGETS_LIST: {
     component: null,
     fullWidth: false,
     title: "home.quick_tutorial.title",
+  },
+  // Arribada's own. Each shows something the product already computes and shows
+  // nowhere anybody walks past, and each is off until somebody switches it on.
+  arribada_deliverables: {
+    component: DeliverablesWidget,
+    fullWidth: false,
+    title: "Upcoming deliverables",
+  },
+  arribada_conflicts: {
+    component: ConflictsWidget,
+    fullWidth: false,
+    title: "Double-booked",
+  },
+  arribada_approvals: {
+    component: MyApprovalsWidget,
+    fullWidth: false,
+    title: "Waiting on you",
+  },
+  arribada_drift: {
+    component: DriftWidget,
+    fullWidth: false,
+    title: "Drifting past the plan",
   },
 };
 

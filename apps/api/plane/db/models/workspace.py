@@ -380,6 +380,12 @@ class WorkspaceHomePreference(BaseModel):
         MY_STICKIES = "my_stickies", "My Stickies"
         NEW_AT_PLANE = "new_at_plane", "New at Plane"
         QUICK_TUTORIAL = "quick_tutorial", "Quick Tutorial"
+        # Arribada's own. `key` is a free CharField and this enum is only used to
+        # seed a user's preference rows, so adding to it needs no migration.
+        DELIVERABLES = "arribada_deliverables", "Upcoming deliverables"
+        WORKLOAD_CONFLICTS = "arribada_conflicts", "Workload conflicts"
+        MY_APPROVALS = "arribada_approvals", "Purchases awaiting me"
+        DRIFTING_PROJECTS = "arribada_drift", "Projects drifting"
 
     workspace = models.ForeignKey(
         "db.Workspace",

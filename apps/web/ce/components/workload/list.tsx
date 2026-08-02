@@ -23,6 +23,12 @@ type Row = {
   overdue: number;
   due_week: number;
   points: number;
+  /** Committed days over available days in the next 8 weeks. Absent when this
+   *  person has no dated work at all — a percentage of nothing is not zero, and
+   *  drawing it as an empty bar would read as spare capacity. */
+  committed_days?: number;
+  available_days?: number;
+  committed_percent?: number | null;
 };
 
 export const WorkloadList = observer(function WorkloadList() {
@@ -87,11 +93,47 @@ export const WorkloadList = observer(function WorkloadList() {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-13 font-medium text-primary">{r.name}</span>
                   <span className="flex-shrink-0 text-11 text-placeholder">{r.assigned} active</span>
+                  {/* The reading, in words. A bar with no number is a shape. */}
+                  {r.committed_percent != null && (
+                    <span
+                      className={cn(
+                        "flex-shrink-0 text-11 tabular-nums",
+                        r.committed_percent > 100 ? "font-medium text-danger-primary" : "text-secondary"
+                      )}
+                      title={`${r.committed_days} committed days against ${r.available_days} available over the next 8 weeks`}
+                    >
+                      {r.committed_percent}% committed
+                    </span>
+                  )}
                 </div>
+                {/* Against 100% of what this person actually has, not against
+                    whoever holds the most items. The old bar was a RANK: the
+                    busiest person was always exactly full whether they held three
+                    items or thirty, and if everyone held one, everyone rendered
+                    full. It could not say "over capacity" because it had no
+                    denominator.
+
+                    Falls back to the rank only for somebody with no dated work at
+                    all — there is no capacity reading to give, and an empty bar
+                    would read as spare time. */}
                 <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-layer-2">
                   <div
-                    className={cn("h-full rounded-full", r.overdue > 0 ? "bg-danger-primary" : "bg-accent-primary")}
-                    style={{ width: `${(r.assigned / maxAssigned) * 100}%` }}
+                    className={cn(
+                      "h-full rounded-full",
+                      r.committed_percent != null && r.committed_percent > 100
+                        ? "bg-danger-primary"
+                        : r.overdue > 0
+                          ? "bg-warning-primary"
+                          : "bg-accent-primary"
+                    )}
+                    style={{
+                      width:
+                        r.committed_percent != null
+                          ? // Capped at 100 so the bar stays inside its track; the
+                            // number beside it is what says 130%.
+                            `${Math.min(100, r.committed_percent)}%`
+                          : `${(r.assigned / maxAssigned) * 100}%`,
+                    }}
                   />
                 </div>
               </div>

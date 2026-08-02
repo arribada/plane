@@ -894,3 +894,49 @@ class BaselineEntry(models.Model):
 
     def __str__(self):
         return f"{self.baseline_id} {self.issue_id}"
+
+
+class IssueAllocation(models.Model):
+    """How much of one person's time one work item takes.
+
+    The workload bar was `assigned / maxAssigned` — a rank, not a capacity. The
+    busiest person was always exactly 100% whether they held three items or
+    thirty, and if everybody held one item everybody rendered full. It could not
+    express over-allocation because it had no denominator.
+
+    A denominator needs a numerator that means something, and "a three-week task"
+    is not fifteen person-days. So the share is recorded: "Mathieu is 50% on this,
+    Ruby 20%". Per ASSIGNEE rather than per item, because two people on one item
+    routinely give it different shares — a single per-item number is wrong the
+    moment the item is shared.
+
+    A missing row means 100%: somebody who has not said is assumed to be on it
+    fully, which over-states load rather than under-stating it. A planner that
+    quietly reports spare capacity is the failure mode worth avoiding.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.ForeignKey(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_allocations"
+    )
+    assignee = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="+")
+    # 1-100. Above 100 would say somebody gives an item more time than they have,
+    # which is a statement about the plan rather than about the item.
+    percent = models.PositiveSmallIntegerField(default=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_issue_allocation"
+        verbose_name = "Issue allocation"
+        verbose_name_plural = "Issue allocations"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "assignee"], name="arribada_issue_allocation_unique_pair"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.issue_id} {self.assignee_id} {self.percent}%"

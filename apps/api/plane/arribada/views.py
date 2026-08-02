@@ -1510,6 +1510,149 @@ class UserTimelineEndpoint(BaseAPIView):
         )
 
 
+def _capacity_by_assignee(request, slug, visible, weeks=8):
+    """{user_id: {committed_days, available_days, committed_percent}} over a window.
+
+    The bar used to be `assigned / maxAssigned` — a rank dressed as a capacity.
+    The busiest person was always exactly 100% whether they held three items or
+    thirty, and it could not express over-allocation at all because it had no
+    denominator.
+
+    NUMERATOR: for each dated item, its working days inside the window, times the
+    person's recorded share of it. A missing share counts as 100% — somebody who
+    has not said is assumed to be on it fully, which over-states load rather than
+    under-stating it, and a planner that quietly reports spare capacity is the
+    failure worth avoiding.
+
+    DENOMINATOR: the working days that person actually has. `_merged_roster`
+    already merges days_per_week and leave across every project they are on, which
+    is the only honest answer for somebody split three ways; public holidays come
+    off it per their country.
+
+    Eight weeks: far enough to see a crunch forming, near enough that the dates
+    are real rather than aspirational.
+    """
+    from .models import IssueAllocation
+
+    today = timezone.now().date()
+    window_end = today + timedelta(weeks=weeks)
+
+    roster = _merged_roster(visible)
+
+    rows = list(
+        Issue.issue_objects.filter(
+            project__in=visible,
+            start_date__isnull=False,
+            target_date__isnull=False,
+            start_date__lte=window_end,
+            target_date__gte=today,
+        )
+        .exclude(state__group__in=["completed", "cancelled"])
+        .values("id", "start_date", "target_date")
+    )
+    by_issue = {str(r["id"]): r for r in rows}
+    if not by_issue:
+        return {}
+
+    assignees = IssueAssignee.objects.filter(
+        issue_id__in=list(by_issue), deleted_at__isnull=True
+    ).values_list("issue_id", "assignee_id")
+
+    shares = {
+        (str(a.issue_id), str(a.assignee_id)): a.percent
+        for a in IssueAllocation.objects.filter(issue_id__in=list(by_issue))
+    }
+
+    committed = {}
+    for issue_id, assignee_id in assignees:
+        row = by_issue.get(str(issue_id))
+        if not row:
+            continue
+        # Clipped to the window: an item running six months is not six months of
+        # this window's load.
+        start = max(row["start_date"], today)
+        end = min(row["target_date"], window_end)
+        if end < start:
+            continue
+        person = str(assignee_id)
+        country = (roster.get(person) or {}).get("work_country") or DEFAULT_COUNTRY
+        holidays = _holidays_for(slug, country, start, end)
+        days = _working_days_between(start, end, holidays)
+        share = shares.get((str(issue_id), person), 100) / 100.0
+        committed[person] = committed.get(person, 0.0) + days * share
+
+    out = {}
+    for person, days in committed.items():
+        info = roster.get(person) or {}
+        per_week = max(1, min(5, int(info.get("days_per_week") or 5)))
+        country = info.get("work_country") or DEFAULT_COUNTRY
+        holidays = _holidays_for(slug, country, today, window_end)
+        # Available = the working days in the window this person actually works,
+        # scaled by how many days a week they are here.
+        full = _working_days_between(today, window_end, holidays)
+        available = full * (per_week / 5.0)
+        out[person] = {
+            "committed_days": round(days, 1),
+            "available_days": round(available, 1),
+            "committed_percent": round(100 * days / available) if available else None,
+        }
+    return out
+
+
+class IssueAllocationEndpoint(BaseAPIView):
+    """How much of each assignee's time this work item takes.
+
+    A missing row means 100%. Recording a share is what turns the workload bar
+    from a rank into a capacity: "a three-week task" is not fifteen person-days,
+    and only the person doing it can say what fraction of them it is.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        from .models import IssueAllocation
+
+        rows = IssueAllocation.objects.filter(issue_id=issue_id).values("assignee_id", "percent")
+        return Response(
+            {"allocations": [{"assignee_id": str(r["assignee_id"]), "percent": r["percent"]} for r in rows]},
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+        from .models import IssueAllocation
+
+        assignee_id = request.data.get("assignee_id")
+        if not IssueAssignee.objects.filter(issue_id=issue_id, assignee_id=assignee_id).exists():
+            return Response(
+                {"error": "That person is not assigned to this work item"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            percent = int(request.data.get("percent"))
+        except (TypeError, ValueError):
+            return Response({"error": "percent must be a whole number"}, status=status.HTTP_400_BAD_REQUEST)
+        if not 1 <= percent <= 100:
+            # Above 100 would say somebody gives an item more time than they have,
+            # which is a statement about the plan rather than about the item — and
+            # the over-allocation it describes is what the workload bar is for.
+            return Response({"error": "percent must be between 1 and 100"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 100 is the default, so recording it is the same as saying nothing — and
+        # a table full of rows that mean "no opinion" is a table nobody trusts.
+        if percent == 100:
+            IssueAllocation.objects.filter(issue_id=issue_id, assignee_id=assignee_id).delete()
+        else:
+            IssueAllocation.objects.update_or_create(
+                issue_id=issue_id, assignee_id=assignee_id, defaults={"percent": percent}
+            )
+        return Response({"assignee_id": str(assignee_id), "percent": percent}, status=status.HTTP_200_OK)
+
+
 class WorkloadEndpoint(BaseAPIView):
     """Per-person load across the workspace: how much active work each member
     carries, what's overdue, and what's due this week. Data already exists
@@ -1518,7 +1661,9 @@ class WorkloadEndpoint(BaseAPIView):
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         # Scope to the caller's own projects so Secret-project load doesn't leak.
-        agg = _load_by_assignee(_visible_projects(request, slug))
+        visible = _visible_projects(request, slug)
+        agg = _load_by_assignee(visible)
+        capacity = _capacity_by_assignee(request, slug, visible)
         members = WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values_list(
             "member_id", flat=True
         )
@@ -1536,9 +1681,16 @@ class WorkloadEndpoint(BaseAPIView):
                     "overdue": a.get("overdue", 0),
                     "due_week": a.get("due_week", 0),
                     "points": a.get("points") or 0,
+                    # Committed days over available days, in the window below.
+                    # Absent when this person has no dated work at all — a
+                    # percentage of nothing is not zero, and rendering it as an
+                    # empty bar would read as spare capacity.
+                    **(capacity.get(str(uid)) or {}),
                 }
             )
-        payload.sort(key=lambda x: -x["assigned"])
+        # Over-committed first: the whole point of the view is to find them, and a
+        # rank sort buried anyone at 130% behind whoever simply holds more items.
+        payload.sort(key=lambda x: (-(x.get("committed_percent") or 0), -x["assigned"]))
         return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -4703,13 +4855,19 @@ class ProjectBudgetEndpoint(BaseAPIView):
         )
 
 
-def _working_days_between(start, end):
-    """Inclusive working days between two dates; 1 when they are the same day."""
+def _working_days_between(start, end, holidays=None):
+    """Inclusive working days between two dates; 1 when they are the same day.
+
+    `holidays` is optional and every existing caller omits it, so their answers do
+    not move. It exists for the capacity reading, where counting a bank holiday as
+    a working day would report spare time that does not exist.
+    """
     if not start or not end or end < start:
         return 1
+    skip = holidays or frozenset()
     day, count = start, 0
     while day <= end:
-        if day.weekday() < 5:
+        if day.weekday() < 5 and day not in skip:
             count += 1
         day += timedelta(days=1)
     return max(1, count)
@@ -5144,10 +5302,15 @@ def _merged_roster(projects):
     out = {}
     rows = ProjectTeamMember.objects.filter(
         project__in=projects, member_id__isnull=False
-    ).values("member_id", "days_per_week", "leave", "roles")
+    ).values("member_id", "days_per_week", "leave", "roles", "work_country")
     for row in rows:
         user_id = str(row["member_id"])
-        entry = out.setdefault(user_id, {"days_per_week": 5, "leave": [], "roles": []})
+        entry = out.setdefault(user_id, {"days_per_week": 5, "leave": [], "roles": [], "work_country": ""})
+        # First non-empty wins: it is one person's country, cached from one central
+        # profile, so the rows cannot honestly disagree — and if they do, refusing
+        # to choose would silently drop their holidays altogether.
+        if not entry["work_country"] and row.get("work_country"):
+            entry["work_country"] = row["work_country"]
         try:
             per_week = int(row["days_per_week"] or 5)
         except (TypeError, ValueError):

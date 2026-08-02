@@ -22,6 +22,7 @@ import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
 import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
 import { orderByDependency } from "@/plane-web/components/gantt-chart/dependency-order";
 import { GanttExportButton } from "@/plane-web/components/gantt-chart/export-button";
+import { BaselinePicker } from "@/plane-web/components/gantt-chart/baseline-picker";
 import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/violation-banner";
 import type { TExportEdge, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
@@ -386,6 +387,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
               <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
                 <GanttColorBy />
                 <GanttGroupBy />
+                <BaselinePicker />
                 <GanttExportButton collect={collectForExport} />
                 <GanttUndoButton onUndo={handleGanttUndo} />
               </div>

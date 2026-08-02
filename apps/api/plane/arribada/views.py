@@ -30,11 +30,13 @@ from .models import (
     PROJECT_ROLES,
     canonical_role,
     IssueBaseline,
+    BaselineEntry,
     IssueArtifact,
     IssueMilestone,
     IssueRole,
     ProjectFolder,
     ProjectFolderItem,
+    ProjectBaseline,
     ProjectSchedule,
     ProjectStatusUpdate,
     ProjectTeamMember,
@@ -863,40 +865,133 @@ class ProjectProgressEndpoint(BaseAPIView):
 
 
 class ProjectBaselineEndpoint(BaseAPIView):
-    """Capture (POST) or read (GET) the date baseline of a project's issues.
+    """A project's named plan snapshots, and the ghosts of whichever one is asked for.
 
-    POST freezes every issue's current start/target into IssueBaseline (upsert);
-    GET returns them so the gantt can draw ghost bars behind the live ones.
+    A baseline is the plan as it was when it was PROMISED. Several can coexist —
+    "PDR January 2026", "After amendment 2" — because a funder asking "what did
+    you commit to" needs to be shown WHICH plan. The old model kept one row per
+    work item and overwrote it, so that question had no answer.
+
+    GET returns the list of snapshots plus the entries of one of them: the
+    `baseline` query parameter, or the most recent. The entry shape is unchanged
+    from before so the chart's ghost bars keep drawing without a client change.
+
+    POST freezes the current dates as a NEW snapshot. It never overwrites: a plan
+    that changed after it was agreed is a new baseline, and seeing both is the
+    entire point.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        rows = IssueBaseline.objects.filter(
-            issue__project_id=project_id, issue__workspace__slug=slug
-        ).values("issue_id", "start_date", "target_date")
-        data = [
-            {"issue_id": str(r["issue_id"]), "start_date": r["start_date"], "target_date": r["target_date"]}
-            for r in rows
-        ]
-        return Response(data, status=status.HTTP_200_OK)
+
+        snapshots = list(
+            ProjectBaseline.objects.filter(project_id=project_id).select_related("captured_by")
+        )
+        wanted = request.query_params.get("baseline")
+        chosen = None
+        if wanted:
+            chosen = next((b for b in snapshots if str(b.id) == wanted), None)
+        # Newest by default: `ordering` on the model is -captured_at, so the first
+        # is the most recent.
+        if not chosen and snapshots:
+            chosen = snapshots[0]
+
+        entries = []
+        if chosen:
+            entries = [
+                {
+                    "issue_id": str(e.issue_id) if e.issue_id else None,
+                    "name": e.issue_name,
+                    "start_date": e.start_date.isoformat() if e.start_date else None,
+                    "target_date": e.target_date.isoformat() if e.target_date else None,
+                }
+                for e in chosen.entries.all()
+            ]
+
+        return Response(
+            {
+                "baselines": [
+                    {
+                        "id": str(b.id),
+                        "name": b.name,
+                        "captured_at": b.captured_at.isoformat(),
+                        "captured_by_name": (
+                            b.captured_by.display_name or b.captured_by.email if b.captured_by else None
+                        ),
+                        "note": b.note,
+                        "entry_count": b.entries.count(),
+                    }
+                    for b in snapshots
+                ],
+                "selected": str(chosen.id) if chosen else None,
+                "entries": entries,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        issues = Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
-            "id", "start_date", "target_date"
-        )
-        captured = 0
-        for issue in issues:
-            IssueBaseline.objects.update_or_create(
-                issue_id=issue["id"],
-                defaults={"start_date": issue["start_date"], "target_date": issue["target_date"]},
+
+        name = str(request.data.get("name") or "").strip()[:255]
+        if not name:
+            # Dated rather than refused: somebody capturing in a hurry should not be
+            # stopped, and "Baseline 14 Mar 2026" is a usable name.
+            name = f"Baseline {timezone.now().date().isoformat()}"
+
+        issues = list(
+            Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
+                "id", "name", "start_date", "target_date"
             )
-            captured += 1
-        return Response({"captured": captured}, status=status.HTTP_200_OK)
+        )
+
+        with transaction.atomic():
+            snapshot = ProjectBaseline.objects.create(
+                project_id=project_id,
+                name=name,
+                captured_by=request.user,
+                note=str(request.data.get("note") or "")[:2000],
+            )
+            BaselineEntry.objects.bulk_create(
+                [
+                    BaselineEntry(
+                        baseline=snapshot,
+                        issue_id=issue["id"],
+                        # Copied in: a frozen plan has to stay readable after
+                        # somebody renames or deletes the work item.
+                        issue_name=(issue["name"] or "")[:255],
+                        start_date=issue["start_date"],
+                        target_date=issue["target_date"],
+                    )
+                    for issue in issues
+                ],
+                batch_size=500,
+            )
+
+        return Response(
+            {
+                "id": str(snapshot.id),
+                "name": snapshot.name,
+                "captured_at": snapshot.captured_at.isoformat(),
+                "captured": len(issues),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id):
+        """Remove one snapshot. Named in the body so a mis-click cannot wipe a plan."""
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        deleted, _ = ProjectBaseline.objects.filter(
+            id=request.data.get("id"), project_id=project_id
+        ).delete()
+        if not deleted:
+            return Response({"error": "Baseline not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"deleted": True}, status=status.HTTP_200_OK)
 
 
 class ProjectAutoScheduleEndpoint(BaseAPIView):

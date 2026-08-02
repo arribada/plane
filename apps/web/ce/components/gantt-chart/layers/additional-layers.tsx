@@ -43,17 +43,25 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const service = useMemo(() => new ArribadaService(), []);
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
 
+  // Which promised plan the ghosts draw; empty means the newest.
+  const selectedBaseline = store.selectedBaselineId;
+
   useEffect(() => {
     let cancelled = false;
     if (workspaceSlug && projectId) {
       const ws = workspaceSlug.toString();
       const pid = projectId.toString();
       service
-        .getBaseline(ws, pid)
-        .then((rows) => {
+        // Whichever snapshot the reader picked, the newest by default. An entry
+        // whose work item was deleted has a null id and no bar to sit behind — the
+        // baseline still records it, and the report is where that shows.
+        .getBaseline(ws, pid, selectedBaseline || undefined)
+        .then((payload) => {
           if (cancelled) return;
           const map: Record<string, { start: string | null; target: string | null }> = {};
-          for (const r of rows || []) map[r.issue_id] = { start: r.start_date, target: r.target_date };
+          for (const r of payload?.entries ?? []) {
+            if (r.issue_id) map[r.issue_id] = { start: r.start_date, target: r.target_date };
+          }
           setBaseline(map);
           return undefined;
         })
@@ -64,7 +72,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, service]);
+  }, [workspaceSlug, projectId, service, selectedBaseline]);
 
   const view = store.currentViewData;
   if (!view) return null;

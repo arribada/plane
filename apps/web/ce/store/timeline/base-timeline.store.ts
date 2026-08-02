@@ -74,6 +74,8 @@ export interface IBaseTimelineStore {
   isSidebarCollapsed: boolean;
   /** Shade Saturdays and Sundays. On by default — a bar that spans a weekend is
    *  not two days of work, and hiding that makes every estimate read long. */
+  selectedBaselineId: string;
+  setSelectedBaselineId: (id: string) => void;
   showWeekends: boolean;
   /** Draw the dependency arrows faintly until a block is touched, so a dense
    *  graph stops being a wall of red over the bars it is describing. */
@@ -128,6 +130,10 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   renderView: any = [];
   // click-to-link: the block whose dependency handle was clicked first
   linkingSourceId: string | null = null;
+  // Which named plan snapshot the ghost bars draw. Empty = the newest, which is
+  // what a reader wants until they deliberately look back at an older promise.
+  // Not persisted: it is a question being asked, not a preference.
+  selectedBaselineId: string = "";
   sidebarWidth: number = SIDEBAR_WIDTH;
   isSidebarCollapsed: boolean = false;
 
@@ -149,6 +155,8 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       activeBlockId: observable.ref,
       renderView: observable,
       linkingSourceId: observable.ref,
+      selectedBaselineId: observable.ref,
+      setSelectedBaselineId: action,
       sidebarWidth: observable.ref,
       isSidebarCollapsed: observable.ref,
       showWeekends: observable.ref,
@@ -245,6 +253,10 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   };
 
   /** localStorage is unavailable in some browsers/privacy modes, so both sides are best-effort */
+  setSelectedBaselineId = (id: string) => {
+    this.selectedBaselineId = id;
+  };
+
   private restoreSidebarPreferences() {
     try {
       const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);

@@ -244,11 +244,29 @@ export class ArribadaService extends APIService {
   }
 
   // Frozen baseline dates of a project's issues (ghost bars behind the live ones).
+  /** The project's named snapshots, plus the entries of the one asked for (the
+   *  newest when none is). */
   async getBaseline(
     workspaceSlug: string,
-    projectId: string
-  ): Promise<{ issue_id: string; start_date: string | null; target_date: string | null }[]> {
-    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`)
+    projectId: string,
+    baselineId?: string
+  ): Promise<{
+    baselines: {
+      id: string;
+      name: string;
+      captured_at: string;
+      captured_by_name: string | null;
+      note: string;
+      entry_count: number;
+    }[];
+    selected: string | null;
+    entries: { issue_id: string | null; name: string; start_date: string | null; target_date: string | null }[];
+  }> {
+    return this.get(
+      `/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/${
+        baselineId ? `?baseline=${encodeURIComponent(baselineId)}` : ""
+      }`
+    )
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
@@ -256,8 +274,22 @@ export class ArribadaService extends APIService {
   }
 
   // Freeze the current dates of every issue in the project as the new baseline.
-  async captureBaseline(workspaceSlug: string, projectId: string): Promise<{ captured: number }> {
-    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, {})
+  /** Remove one snapshot. Named in the body so a mis-click cannot wipe a plan. */
+  async deleteBaseline(workspaceSlug: string, projectId: string, id: string): Promise<unknown> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, { id })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Freezes the current dates as a NEW snapshot. Never overwrites one. */
+  async captureBaseline(
+    workspaceSlug: string,
+    projectId: string,
+    name?: string
+  ): Promise<{ id: string; name: string; captured: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, { name })
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

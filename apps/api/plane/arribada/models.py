@@ -816,3 +816,81 @@ class IssueArtifact(models.Model):
 
     def __str__(self):
         return f"{self.issue_id} {self.kind}"
+
+
+class ProjectBaseline(models.Model):
+    """A named, dated snapshot of a project's plan.
+
+    A baseline is the plan as it was when it was PROMISED. The single
+    `IssueBaseline` row per work item could not express that: re-capturing
+    overwrote it, so a project frozen in January and re-frozen in March had no way
+    to show a funder what January said. "Here is what we committed to" needs to
+    name WHICH plan, or it is not an answer.
+
+    Several can coexist per project — "PDR January 2026", "After amendment 2" —
+    and the chart draws the ghosts of whichever one the reader picks. The old
+    per-issue rows migrate in as "Initial baseline" so nothing frozen is lost and
+    the existing ghost bars keep drawing through the transition.
+
+    Immutable by construction: there is no update path. A plan that changed after
+    it was agreed is a NEW baseline, and being able to see both is the entire
+    point.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_baselines"
+    )
+    name = models.CharField(max_length=255)
+    # Who froze it and when. A baseline with no author is a number nobody can be
+    # asked about six months later.
+    captured_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    captured_at = models.DateTimeField(auto_now_add=True)
+    note = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "arribada_project_baseline"
+        ordering = ("-captured_at",)
+        verbose_name = "Project baseline"
+        verbose_name_plural = "Project baselines"
+
+    def __str__(self):
+        return f"{self.project_id} {self.name}"
+
+
+class BaselineEntry(models.Model):
+    """One work item's dates inside one baseline.
+
+    Denormalised on purpose: the item's name is copied in. A baseline has to stay
+    readable after the work item is renamed or deleted — a frozen plan that
+    silently loses a line when somebody tidies the backlog is not a record of
+    anything.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    baseline = models.ForeignKey(ProjectBaseline, on_delete=models.CASCADE, related_name="entries")
+    # SET_NULL rather than CASCADE: deleting a work item must not silently rewrite
+    # what was promised.
+    issue = models.ForeignKey(
+        "db.Issue", null=True, blank=True, on_delete=models.SET_NULL, related_name="arribada_baseline_entries"
+    )
+    issue_name = models.CharField(max_length=255, blank=True, default="")
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        db_table = "arribada_baseline_entry"
+        verbose_name = "Baseline entry"
+        verbose_name_plural = "Baseline entries"
+        constraints = [
+            models.UniqueConstraint(fields=["baseline", "issue"], name="arribada_baseline_entry_unique_issue")
+        ]
+
+    def __str__(self):
+        return f"{self.baseline_id} {self.issue_id}"

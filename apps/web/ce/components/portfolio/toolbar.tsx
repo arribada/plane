@@ -96,25 +96,27 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const captureBaselines = async () => {
     if (!workspaceSlug || capturing) return;
 
-    // One menu item, no confirmation, and it re-freezes EVERY scoped project at
-    // once. A baseline is today a OneToOneField with auto_now — one row per work
-    // item, overwritten in place, no version and no history — so re-capturing
-    // destroys the plan that was approved, for every project in scope, with no way
-    // back and nothing in the activity feed to find it by. Naming the count is
-    // what makes the mistake visible before it happens rather than after.
+    // Named, because a baseline nobody can identify answers nothing: a funder
+    // asking "what did you commit to" needs to be shown WHICH plan.
+    //
+    // This used to be one unguarded menu item that re-froze every scoped project
+    // over the single row each work item had, destroying the plan that was
+    // approved. Snapshots are additive now — nothing is overwritten — so the
+    // confirmation is about scope rather than about loss.
     const count = portfolio.scopedProjectIds.length;
-    if (
-      !window.confirm(
-        count === 1
-          ? "Freeze today's dates as the baseline for this project?\n\nThis REPLACES the existing baseline. The plan it currently holds cannot be recovered."
-          : `Freeze today's dates as the baseline for all ${count} projects in scope?\n\nThis REPLACES each of their existing baselines. The plans they currently hold cannot be recovered.`
-      )
-    )
-      return;
+    const name = window.prompt(
+      count === 1
+        ? "Name this snapshot of the plan."
+        : `Name this snapshot. It will be taken for all ${count} projects in scope.`,
+      `Baseline ${new Date().toISOString().slice(0, 10)}`
+    );
+    if (name === null) return;
 
     setCapturing(true);
     try {
-      await Promise.all(portfolio.scopedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id)));
+      await Promise.all(
+        portfolio.scopedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id, name.trim()))
+      );
       setCapturedAt(new Date().toLocaleTimeString());
     } finally {
       setCapturing(false);
@@ -453,7 +455,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   close();
                   captureBaselines();
                 }}
-                title="Freeze the current dates as a baseline (ghost bars + variance) — replaces any existing baseline"
+                title="Freeze the current dates as a new named snapshot. Earlier baselines are kept."
                 className={menuRow}
               >
                 <Flag className="size-3.5 text-secondary" />

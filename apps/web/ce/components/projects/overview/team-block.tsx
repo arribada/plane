@@ -106,6 +106,7 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   const service = useMemo(() => new ArribadaService(), []);
   const {
     project: { getProjectMemberIds, getProjectMemberDetails },
+    workspace: { workspaceMemberIds, getWorkspaceMemberDetails },
   } = useMember();
 
   const [editing, setEditing] = useState(false);
@@ -283,12 +284,28 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
 
   // Read straight from the store rather than through useMemo: these are mobx
   // observables and a memo would keep serving the list from before the fetch.
+  /** A workspace member seen through the project-member shape, with the role set
+   *  below assignable — they are not on this project, and the caller must be able
+   *  to tell. */
+  const workspaceFallback = (id: string) => {
+    const member = getWorkspaceMemberDetails(id)?.member;
+    return member ? { member, role: 0 } : null;
+  };
+
   const planeMembersMissingFrom = (rows: { member_id: string | null; email: string }[]) => {
-    const ids = getProjectMemberIds(projectId, true) ?? [];
+    const projectIds = getProjectMemberIds(projectId, true) ?? [];
+    // Workspace members too, not only this project's. A colleague who has just
+    // signed in belongs to the workspace and to no project yet, so a picker
+    // limited to project members offers nothing the day somebody joins — which
+    // is exactly the day you want to put them on a roster. They come back
+    // `assignable: false` and the row already says why: Plane will not accept an
+    // assignee who is not a project member, and pretending otherwise would let
+    // somebody staff a task that can never be handed over.
+    const ids = [...new Set([...projectIds, ...(workspaceMemberIds ?? [])])];
     const takenIds = new Set(rows.map((r) => r.member_id).filter(Boolean));
     const takenEmails = new Set(rows.map((r) => (r.email ?? "").trim().toLowerCase()).filter(Boolean));
     return ids
-      .map((id) => getProjectMemberDetails(id, projectId))
+      .map((id) => getProjectMemberDetails(id, projectId) ?? workspaceFallback(id))
       .filter((d): d is NonNullable<typeof d> => !!d)
       .filter((d) => !d.member.is_bot && !takenIds.has(d.member.id))
       .map((d) => {

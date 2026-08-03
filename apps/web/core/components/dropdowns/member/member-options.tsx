@@ -20,6 +20,7 @@ import { Avatar } from "@plane/ui";
 import { cn, getFileURL, sortByCurrentUserThenSelected } from "@plane/utils";
 // hooks
 import { useMember } from "@/hooks/store/use-member";
+import { useProjectRoles } from "@/plane-web/components/projects/use-project-roles";
 import { useUser } from "@/hooks/store/user";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 
@@ -47,7 +48,11 @@ export const MemberOptions = observer(function MemberOptions(props: Props) {
     value,
   } = props;
   // router
-  const { workspaceSlug } = useParams();
+  const { workspaceSlug, projectId } = useParams();
+  // What each person DOES on this project, from the arribada roster. Plane's own
+  // project role is a permission level and answers a different question: a lead
+  // picking an assignee is choosing between disciplines, not between admins.
+  const projectRoles = useProjectRoles(workspaceSlug?.toString(), projectId?.toString());
   // refs
   const inputRef = useRef<HTMLInputElement | null>(null);
   // states
@@ -78,9 +83,13 @@ export const MemberOptions = observer(function MemberOptions(props: Props) {
     if (isOpen) {
       onDropdownOpen?.();
       if (!isMobile) {
-        inputRef.current && inputRef.current.focus();
+        inputRef.current?.focus();
       }
     }
+    // `onDropdownOpen` is intentionally out of the deps: it is a callback prop
+    // that most callers redefine inline, so listing it would re-fire the open
+    // effect on every parent render and steal focus back mid-typing.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isMobile]);
 
   const searchInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -113,6 +122,13 @@ export const MemberOptions = observer(function MemberOptions(props: Props) {
             >
               {currentUser?.id === userId ? t("you") : userDetails?.display_name}
             </span>
+            {/* Muted and after the name: it disambiguates two candidates, it does
+                not compete with the thing being picked. */}
+            {projectRoles.get(userId)?.length ? (
+              <span className="flex-shrink-0 truncate text-11 text-tertiary">
+                {projectRoles.get(userId)?.join(", ")}
+              </span>
+            ) : null}
           </div>
         ),
       };

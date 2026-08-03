@@ -1046,3 +1046,46 @@ class ProjectPublicTimeline(models.Model):
 
     def __str__(self):
         return f"{self.project_id} {'live' if self.is_live else 'revoked'}"
+
+
+class IssueEffort(models.Model):
+    """How much work a task is, in person-days, independent of when it happens.
+
+    Plane has estimate points, which are a team-relative currency: a "5" means
+    something only next to that team's other fives, and it deliberately refuses
+    to convert into time. That is the right call for a sprint board and the wrong
+    one here, because this fork answers two questions points cannot: how long
+    should this bar be when nobody has typed a date, and what does the work cost
+    when the rate is per day.
+
+    So this is days, not points, and it is a separate row rather than a column on
+    db.Issue for the same reason as every other table in this app: the fork does
+    not own the upstream schema.
+
+    Effort is not duration. Six person-days can be a fortnight for one person or
+    three days for two, which is why the scheduler multiplies this by the roster
+    rather than reading it as a length.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    issue = models.OneToOneField(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_effort"
+    )
+    # Person-days. Small on purpose: anything past a quarter of a year is a
+    # project rather than a task, and a typo of 3000 would silently swamp every
+    # capacity figure it feeds.
+    days = models.DecimalField(max_digits=5, decimal_places=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        db_table = "arribada_issue_effort"
+        ordering = ("-updated_at",)
+        verbose_name = "Issue effort"
+        verbose_name_plural = "Issue efforts"
+
+    def __str__(self):
+        return f"{self.issue_id} {self.days}d"

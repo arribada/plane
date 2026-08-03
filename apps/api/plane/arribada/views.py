@@ -4,6 +4,7 @@
 
 import html
 import json
+import math
 import os
 import re
 import uuid
@@ -4522,16 +4523,38 @@ def _is_project_lead(user, project_id):
     `is_lead` — which exists precisely because most of the team has no Plane
     account. Either counts.
 
-    A workspace admin is deliberately NOT included. Admin is a permission level;
-    owning a budget is a job. Letting every admin approve spending on every project
-    is how "the lead approves it" becomes "somebody approved it".
+    A workspace admin is deliberately NOT included while the project HAS a lead.
+    Admin is a permission level; owning a budget is a job. Letting every admin
+    approve spending on every project is how "the lead approves it" becomes
+    "somebody approved it".
+
+    The one exception is a project with no lead at all. Somebody still has to be
+    able to unblock a purchase, and the alternative — the request sits until a
+    lead is appointed — means the parts do not get ordered. So when nobody owns
+    the budget, a workspace admin may approve. This is narrow on purpose: naming
+    a lead takes the power straight back off them, and it is a rule about the
+    ROLE rather than about one person, so it survives that person leaving.
     """
     if not user or not getattr(user, "id", None):
         return False
     if Project.objects.filter(id=project_id, project_lead_id=user.id).exists():
         return True
-    return ProjectTeamMember.objects.filter(
+    if ProjectTeamMember.objects.filter(
         project_id=project_id, member_id=user.id, is_lead=True
+    ).exists():
+        return True
+    return _is_admin_of_leaderless_project(user, project_id)
+
+
+def _is_admin_of_leaderless_project(user, project_id):
+    """A workspace admin, on a project nobody leads. See `_is_project_lead`."""
+    project = Project.objects.filter(id=project_id).values("workspace_id", "project_lead_id").first()
+    if not project or project["project_lead_id"]:
+        return False
+    if ProjectTeamMember.objects.filter(project_id=project_id, is_lead=True).exists():
+        return False
+    return WorkspaceMember.objects.filter(
+        workspace_id=project["workspace_id"], member_id=user.id, is_active=True, role=ROLE.ADMIN.value
     ).exists()
 
 
@@ -5972,3 +5995,139 @@ class ProjectAiSprintTasksEndpoint(BaseAPIView):
                 break
 
         return Response({"tasks": tasks}, status=status.HTTP_200_OK)
+
+
+class IssueEffortEndpoint(BaseAPIView):
+    """How much work a task is, in person-days.
+
+    Deliberately separate from Plane's estimate points. Points are a team-relative
+    currency that refuses to convert into time, which is right for a sprint board
+    and useless for the two questions this fork actually has: how long should this
+    bar be when nobody typed a date, and what does the work cost at a per-day rate.
+
+    Setting an effort never moves a date on its own. The suggestion is returned and
+    the caller decides — the same contract every assistant surface here follows,
+    because a bar that silently changed length the moment somebody recorded an
+    estimate is a bar nobody trusts afterwards.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        from .models import IssueEffort
+
+        row = IssueEffort.objects.filter(issue_id=issue_id).first()
+        issue = Issue.issue_objects.filter(id=issue_id, project_id=project_id).values(
+            "start_date", "target_date"
+        ).first()
+        if not issue:
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        days = float(row.days) if row else None
+        return Response(
+            {
+                "days": days,
+                # Only offered when there is nothing to overwrite. A task that
+                # already has dates has been decided by a human, and proposing a
+                # replacement for it is noise.
+                "suggested_dates": _suggest_dates_from_effort(project_id, issue_id, days, issue)
+                if days and not (issue["start_date"] and issue["target_date"])
+                else None,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+        from .models import IssueEffort
+
+        raw = request.data.get("days")
+        if raw in (None, ""):
+            # Clearing is a real answer: "we no longer claim to know" is different
+            # from "zero days", and a stale estimate feeding a capacity figure is
+            # worse than no estimate at all.
+            IssueEffort.objects.filter(issue_id=issue_id).delete()
+            return Response({"days": None}, status=status.HTTP_200_OK)
+        try:
+            days = round(float(raw), 1)
+        except (TypeError, ValueError):
+            return Response({"error": "days must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+        if not 0 < days <= 999:
+            return Response(
+                {"error": "days must be between 0.1 and 999"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        IssueEffort.objects.update_or_create(
+            issue_id=issue_id, defaults={"days": days, "updated_by": request.user}
+        )
+        issue = Issue.issue_objects.filter(id=issue_id).values("start_date", "target_date").first()
+        return Response(
+            {
+                "days": days,
+                "suggested_dates": _suggest_dates_from_effort(project_id, issue_id, days, issue)
+                if issue and not (issue["start_date"] and issue["target_date"])
+                else None,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+def _suggest_dates_from_effort(project_id, issue_id, days, issue):
+    """Turn person-days into a start and a target, without writing either.
+
+    Effort is not duration: six person-days is a fortnight for one person and
+    three days for two. The divisor is how many people on the roster actually
+    hold this item's discipline — which is the same rule the setup planner uses,
+    so a task estimated here and a task planned there do not disagree about how
+    long the same work takes.
+
+    Weekends are skipped. Public holidays are NOT, deliberately: this is an
+    estimate offered for a human to accept or ignore, and pulling a per-person
+    holiday calendar in to shift a suggestion by a day would cost a query per
+    call to move a number nobody has agreed to yet.
+    """
+    if not days or days <= 0:
+        return None
+    from .models import IssueRole
+
+    role = IssueRole.objects.filter(issue_id=issue_id).values_list("role", flat=True).first()
+    people = 1
+    if role:
+        people = max(
+            1,
+            ProjectTeamMember.objects.filter(project_id=project_id, role=role).count(),
+        )
+    # ceil, not round: Python rounds half to EVEN, so round(2.5) is 2 and every
+    # half-day estimate on the board would have been quietly under-planned. An
+    # estimate that errs long is a late bar; one that errs short is a missed date.
+    span = max(1, math.ceil(float(days) / people))
+
+    # Anchor on whichever end is already known, so accepting the suggestion never
+    # contradicts a date somebody already typed.
+    start = issue.get("start_date")
+    target = issue.get("target_date")
+    if start and not target:
+        return {"start_date": str(start), "target_date": str(_add_working_days(start, span - 1))}
+    if target and not start:
+        return {"start_date": str(_add_working_days(target, -(span - 1))), "target_date": str(target)}
+    begins = timezone.now().date()
+    while begins.weekday() >= 5:
+        begins += timedelta(days=1)
+    return {"start_date": str(begins), "target_date": str(_add_working_days(begins, span - 1))}
+
+
+def _add_working_days(start, count):
+    """`count` working days from `start`, forwards or backwards, weekends skipped."""
+    current = start
+    step = 1 if count >= 0 else -1
+    remaining = abs(count)
+    while remaining > 0:
+        current += timedelta(days=step)
+        if current.weekday() < 5:
+            remaining -= 1
+    return current

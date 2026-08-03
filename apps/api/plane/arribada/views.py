@@ -2539,6 +2539,21 @@ class ProjectOverviewEndpoint(BaseAPIView):
             warn("past_target", f"The planned end date ({schedule.target_date}) is in the past.")
         if counts.get("undated"):
             warn("undated_items", f"{counts['undated']} work item(s) have no dates.")
+
+        # A dated item with no discipline shows up on the Finance page as
+        # "unassigned" days and nowhere else, so the only place it was visible was
+        # the one place you cannot fix it. Every cost and capacity figure keys on
+        # the trade: days without one are work nobody can price or staff.
+        roleless = (
+            Issue.issue_objects.filter(project_id=project_id, start_date__isnull=False, target_date__isnull=False)
+            .exclude(id__in=IssueRole.objects.filter(issue__project_id=project_id).values("issue_id"))
+            .count()
+        )
+        if roleless:
+            warn(
+                "no_discipline",
+                f"{roleless} dated work item(s) have no discipline - their days cannot be costed or staffed.",
+            )
         if counts.get("overdue"):
             warn("overdue_items", f"{counts['overdue']} open work item(s) are past their due date.", "error")
         if unassigned:

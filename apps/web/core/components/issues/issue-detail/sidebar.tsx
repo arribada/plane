@@ -37,6 +37,8 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
 // components
+import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
+import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-details/parent-select-root";
 import { DateAlert } from "@/plane-web/components/issues/issue-details/sidebar/date-alert";
@@ -103,6 +105,17 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
+            {/* Effort under State, Discipline under Assignees — placed here rather
+                than appended by the extension point, which can only add to the
+                END of the list. Each sits beside the field it belongs with:
+                effort is a property of the work, discipline of who does it. */}
+            <IssueEffortField
+              workspaceSlug={workspaceSlug?.toString() ?? ""}
+              projectId={projectId?.toString() ?? ""}
+              issueId={issueId}
+              isEditable={isEditable}
+            />
+
             <SidebarPropertyListItem icon={MembersPropertyIcon} label={t("common.assignees")}>
               <MemberDropdown
                 value={issue?.assignee_ids ?? undefined}
@@ -120,6 +133,13 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 dropdownArrowClassName="h-3.5 w-3.5 hidden group-hover:inline"
               />
             </SidebarPropertyListItem>
+
+            <IssueRoleField
+              workspaceSlug={workspaceSlug?.toString() ?? ""}
+              projectId={projectId?.toString() ?? ""}
+              issueId={issueId}
+              isEditable={isEditable}
+            />
 
             <SidebarPropertyListItem icon={PriorityPropertyIcon} label={t("common.priority")}>
               <PriorityDropdown

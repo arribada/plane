@@ -49,6 +49,14 @@ export const OverviewWarnings = observer(function OverviewWarnings({ warnings, o
         label: "Open work items",
         onClick: () => router.push(`/${workspaceSlug}/projects/${projectId}/issues`),
       };
+    // The discipline is set per item, in its properties panel — so the useful
+    // action is the list, where you can open each one that needs it. The Finance
+    // page shows the consequence; it is not where the fix lives.
+    if (w.code === "no_discipline")
+      return {
+        label: "Set disciplines",
+        onClick: () => router.push(`/${workspaceSlug}/projects/${projectId}/issues`),
+      };
     return null;
   };
 

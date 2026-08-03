@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { Gauge, Loader2 } from "lucide-react";
+import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
@@ -59,8 +60,9 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
     };
   }, [workspaceSlug, projectId, issueId]);
 
-  const commit = async () => {
-    const trimmed = draft.trim();
+  const commit = async (explicit?: string) => {
+    if (explicit !== undefined) setDraft(explicit);
+    const trimmed = (explicit ?? draft).trim();
     const parsed = trimmed === "" ? null : Number(trimmed);
     if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) {
       setToast({ type: TOAST_TYPE.ERROR, title: "That is not a number of days" });
@@ -108,13 +110,9 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
   if (!state) return null;
 
   return (
-    <div className="space-y-1.5 py-1">
-      <div className="flex items-center gap-2">
-        <span className="flex w-2/5 flex-shrink-0 items-center gap-1.5 text-13 text-secondary">
-          <Gauge className="size-4 flex-shrink-0" />
-          Effort
-        </span>
-        <div className="flex h-full w-3/5 items-center gap-1.5">
+    <SidebarPropertyListItem icon={Gauge} label="Effort">
+      <div className="flex w-full flex-col gap-0.5">
+        <div className="flex items-center gap-1.5">
           <input
             type="number"
             min={0.5}
@@ -126,29 +124,41 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
-            placeholder="—"
+            placeholder={state.derived != null ? String(state.derived) : "—"}
             aria-label="Effort in person-days"
             className={cn(
-              "w-20 rounded border border-transparent bg-transparent px-2 py-0.5 text-13 text-primary outline-none",
+              "w-20 rounded border border-transparent bg-transparent px-2 py-1 text-body-xs-regular text-primary outline-none",
               isEditable && "hover:border-subtle focus:border-accent-strong"
             )}
           />
           <span className="text-12 text-tertiary">person-days</span>
           {busy && <Loader2 className="size-3 animate-spin text-tertiary" />}
         </div>
-      </div>
 
-      {state.suggested_dates && isEditable && (
-        <button
-          type="button"
-          onClick={() => void applySuggestion()}
-          disabled={busy}
-          className="ml-[40%] block text-11 text-accent-primary hover:underline"
-        >
-          Use {renderFormattedDate(state.suggested_dates.start_date)} →{" "}
-          {renderFormattedDate(state.suggested_dates.target_date)}
-        </button>
-      )}
-    </div>
+        {/* What the dates already imply, offered rather than written: the moment
+            two people are on an item the honest number is one only they can give. */}
+        {state.days == null && state.derived != null && isEditable && (
+          <button
+            type="button"
+            onClick={() => void commit(String(state.derived))}
+            className="self-start px-2 text-11 text-accent-primary hover:underline"
+          >
+            Use {state.derived} from the dates
+          </button>
+        )}
+
+        {state.suggested_dates && isEditable && (
+          <button
+            type="button"
+            onClick={() => void applySuggestion()}
+            disabled={busy}
+            className="self-start px-2 text-11 text-accent-primary hover:underline"
+          >
+            Set {renderFormattedDate(state.suggested_dates.start_date)} →{" "}
+            {renderFormattedDate(state.suggested_dates.target_date)}
+          </button>
+        )}
+      </div>
+    </SidebarPropertyListItem>
   );
 });

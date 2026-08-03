@@ -115,10 +115,14 @@ export const ProjectSectionSwitcher = observer(function ProjectSectionSwitcher({
           <button
             type="button"
             aria-label="Close section switcher"
-            className="fixed inset-0 z-20 cursor-default"
+            className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-44 overflow-hidden rounded-md border border-subtle bg-layer-1 p-1">
+          <div // z-50: this menu hangs from the header and opens OVER the page body, whose
+            // toolbars render later in the DOM and were painting through it — the gantt's
+            // lock button showed straight across the open menu.
+            className="shadow-lg absolute top-full left-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-subtle bg-layer-1 p-1"
+          >
             {items.map((s) => (
               <button
                 type="button"

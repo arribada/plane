@@ -596,6 +596,9 @@ export type TPublicTimeline = {
 /** Work in person-days, plus the span it implies when a date is missing. */
 export type TIssueEffort = {
   days: number | null;
+  /** What the dates imply: working days x assignees. Null once an effort is
+   *  recorded — there is nothing left to derive. */
+  derived?: number | null;
   /** Offered, never applied — the server does not move dates. */
   suggested_dates: { start_date: string; target_date: string } | null;
 };

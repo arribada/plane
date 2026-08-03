@@ -18,6 +18,7 @@
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { Hammer, Loader2 } from "lucide-react";
+import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -90,19 +91,18 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
   };
 
   return (
-    <div className="flex items-center gap-2 py-1">
-      <span className="flex w-2/5 flex-shrink-0 items-center gap-1.5 text-13 text-secondary">
-        <Hammer className="size-4 flex-shrink-0" />
-        Discipline
-      </span>
-      <div className="flex h-full w-3/5 items-center gap-1.5">
+    // The shared row rather than a hand-rolled one: Plane's properties are laid
+    // out by this component, and building a second layout beside it is exactly
+    // why these two fields did not line up with the rest of the panel.
+    <SidebarPropertyListItem icon={Hammer} label="Discipline">
+      <div className="flex w-full items-center gap-1.5">
         <select
           disabled={!isEditable || busy}
           value={role ?? ""}
           onChange={(e) => void commit(e.target.value)}
           aria-label="Discipline this work item belongs to"
           className={cn(
-            "min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-0.5 text-13 outline-none",
+            "min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-body-xs-regular outline-none",
             role ? "text-primary" : "text-tertiary",
             isEditable && "hover:border-subtle focus:border-accent-strong"
           )}
@@ -116,8 +116,8 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
             </option>
           ))}
         </select>
-        {busy && <Loader2 className="size-3 animate-spin text-tertiary" />}
+        {busy && <Loader2 className="size-3 shrink-0 animate-spin text-tertiary" />}
       </div>
-    </div>
+    </SidebarPropertyListItem>
   );
 });

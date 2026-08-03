@@ -6,8 +6,6 @@
 
 import React from "react";
 // plane imports
-import { IssueEffortField } from "./effort-field";
-import { IssueRoleField } from "./role-field";
 
 export type TWorkItemAdditionalSidebarProperties = {
   workItemId: string;
@@ -18,22 +16,12 @@ export type TWorkItemAdditionalSidebarProperties = {
   isPeekView?: boolean;
 };
 
-export function WorkItemAdditionalSidebarProperties(props: TWorkItemAdditionalSidebarProperties) {
-  const { workItemId, projectId, workspaceSlug, isEditable } = props;
-  return (
-    <>
-      <IssueRoleField
-        workspaceSlug={workspaceSlug}
-        projectId={projectId}
-        issueId={workItemId}
-        isEditable={isEditable}
-      />
-      <IssueEffortField
-        workspaceSlug={workspaceSlug}
-        projectId={projectId}
-        issueId={workItemId}
-        isEditable={isEditable}
-      />
-    </>
-  );
+/**
+ * Empty on purpose. Effort and Discipline used to be appended here, which is the
+ * only thing this hook can do — add to the END of the properties list. They
+ * belong beside the fields they relate to (effort under State, discipline under
+ * Assignees), so the sidebar places them itself.
+ */
+export function WorkItemAdditionalSidebarProperties(_props: TWorkItemAdditionalSidebarProperties) {
+  return <></>;
 }

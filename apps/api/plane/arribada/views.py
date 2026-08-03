@@ -6068,6 +6068,13 @@ class IssueEffortEndpoint(BaseAPIView):
         return Response(
             {
                 "days": days,
+                # What the dates already imply, when nobody has recorded an
+                # effort. Effort is not duration: a fortnight worked by two people
+                # is twenty person-days, not ten — so the span is multiplied by
+                # the assignees. Offered as a default the field pre-fills, never
+                # written on its own, because the moment two people are on an item
+                # the honest number is one only they can give.
+                "derived": None if row else _effort_from_dates(issue_id, issue),
                 # Only offered when there is nothing to overwrite. A task that
                 # already has dates has been decided by a human, and proposing a
                 # replacement for it is noise.
@@ -6379,6 +6386,12 @@ class IssueRoleEndpoint(BaseAPIView):
         return Response(
             {
                 "role": role,
+                # The inference the other way round: an item with no discipline
+                # whose one assignee holds exactly one is not ambiguous, so the
+                # field offers it. Offered, not applied — writing a discipline
+                # because somebody was assigned would put a word on the record
+                # that no human chose, and every cost figure keys on it.
+                "inferred": None if role else _role_from_assignees(project_id, issue_id),
                 # The disciplines this project can actually route work to: the
                 # roster's own, plus the standard vocabulary so a project with an
                 # empty roster is not offered an empty list.
@@ -6441,3 +6454,54 @@ def _project_role_options(project_id):
             seen.add(value)
             options.append(value)
     return options
+
+
+def _role_from_assignees(project_id, issue_id):
+    """The discipline an item's assignees imply, when they imply exactly one.
+
+    Silent on anything ambiguous, and the ambiguity is the point: two assignees,
+    or one who wears three hats, is a person who has not told you which hat this
+    task is. Guessing there is how a rate lands on the wrong trade.
+    """
+    holders = list(
+        IssueAssignee.objects.filter(issue_id=issue_id, deleted_at__isnull=True).values_list(
+            "assignee_id", flat=True
+        )
+    )
+    if len(holders) != 1:
+        return None
+    roles = (
+        ProjectTeamMember.objects.filter(project_id=project_id, member_id=holders[0])
+        .values_list("roles", flat=True)
+        .first()
+    )
+    roles = [str(r).strip() for r in (roles or []) if str(r).strip()]
+    return roles[0] if len(roles) == 1 else None
+
+
+def _effort_from_dates(issue_id, issue):
+    """Working days between the dates, times the number of assignees.
+
+    The inverse of the suggestion this endpoint already makes. Dates usually
+    exist first — somebody drags a bar long before anybody estimates — so the
+    common case is reading effort off the plan, not the other way round.
+
+    Weekends are excluded; an unassigned item counts as one person, because the
+    work still takes what it takes and pretending it is zero would hide it from
+    every capacity figure.
+    """
+    start, target = issue.get("start_date"), issue.get("target_date")
+    if not start or not target or target < start:
+        return None
+    span = sum(
+        1
+        for offset in range((target - start).days + 1)
+        if (start + timedelta(days=offset)).weekday() < 5
+    )
+    if span <= 0:
+        return None
+    people = max(
+        1,
+        IssueAssignee.objects.filter(issue_id=issue_id, deleted_at__isnull=True).count(),
+    )
+    return round(span * people, 1)

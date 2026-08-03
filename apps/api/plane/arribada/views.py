@@ -4267,7 +4267,16 @@ def _labour_cost(tasks, rates):
     for task in tasks:
         role = (task.get("role") or "").strip().lower()
         if not role:
-            continue
+            # Counted, not dropped. The days are known; only the discipline is
+            # missing, and skipping the row entirely made a project whose tasks
+            # carry no role report NOTHING — no days, no cost, an empty panel
+            # that reads as "this feature is broken" rather than "nobody has said
+            # who does this work".
+            #
+            # The same reasoning as the no-rate branch below, which already keeps
+            # the days so the gap is visible. Doing it for one and not the other
+            # was the inconsistency.
+            role = "unassigned"
         rate = rates.get(role)
         days = max(1, int(task.get("days") or 1))
         entry = by_role.setdefault(

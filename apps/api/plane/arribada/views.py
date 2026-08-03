@@ -6543,3 +6543,175 @@ def _effort_from_dates(issue_id, issue):
         IssueAssignee.objects.filter(issue_id=issue_id, deleted_at__isnull=True).count(),
     )
     return round(span * people, 1)
+
+
+class ProjectDisciplineGapEndpoint(BaseAPIView):
+    """The dated items with no discipline, and one call to fix them all.
+
+    The Overview warning used to send people to the work item list, which is a
+    navigation dressed as a correction: seven items meant opening seven panels.
+    A warning that names a number should hand back the rows behind it.
+
+    GET lists them with what each one would be assigned to if a role were set.
+    POST takes {issue_id: role} and applies the same rules the single-item
+    endpoint does — including assigning the one person who holds the discipline,
+    onto items that have nobody.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = list(
+            Issue.issue_objects.filter(
+                project_id=project_id, start_date__isnull=False, target_date__isnull=False
+            )
+            .exclude(id__in=IssueRole.objects.filter(issue__project_id=project_id).values("issue_id"))
+            .values("id", "name", "sequence_id", "start_date", "target_date")
+            .order_by("start_date")
+        )
+        return Response(
+            {
+                "items": [
+                    {
+                        "id": str(r["id"]),
+                        "name": r["name"],
+                        "sequence_id": r["sequence_id"],
+                        "start_date": str(r["start_date"]),
+                        "target_date": str(r["target_date"]),
+                        # What its assignee already implies, so the common row is a
+                        # confirmation rather than a decision.
+                        "suggested": _role_from_assignees(project_id, r["id"]),
+                    }
+                    for r in rows
+                ],
+                "options": _project_role_options(project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        assignments = request.data.get("assignments") or {}
+        if not isinstance(assignments, dict):
+            return Response({"error": "assignments must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Only items of THIS project, checked against the database rather than
+        # trusted from the payload: the keys arrive from a browser.
+        allowed = set(
+            str(i)
+            for i in Issue.issue_objects.filter(
+                project_id=project_id, id__in=list(assignments)[:500]
+            ).values_list("id", flat=True)
+        )
+
+        written, assigned = 0, 0
+        for issue_id, role in assignments.items():
+            if str(issue_id) not in allowed:
+                continue
+            role = str(role or "").strip()[:80]
+            if not role:
+                continue
+            IssueRole.objects.update_or_create(issue_id=issue_id, defaults={"role": role})
+            written += 1
+
+            # Same rule as the single-item endpoint: exactly one holder, and only
+            # onto an item nobody is on. Duplicated deliberately rather than
+            # extracted — bulk and single must not drift apart silently, and a
+            # shared helper that one of them stops calling is how they do.
+            holders = list(
+                ProjectTeamMember.objects.filter(project_id=project_id, member_id__isnull=False)
+                .filter(roles__contains=[role])
+                .values_list("member_id", flat=True)
+            )
+            if len(holders) == 1 and not IssueAssignee.objects.filter(
+                issue_id=issue_id, deleted_at__isnull=True
+            ).exists():
+                issue = Issue.objects.filter(id=issue_id).values("workspace_id", "project_id").first()
+                IssueAssignee.objects.get_or_create(
+                    issue_id=issue_id,
+                    assignee_id=holders[0],
+                    defaults={"workspace_id": issue["workspace_id"], "project_id": issue["project_id"]},
+                )
+                assigned += 1
+
+        return Response({"written": written, "assigned": assigned}, status=status.HTTP_200_OK)
+
+
+class WorkspaceGithubInboxGapEndpoint(BaseAPIView):
+    """Which repos are keeping issues in the inbox, and why.
+
+    Two different problems wear the same face on the board. A repo NO project
+    claims is a link somebody forgot — one edit and its issues file themselves.
+    A repo SEVERAL projects claim cannot be routed at all, because guessing an
+    owner would put work under a project that never asked for it.
+
+    Reporting them together as "unrouted" is what makes the fixable ones look
+    unfixable, so they come back apart.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def get(self, request, slug):
+        import re
+
+        from .github_sync_task import _repos_to_sync
+        from .models import ProjectWikiDoc
+
+        ghin = Project.objects.filter(workspace__slug=slug, identifier="GHIN").first()
+        if not ghin:
+            return Response({"unclaimed": [], "contested": [], "total": 0}, status=status.HTTP_200_OK)
+
+        claims = {}
+        for pid, urls in ProjectWikiDoc.objects.filter(project__workspace__slug=slug).exclude(
+            github_repo_urls=[]
+        ).values_list("project_id", "github_repo_urls"):
+            for url in urls or []:
+                parts = str(url).lower().split("github.com/", 1)
+                if len(parts) != 2:
+                    continue
+                bits = parts[1].strip("/").split("/")
+                if len(bits) >= 2:
+                    claims.setdefault(f"{bits[0]}/{bits[1]}".removesuffix(".git"), set()).add(pid)
+
+        # Counted from the items actually sitting in the inbox, not from the repo
+        # list: a repo with no stuck issues is not a problem to report.
+        counts = {}
+        for html in Issue.issue_objects.filter(project=ghin, external_source="github").values_list(
+            "description_html", flat=True
+        ):
+            found = re.search(r"github\.com/([^/]+/[^/\"'<\s]+)", html or "")
+            if found:
+                counts[found.group(1).lower().removesuffix(".git")] = (
+                    counts.get(found.group(1).lower().removesuffix(".git"), 0) + 1
+                )
+
+        synced = _repos_to_sync()
+        names = dict(Project.objects.filter(workspace__slug=slug).values_list("id", "name"))
+
+        unclaimed, contested = [], []
+        for repo, count in sorted(counts.items(), key=lambda x: -x[1]):
+            owners = claims.get(repo, set())
+            if len(owners) == 0:
+                unclaimed.append({"repo": repo, "count": count, "synced": repo in synced})
+            elif len(owners) > 1:
+                contested.append(
+                    {
+                        "repo": repo,
+                        "count": count,
+                        "projects": sorted(str(names.get(p, "")) for p in owners),
+                    }
+                )
+
+        return Response(
+            {
+                "unclaimed": unclaimed,
+                "contested": contested,
+                "total": sum(counts.values()),
+                "inbox_project_id": str(ghin.id),
+            },
+            status=status.HTTP_200_OK,
+        )

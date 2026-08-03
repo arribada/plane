@@ -30,6 +30,7 @@ import { OverviewJumpBar } from "./jump-bar";
 import { OverviewBudgetBlock } from "./budget-block";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewProgressSections } from "./progress-sections";
+import { DisciplineGapModal } from "./discipline-gap-modal";
 import { OverviewPrintAnnex } from "./print-annex";
 import { OverviewPublicLinkBlock } from "./public-link-block";
 import { OverviewRecentPages } from "./recent-pages";
@@ -59,6 +60,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   const [planOpen, setPlanOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [cleanOpen, setCleanOpen] = useState(false);
+  const [disciplineOpen, setDisciplineOpen] = useState(false);
   // Which project the page already showed, so a post-save refetch swaps the data
   // in place instead of blanking the page behind a spinner.
   const loadedKey = useRef<string | null>(null);
@@ -241,7 +243,11 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       {needsAttention.length > 0 && (
         <OverviewSection title="Needs attention" badge={needsAttention.length} defaultOpen>
           <div className="px-4 py-3">
-            <OverviewWarnings warnings={needsAttention} onConfigureLinks={scrollToLinks} />
+            <OverviewWarnings
+              warnings={needsAttention}
+              onConfigureLinks={scrollToLinks}
+              onFixDisciplines={() => setDisciplineOpen(true)}
+            />
           </div>
         </OverviewSection>
       )}
@@ -347,6 +353,14 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       )}
       {/* Printed only: the screen has counts and a link to the list, paper has
           neither. */}
+      <DisciplineGapModal
+        isOpen={disciplineOpen}
+        onClose={() => setDisciplineOpen(false)}
+        // The warning is computed server-side, so the one this just cleared only
+        // disappears on a refetch.
+        onDone={refresh}
+      />
+
       <OverviewPrintAnnex overview={data} />
     </div>
   );

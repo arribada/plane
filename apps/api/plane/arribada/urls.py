@@ -11,6 +11,8 @@ from .views import (
     GithubTriageEndpoint,
     IssueEffortEndpoint,
     IssueRoleEndpoint,
+    ProjectDisciplineGapEndpoint,
+    WorkspaceGithubInboxGapEndpoint,
     ProjectAiSprintTasksEndpoint,
     ProjectPublicTimelineEndpoint,
     PublicTimelineEndpoint,
@@ -163,6 +165,16 @@ urlpatterns = [
         "workspaces/<str:slug>/adopt-issues/",
         AdoptIssuesEndpoint.as_view(),
         name="arribada-adopt-issues",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/discipline-gap/",
+        ProjectDisciplineGapEndpoint.as_view(),
+        name="arribada-project-discipline-gap",
+    ),
+    path(
+        "workspaces/<str:slug>/github-inbox-gap/",
+        WorkspaceGithubInboxGapEndpoint.as_view(),
+        name="arribada-github-inbox-gap",
     ),
     path(
         "workspaces/<str:slug>/github-triage/",

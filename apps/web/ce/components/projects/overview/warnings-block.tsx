@@ -18,6 +18,9 @@ type Warning = TProjectOverview["warnings"][number];
 type Props = {
   warnings: Warning[];
   onConfigureLinks: () => void;
+  /** Opens the bulk editor. A warning that names a number should hand back the
+   *  rows behind it, not a route to go looking for them. */
+  onFixDisciplines: () => void;
 };
 
 const MISSING_LINK_CODES = new Set(["no_github", "no_wiki", "no_chat"]);
@@ -34,7 +37,11 @@ const SeverityIcon = ({ severity }: { severity: Warning["severity"] }) => {
   return <Info className="mt-0.5 size-4 flex-shrink-0" />;
 };
 
-export const OverviewWarnings = observer(function OverviewWarnings({ warnings, onConfigureLinks }: Props) {
+export const OverviewWarnings = observer(function OverviewWarnings({
+  warnings,
+  onConfigureLinks,
+  onFixDisciplines,
+}: Props) {
   const { workspaceSlug, projectId } = useParams();
   const router = useAppRouter();
 
@@ -49,14 +56,10 @@ export const OverviewWarnings = observer(function OverviewWarnings({ warnings, o
         label: "Open work items",
         onClick: () => router.push(`/${workspaceSlug}/projects/${projectId}/issues`),
       };
-    // The discipline is set per item, in its properties panel — so the useful
-    // action is the list, where you can open each one that needs it. The Finance
-    // page shows the consequence; it is not where the fix lives.
-    if (w.code === "no_discipline")
-      return {
-        label: "Set disciplines",
-        onClick: () => router.push(`/${workspaceSlug}/projects/${projectId}/issues`),
-      };
+    // Opens the bulk editor rather than the work item list: seven missing
+    // disciplines used to mean opening seven panels, which is a navigation
+    // dressed as a correction.
+    if (w.code === "no_discipline") return { label: "Set disciplines", onClick: onFixDisciplines };
     return null;
   };
 

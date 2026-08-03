@@ -1104,6 +1104,55 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Dated items with no discipline, plus what each one's assignee implies. */
+  async getDisciplineGap(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{
+    items: {
+      id: string;
+      name: string;
+      sequence_id: number;
+      start_date: string;
+      target_date: string;
+      suggested: string | null;
+    }[];
+    options: string[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/discipline-gap/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** {issue id: discipline}. Applies the same auto-assign rule as the single field. */
+  async setDisciplineGap(
+    workspaceSlug: string,
+    projectId: string,
+    assignments: Record<string, string>
+  ): Promise<{ written: number; assigned: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/discipline-gap/`, {
+      assignments,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Why the GitHub inbox is still full, split by what you can actually do. */
+  async getGithubInboxGap(workspaceSlug: string): Promise<{
+    unclaimed: { repo: string; count: number; synced: boolean }[];
+    contested: { repo: string; count: number; projects: string[] }[];
+    total: number;
+    inbox_project_id?: string;
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox-gap/`)
+      .then((r) => r?.data)
+      .catch(() => ({ unclaimed: [], contested: [], total: 0 }));
+  }
+
   // --- Public project timeline -----------------------------------------------
 
   async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {

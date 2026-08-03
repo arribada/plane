@@ -20,7 +20,7 @@ import { useParams } from "next/navigation";
 import { renderFormattedDate } from "@plane/utils";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TPortfolioItem } from "@/plane-web/types/arribada";
+import type { TPortfolioItem, TProjectBudget, TProjectOverview } from "@/plane-web/types/arribada";
 
 const service = new ArribadaService();
 
@@ -31,12 +31,15 @@ const GROUPS: { key: string; title: string; match: (state: string) => boolean }[
   { key: "unstarted", title: "Not started", match: (s) => s === "unstarted" || s === "backlog" },
 ];
 
-export const OverviewPrintAnnex = observer(function OverviewPrintAnnex() {
+type Props = { overview: TProjectOverview | null };
+
+export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overview }: Props) {
   const { workspaceSlug, projectId } = useParams();
   // The items payload carries a state ID, not a group — the group lives in the
   // project's own state list, which is the only place that mapping exists.
   const { getStateById } = useProjectState();
   const [items, setItems] = useState<TPortfolioItem[] | null>(null);
+  const [budget, setBudget] = useState<TProjectBudget | null>(null);
 
   useEffect(() => {
     const slug = workspaceSlug?.toString();
@@ -45,8 +48,13 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex() {
     let live = true;
     const load = async () => {
       try {
-        const rows = await service.getProjectItems(slug, pid);
-        if (live) setItems(rows);
+        const [rows, money] = await Promise.all([
+          service.getProjectItems(slug, pid),
+          service.getBudget(slug, pid).catch(() => null),
+        ]);
+        if (!live) return;
+        setItems(rows);
+        setBudget(money);
       } catch {
         // The annex is an extra. Failing to load it must not cost the report.
       }
@@ -122,6 +130,87 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex() {
           </section>
         );
       })}
+
+      {(overview?.team?.length ?? 0) > 0 && (
+        <section className="mt-5">
+          <h2 className="mb-1 text-13 font-semibold">Who works on this</h2>
+          <ul className="space-y-0.5">
+            {overview!.team.map((member) => (
+              <li key={member.name} className="flex items-baseline gap-2 text-10">
+                <span className="flex-1 truncate">
+                  {member.name}
+                  {member.is_lead ? " · lead" : ""}
+                </span>
+                {/* The discipline, not the permission level. A report that said
+                    "member" would answer a question nobody asked. */}
+                <span className="flex-shrink-0 text-tertiary">
+                  {member.roles?.length ? member.roles.join(", ") : "no discipline recorded"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {(budget?.labour?.by_role?.length ?? 0) > 0 && (
+        <section className="mt-5">
+          <h2 className="mb-1 text-13 font-semibold">What it costs</h2>
+          <ul className="space-y-0.5">
+            {budget!.labour.by_role.map((row) => (
+              <li key={row.role} className="flex items-baseline gap-2 text-10">
+                <span className="flex-1 truncate">{row.role}</span>
+                <span className="flex-shrink-0 text-tertiary tabular-nums">
+                  {row.days} d
+                  {/* An unrated discipline still shows its days. Printing a blank
+                      would hide work the project is doing. */}
+                  {row.rated ? ` · ${Math.round(row.cost).toLocaleString()} ${row.currency ?? ""}` : " · not costed"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {(budget?.expenses?.by_category?.length ?? 0) > 0 && (
+            <ul className="mt-1 space-y-0.5 border-t border-subtle pt-1">
+              {budget!.expenses.by_category.map((row) => (
+                <li key={row.category} className="flex items-baseline gap-2 text-10">
+                  <span className="flex-1 truncate">{row.category}</span>
+                  <span className="flex-shrink-0 text-tertiary tabular-nums">
+                    {Math.round(row.actual).toLocaleString()} {row.currency}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {((overview?.cycles?.length ?? 0) > 0 || (overview?.modules?.length ?? 0) > 0) && (
+        <section className="mt-5">
+          <h2 className="mb-1 text-13 font-semibold">Sprints and modules</h2>
+          <ul className="space-y-0.5">
+            {(overview?.cycles ?? []).map((cycle) => (
+              <li key={cycle.id} className="flex items-baseline gap-2 text-10">
+                <span className="flex-1 truncate">
+                  {cycle.name}
+                  {cycle.is_active ? " · running" : cycle.is_upcoming ? " · upcoming" : ""}
+                </span>
+                <span className="flex-shrink-0 text-tertiary tabular-nums">
+                  {cycle.completed}/{cycle.total}
+                </span>
+              </li>
+            ))}
+            {(overview?.modules ?? []).map((mod) => (
+              <li key={mod.id} className="flex items-baseline gap-2 text-10">
+                <span className="flex-1 truncate">
+                  {mod.name} · {mod.status}
+                </span>
+                <span className="flex-shrink-0 text-tertiary tabular-nums">
+                  {mod.completed}/{mod.total}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 });

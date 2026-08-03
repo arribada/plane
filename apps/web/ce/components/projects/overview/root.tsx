@@ -347,7 +347,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       )}
       {/* Printed only: the screen has counts and a link to the list, paper has
           neither. */}
-      <OverviewPrintAnnex />
+      <OverviewPrintAnnex overview={data} />
     </div>
   );
 });

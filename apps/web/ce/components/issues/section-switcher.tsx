@@ -14,6 +14,7 @@ import {
   Box,
   Check,
   ChevronsUpDown,
+  Wallet,
   FileText,
   Inbox,
   LayoutDashboard,
@@ -70,6 +71,15 @@ const SECTIONS: Section[] = [
     path: "views",
     icon: <LayoutGrid className={ICON} />,
     enabled: (p) => !!p.issue_views_view,
+  },
+  {
+    key: "finance",
+    label: "Finance",
+    path: "finance",
+    icon: <Wallet className={ICON} />,
+    // Always on: every project has a budget question even when the answer is
+    // "nobody has said", and that answer is worth being able to reach.
+    enabled: () => true,
   },
   { key: "pages", label: "Pages", path: "pages", icon: <FileText className={ICON} />, enabled: (p) => !!p.page_view },
   { key: "intake", label: "Intake", path: "intake", icon: <Inbox className={ICON} />, enabled: (p) => !!p.inbox_view },

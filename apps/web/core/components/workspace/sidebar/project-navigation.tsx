@@ -223,7 +223,14 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
                   <item.icon
                     className={`size-4 flex-shrink-0 ${item.name === "Intake" ? "stroke-1" : "stroke-[1.5]"}`}
                   />
-                  <span className="text-11 font-medium">{t(item.i18n_key)}</span>
+                  {/* `t()` returns the KEY when there is no entry for it, so a
+                      section this fork adds — whose keys are not in upstream's
+                      catalogues — rendered literally as "sidebar.finance". Falling
+                      back to `name` is what every item already carries for exactly
+                      this reason. */}
+                  <span className="text-11 font-medium">
+                    {t(item.i18n_key) === item.i18n_key ? item.name : t(item.i18n_key)}
+                  </span>
                 </div>
                 {shouldShowCount && <span className="text-11 font-medium text-tertiary">{project.intake_count}</span>}
               </div>

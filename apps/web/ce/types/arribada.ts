@@ -575,3 +575,10 @@ export type TPublicTimeline = {
     milestone: { kind: "gate" | "delivery" | "review" } | null;
   }[];
 };
+
+/** Work in person-days, plus the span it implies when a date is missing. */
+export type TIssueEffort = {
+  days: number | null;
+  /** Offered, never applied — the server does not move dates. */
+  suggested_dates: { start_date: string; target_date: string } | null;
+};

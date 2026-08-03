@@ -29,6 +29,7 @@ import type {
   TCurrencySettings,
   TRolePreset,
   TRoleRate,
+  TIssueEffort,
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
@@ -1009,6 +1010,35 @@ export class ArribadaService extends APIService {
   ): Promise<{ name: string; role: string; estimate_days: number }[]> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-sprint-tasks/`, data)
       .then((r) => r?.data?.tasks ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
+   * How much work a task is, in person-days. `days: null` clears it.
+   *
+   * The reply carries a suggested span when the item is missing a date — offered,
+   * never applied: the server does not move dates, and neither does this.
+   */
+  async getIssueEffort(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueEffort> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/effort/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async setIssueEffort(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    days: number | null
+  ): Promise<TIssueEffort> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/effort/`, {
+      days,
+    })
+      .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;
       });

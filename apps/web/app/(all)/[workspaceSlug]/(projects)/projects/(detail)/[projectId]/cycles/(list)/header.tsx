@@ -43,7 +43,7 @@ export const CyclesListHeader = observer(function CyclesListHeader() {
   return (
     <Header>
       <Header.LeftItem>
-        <Breadcrumbs onBack={router.back} isLoading={loader === "init-loader"}>
+        <Breadcrumbs onBack={router.back} isLoading={loader === "init-loader"} className="flex-grow-0">
           <CommonProjectBreadcrumbs workspaceSlug={workspaceSlug?.toString()} projectId={projectId?.toString()} />
           <Breadcrumbs.Item
             component={

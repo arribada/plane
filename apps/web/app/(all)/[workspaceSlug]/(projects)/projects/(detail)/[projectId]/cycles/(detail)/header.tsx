@@ -138,7 +138,7 @@ export const CycleIssuesHeader = observer(function CycleIssuesHeader() {
       <Header>
         <Header.LeftItem>
           <div className="flex items-center gap-2">
-            <Breadcrumbs onBack={router.back} isLoading={loader === "init-loader"}>
+            <Breadcrumbs onBack={router.back} isLoading={loader === "init-loader"} className="flex-grow-0">
               <CommonProjectBreadcrumbs workspaceSlug={workspaceSlug?.toString()} projectId={projectId?.toString()} />
               <Breadcrumbs.Item
                 component={

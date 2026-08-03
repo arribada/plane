@@ -124,7 +124,7 @@ export const ProjectViewIssuesHeader = observer(function ProjectViewIssuesHeader
   return (
     <Header>
       <Header.LeftItem>
-        <Breadcrumbs isLoading={loader === "init-loader"}>
+        <Breadcrumbs isLoading={loader === "init-loader"} className="flex-grow-0">
           <CommonProjectBreadcrumbs workspaceSlug={workspaceSlug?.toString()} projectId={projectId?.toString()} />
           <Breadcrumbs.Item
             component={

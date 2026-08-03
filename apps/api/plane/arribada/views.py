@@ -6347,3 +6347,97 @@ def _spend_rhythm(by_month, allocated, committed, target_date):
         # Missing either one is not "on track", it is "no opinion".
         "over_rate": bool(rate and sustainable and rate > sustainable),
     }
+
+
+class IssueRoleEndpoint(BaseAPIView):
+    """Which discipline a work item belongs to, and who that implies.
+
+    The role has existed since the setup wizard was written and only the wizard
+    could ever write one — no screen, no endpoint. So a project set up by hand had
+    eight dated tasks, ten priced roles, and not a single task that knew which
+    discipline it was: no cost, no per-role breakdown, no capacity.
+
+    Role and assignee are two answers to the same question at different times.
+    Early on you know the discipline and not the person; later you know the person
+    and the discipline follows from them. So each infers the other, and neither
+    overwrites a human's answer:
+
+    - Setting a ROLE assigns the person who holds it, but only when exactly one
+      person on the roster does. Two candidates is a choice, not a default, and
+      picking one would put work on somebody's plate that nobody gave them.
+    - Setting an ASSIGNEE adopts their role, but only when they hold exactly one
+      and the item has none. Somebody who wears three hats has not told you which
+      one this task is.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        role = IssueRole.objects.filter(issue_id=issue_id).values_list("role", flat=True).first()
+        return Response(
+            {
+                "role": role,
+                # The disciplines this project can actually route work to: the
+                # roster's own, plus the standard vocabulary so a project with an
+                # empty roster is not offered an empty list.
+                "options": _project_role_options(project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        role = str(request.data.get("role") or "").strip()[:80]
+        if not role:
+            # Clearing is a real answer. "We no longer say" is not "unassigned".
+            IssueRole.objects.filter(issue_id=issue_id).delete()
+            return Response({"role": None, "assigned": None}, status=status.HTTP_200_OK)
+
+        IssueRole.objects.update_or_create(issue_id=issue_id, defaults={"role": role})
+
+        # Who holds this discipline on this project, and has a Plane account to
+        # be assigned with.
+        holders = list(
+            ProjectTeamMember.objects.filter(project_id=project_id, member_id__isnull=False)
+            .filter(roles__contains=[role])
+            .values_list("member_id", flat=True)
+        )
+        assigned = None
+        if len(holders) == 1 and not IssueAssignee.objects.filter(
+            issue_id=issue_id, deleted_at__isnull=True
+        ).exists():
+            # Only onto an EMPTY item. Adding somebody beside an existing assignee
+            # because a role was set would be the tool making a staffing decision
+            # nobody asked it to make.
+            issue = Issue.objects.filter(id=issue_id).values("workspace_id", "project_id").first()
+            IssueAssignee.objects.get_or_create(
+                issue_id=issue_id,
+                assignee_id=holders[0],
+                defaults={"workspace_id": issue["workspace_id"], "project_id": issue["project_id"]},
+            )
+            assigned = str(holders[0])
+
+        return Response({"role": role, "assigned": assigned}, status=status.HTTP_200_OK)
+
+
+def _project_role_options(project_id):
+    """The roster's disciplines first, then the standard vocabulary."""
+    seen, options = set(), []
+    for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list("roles", flat=True):
+        for role in roles or []:
+            key = str(role).strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                options.append(str(role).strip())
+    for value, _label in PROJECT_ROLES:
+        if value not in seen:
+            seen.add(value)
+            options.append(value)
+    return options

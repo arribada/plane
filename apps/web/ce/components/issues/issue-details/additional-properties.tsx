@@ -7,6 +7,7 @@
 import React from "react";
 // plane imports
 import { IssueEffortField } from "./effort-field";
+import { IssueRoleField } from "./role-field";
 
 export type TWorkItemAdditionalSidebarProperties = {
   workItemId: string;
@@ -20,11 +21,19 @@ export type TWorkItemAdditionalSidebarProperties = {
 export function WorkItemAdditionalSidebarProperties(props: TWorkItemAdditionalSidebarProperties) {
   const { workItemId, projectId, workspaceSlug, isEditable } = props;
   return (
-    <IssueEffortField
-      workspaceSlug={workspaceSlug}
-      projectId={projectId}
-      issueId={workItemId}
-      isEditable={isEditable}
-    />
+    <>
+      <IssueRoleField
+        workspaceSlug={workspaceSlug}
+        projectId={projectId}
+        issueId={workItemId}
+        isEditable={isEditable}
+      />
+      <IssueEffortField
+        workspaceSlug={workspaceSlug}
+        projectId={projectId}
+        issueId={workItemId}
+        isEditable={isEditable}
+      />
+    </>
   );
 }

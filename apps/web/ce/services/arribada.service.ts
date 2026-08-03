@@ -1071,6 +1071,39 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Which discipline a work item belongs to, and the ones this project offers. */
+  async getIssueRole(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string
+  ): Promise<{ role: string | null; options: string[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/role/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
+   * `role: null` clears it. The reply carries `assigned` when setting the role
+   * put the item on somebody — which happens only when exactly one person on the
+   * roster holds that discipline and the item had no assignee.
+   */
+  async setIssueRole(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    role: string | null
+  ): Promise<{ role: string | null; assigned: string | null }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/role/`, {
+      role,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   // --- Public project timeline -----------------------------------------------
 
   async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {

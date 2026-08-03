@@ -10,6 +10,7 @@ from .views import (
     GithubSyncNowEndpoint,
     GithubTriageEndpoint,
     IssueEffortEndpoint,
+    IssueRoleEndpoint,
     ProjectAiSprintTasksEndpoint,
     ProjectPublicTimelineEndpoint,
     PublicTimelineEndpoint,
@@ -307,6 +308,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/procurement/<uuid:request_id>/",
         ProjectProcurementDecisionEndpoint.as_view(),
         name="arribada-project-procurement-decision",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/role/",
+        IssueRoleEndpoint.as_view(),
+        name="arribada-issue-role",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/effort/",

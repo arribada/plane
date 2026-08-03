@@ -53,6 +53,7 @@ export interface IPortfolioStore {
   fetchPortfolio: (workspaceSlug: string) => Promise<void>;
   toggleProjectExpansion: (workspaceSlug: string, projectId: string) => Promise<void>;
   applyItemDates: (itemId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
+  applyProjectDates: (projectId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
   /** false when the reload failed and the board is showing stale rows. */
   refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<boolean>;
   setDisplayedProjectIds: (ids: string[]) => void;
@@ -199,6 +200,7 @@ export class PortfolioStore implements IPortfolioStore {
       fetchPortfolio: action,
       toggleProjectExpansion: action,
       applyItemDates: action,
+      applyProjectDates: action,
       refreshProjectItems: action,
       setDisplayedProjectIds: action,
       setColorBy: action,
@@ -644,6 +646,23 @@ export class PortfolioStore implements IPortfolioStore {
 
   // Dates written elsewhere (bulk modal, AI planner) land on the timeline at once,
   // without waiting for the round-trip a full refresh would need.
+  /**
+   * A project's PLANNED window, moved on the portfolio timeline.
+   *
+   * Deliberately only start/target — never the derived dates. Those are computed
+   * from the project's work items (MIN start / MAX target) and the gap between
+   * the two is the whole reading of this board: writing over them would erase the
+   * drift the chart exists to show.
+   */
+  applyProjectDates = (projectId: string, dates: { start_date?: string | null; target_date?: string | null }): void => {
+    const project = this.projectMap[projectId];
+    if (!project) return;
+    const next = { ...project };
+    if (dates.start_date !== undefined) next.start_date = dates.start_date;
+    if (dates.target_date !== undefined) next.target_date = dates.target_date;
+    set(this.projectMap, [projectId], next);
+  };
+
   applyItemDates = (itemId: string, dates: { start_date?: string | null; target_date?: string | null }): void => {
     const item = this.itemMap[itemId];
     if (!item) return;

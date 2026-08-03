@@ -5857,3 +5857,118 @@ class PublicTimelineEndpoint(BaseAPIView):
             # saves them chasing a link they think is merely broken.
             return Response({"error": "This link has been revoked"}, status=status.HTTP_410_GONE)
         return Response(_public_timeline_payload(project), status=status.HTTP_200_OK)
+
+
+class ProjectAiSprintTasksEndpoint(BaseAPIView):
+    """Propose the work for one sprint from a sentence, and hand it back UNSAVED.
+
+    The setup wizard could only ever offer the catalogue's tasks. That is the
+    right default for a whole project — a V-cycle has a known shape — but it is
+    the wrong tool for "add a sprint to this project", where the work is whatever
+    this fortnight happens to be about and no catalogue can know it.
+
+    The defaults are passed IN rather than replaced: a team that always runs a
+    planning session and a review still wants those, and a model told nothing
+    about them cheerfully invents "Sprint Planning Meeting" beside the one
+    already on the list. It is told which ones are already there and asked to add
+    to them, not to restate them.
+
+    Nothing here writes, like every other assistant endpoint in this app: the
+    wizard shows the result with each row editable and removable, and only the
+    human's Create makes anything.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        context = str(request.data.get("context") or "").strip()[:2000]
+        if not context:
+            return Response(
+                {"error": "Say what this sprint is about first"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        raw_defaults = request.data.get("defaults") or []
+        if not isinstance(raw_defaults, list):
+            raw_defaults = []
+        defaults = [str(d).strip()[:255] for d in raw_defaults if str(d).strip()][:40]
+
+        try:
+            wanted = int(request.data.get("count") or 8)
+        except (TypeError, ValueError):
+            wanted = 8
+        # A sprint nobody can read in one screen is a sprint nobody plans from.
+        wanted = max(1, min(wanted, 20))
+
+        from .ai import chat_json, resolve_config
+
+        config = resolve_config(project.workspace_id)
+        if not config:
+            return Response(
+                {"error": "No AI provider is configured for this workspace."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        roles = ", ".join(value for value, _ in PROJECT_ROLES)
+        # The project's own register, same reasoning as the draft endpoint: a
+        # firmware sprint and a field season use the same words differently.
+        siblings = list(
+            Issue.issue_objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("name", flat=True)[:15]
+        )
+
+        system = (
+            "You plan one sprint for a conservation-technology engineering team "
+            "(GPS and satellite wildlife trackers, thermal cameras, field deployments). "
+            "Answer with a single JSON object and nothing else. One key, tasks: an "
+            "array of objects with name (short imperative, under 80 characters), "
+            f"role (exactly one of: {roles}), and estimate_days (integer working days, 1-15). "
+            f"Return at most {wanted} tasks. "
+            "Each task must be something one person could finish inside a single sprint; "
+            "split anything larger. Do not invent a delivery date, an assignee, or a "
+            "dependency. Prefer fewer, real tasks over padding the list to the maximum."
+        )
+
+        parts = [f"The sprint is about: {context}"]
+        if defaults:
+            # Named explicitly so the model adds to them instead of restating them
+            # under a slightly different name, which is what produces two planning
+            # sessions on the same board.
+            parts.append(
+                "These tasks are ALREADY on the sprint and must not be repeated or "
+                "reworded: " + "; ".join(defaults)
+            )
+        if siblings:
+            parts.append("Recent work items in this project, for vocabulary only: " + "; ".join(siblings))
+
+        data, error = chat_json(config, system, "\n\n".join(parts))
+        if error:
+            return Response({"error": error}, status=status.HTTP_502_BAD_GATEWAY)
+
+        tasks = []
+        seen = {d.strip().lower() for d in defaults}
+        for row in (data or {}).get("tasks") or []:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()[:255]
+            if not name:
+                continue
+            # The instruction not to repeat a default is a request, not a
+            # guarantee; this is what makes it one.
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            role = canonical_role(row.get("role"))
+            try:
+                days = int(row.get("estimate_days") or 3)
+            except (TypeError, ValueError):
+                days = 3
+            tasks.append({"name": name, "role": role, "estimate_days": max(1, min(days, 15))})
+            if len(tasks) >= wanted:
+                break
+
+        return Response({"tasks": tasks}, status=status.HTTP_200_OK)

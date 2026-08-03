@@ -994,6 +994,26 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /**
+   * Propose the work for ONE sprint from a sentence. Nothing is saved; the
+   * wizard shows the rows editable and only its Create writes anything.
+   *
+   * `defaults` are the tasks already on the sprint. They are sent so the model
+   * adds to them instead of proposing "Sprint planning session" beside the
+   * "Sprint planning" that is already there.
+   */
+  async aiSprintTasks(
+    workspaceSlug: string,
+    projectId: string,
+    data: { context: string; defaults: string[]; count?: number }
+  ): Promise<{ name: string; role: string; estimate_days: number }[]> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-sprint-tasks/`, data)
+      .then((r) => r?.data?.tasks ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   // --- Public project timeline -----------------------------------------------
 
   async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {

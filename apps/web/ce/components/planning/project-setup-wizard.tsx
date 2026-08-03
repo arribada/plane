@@ -28,6 +28,7 @@ import type {
   TBlueprintCatalogue,
   TProjectDocs,
   TSetupApplyResult,
+  TPlannedTask,
   TSetupPlan,
   TTeamMember,
 } from "@/plane-web/types/arribada";
@@ -35,12 +36,23 @@ import { PlanReviewTable, usePlanReview } from "./plan-review-table";
 import { AiSettingsModal } from "./ai-settings-modal";
 import { SetupPlanTable } from "./setup-plan-table";
 import { SetupTaskPicker } from "./setup-task-picker";
+import { SprintTaskEditor, newSprintTask, type TSprintTask } from "./sprint-task-editor";
 import { useAiSettings } from "./use-ai-settings";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = { projectId: string | null; onClose: () => void; onCompleted?: () => void };
 
-type StepKey = "scope" | "team" | "tasks" | "cadence" | "plan" | "existing" | "links";
+type StepKey = "mode" | "scope" | "team" | "tasks" | "cadence" | "plan" | "existing" | "links" | "sprint";
+
+/**
+ * What the wizard was opened to do.
+ *
+ * It used to assume "set up a whole project", and asked how to run it as the
+ * second question. But a project that already runs does not need its scope, its
+ * roster or its links re-answered to gain one sprint — and walking eight steps
+ * to add a fortnight of work is how a tool teaches people to plan outside it.
+ */
+type SetupMode = "vcycle" | "agile" | "sprint";
 
 // The two tracks that are a yes/no with a length attached rather than a body of work
 // the lead picks through.
@@ -68,6 +80,18 @@ const errorMessage = (e: unknown, fallback: string) => {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** Calendar days, on the date string itself. UTC on purpose: these are dates, not
+ *  instants, and going through local midnight is what makes a plan built in
+ *  Auckland start a day before the one built in Bristol. */
+const addDays = (date: string, days: number): string => {
+  const ms = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(ms)) return date;
+  return new Date(ms + days * 86_400_000).toISOString().slice(0, 10);
+};
+
+/** ISO dates sort as text, so the earlier one is just the smaller string. */
+const minDate = (a: string, b: string): string => (a <= b ? a : b);
 
 function WizardProgress({ current, total }: { current: number; total: number }) {
   return (
@@ -127,6 +151,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [durations, setDurations] = useState<Record<string, number>>({});
   // 2 — cadence. Running in sprints is not a way of slicing the V: it is a different
   // set of tasks, so this answer is what decides which one the wizard offers.
+  const [setupMode, setSetupMode] = useState<SetupMode>("vcycle");
+  const [sprintName, setSprintName] = useState("");
+  const [sprintTasks, setSprintTasks] = useState<TSprintTask[]>([]);
+  const [sprintContext, setSprintContext] = useState("");
   const [sprintMode, setSprintMode] = useState<"sprints" | "flow">("flow");
   const [sprintLength, setSprintLength] = useState("14");
   const [sprintCount, setSprintCount] = useState("6");
@@ -357,20 +385,29 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   }, [catalogue, tracks.length]);
 
   const steps = useMemo(() => {
-    // Cadence comes second on purpose: running in sprints is not a way of slicing
-    // the V, it is a different set of tasks, so the answer decides what step 4 can
-    // even offer.
-    const list: { key: StepKey; title: string }[] = [
-      { key: "scope", title: "What does this project involve?" },
-      { key: "cadence", title: "How do you want to run it?" },
-      { key: "team", title: "Who works on it?" },
-      { key: "tasks", title: agile ? "Which ceremonies?" : "Which tasks?" },
-      { key: "plan", title: "The plan" },
-    ];
+    const list: { key: StepKey; title: string }[] = [{ key: "mode", title: "What are we doing?" }];
+
+    // Adding one sprint to a project that already runs: its scope, roster and
+    // links have all been answered before, and re-asking them is how somebody
+    // learns to plan the next sprint in a spreadsheet instead.
+    if (setupMode === "sprint") {
+      list.push({ key: "cadence", title: "When does the sprint run?" });
+      list.push({ key: "sprint", title: "What is in it?" });
+      return list;
+    }
+
+    list.push({ key: "scope", title: "What does this project involve?" });
+    // Only the agile route still asks about cadence, and only for the length:
+    // choosing the V-cycle on step one has already answered the rest, and asking
+    // twice is how the two answers end up disagreeing.
+    if (setupMode === "agile") list.push({ key: "cadence", title: "How long is a sprint?" });
+    list.push({ key: "team", title: "Who works on it?" });
+    list.push({ key: "tasks", title: agile ? "Which ceremonies?" : "Which tasks?" });
+    list.push({ key: "plan", title: "The plan" });
     if (hasExistingWork) list.push({ key: "existing", title: "Work already in this project" });
     list.push({ key: "links", title: "Where does the rest of the project live?" });
     return list;
-  }, [hasExistingWork, agile]);
+  }, [hasExistingWork, agile, setupMode]);
 
   // Escape, a focus trap, focus restored on close and a page that stops
   // scrolling underneath — the four things this hand-rolled overlay lacked.
@@ -605,9 +642,171 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     return true;
   };
 
+  /**
+   * The disciplines the sprint editor can offer.
+   *
+   * `roleOptions` is derived from the chosen tracks and the roster, and the
+   * sprint route walks past both of those steps — so a project with no roster
+   * yet reaches the editor with an empty list, a `<select>` with no options and
+   * a role of "". The standard vocabulary is a better answer than a blank, and
+   * it is the same list the "add a discipline" field already suggests.
+   */
+  const sprintRoleOptions = roleOptions.length > 0 ? roleOptions : ROLE_SUGGESTIONS;
+
+  /**
+   * Snap a role onto this project's own vocabulary.
+   *
+   * The catalogue and the model both answer with a role name, and neither is
+   * guaranteed to spell it the way this project's roster does. An unmatched name
+   * would render as a `<select>` value that is not in its own option list, which
+   * silently shows the wrong discipline — so anything unrecognised falls back to
+   * the first real option rather than being trusted.
+   */
+  const matchRole = (value: string | undefined): string => {
+    const key = (value ?? "").trim().toLowerCase();
+    return sprintRoleOptions.find((role) => role.toLowerCase() === key) ?? sprintRoleOptions[0] ?? "";
+  };
+
+  /**
+   * The ceremonies this team already ticked, as editable rows.
+   *
+   * Prefixed with the sprint's name, and that is not decoration: setup-apply
+   * skips any task whose name already exists in the project, and a team's
+   * ceremonies are the same words every sprint. Without the prefix the second
+   * sprint's planning session is silently dropped as a duplicate of the first
+   * one's — the row simply never appears, which is the worst way to lose it.
+   * Prefixing at SEED time rather than on save means what is shown is what gets
+   * created, and it stays editable.
+   */
+  const defaultCeremonyTasks = (): TSprintTask[] => {
+    const blocks = agileCatalogue?.ceremonies ?? [];
+    const chosen = blocks.filter((block) => ceremonies.includes(block.key));
+    const source = chosen.length > 0 ? chosen : blocks;
+    const prefix = sprintName.trim();
+    return source.map((block) =>
+      newSprintTask(
+        prefix ? `${prefix} — ${block.name}` : block.name,
+        matchRole(block.role),
+        block.days || 1,
+        "default"
+      )
+    );
+  };
+
+  const suggestSprintTasks = async () => {
+    if (!projectId || busy) return;
+    setBusy("ai");
+    setError(null);
+    try {
+      const proposed = await service.aiSprintTasks(slug, projectId, {
+        context: sprintContext.trim(),
+        // What is already on the list, so it adds rather than restates.
+        defaults: sprintTasks.map((task) => task.name),
+        count: 8,
+      });
+      if (proposed.length === 0) {
+        setError("The assistant had nothing to add to what is already there.");
+        return;
+      }
+      setSprintTasks((current) => [
+        ...current,
+        ...proposed.map((row) => newSprintTask(row.name, matchRole(row.role), row.estimate_days || 3, "ai")),
+      ]);
+    } catch (e) {
+      setError(errorMessage(e, "The assistant could not propose tasks."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Write the sprint. Dates are laid out here rather than asked of the model:
+   * each discipline runs its own tasks back to back from the sprint's start, so
+   * two people never appear to be blocked on each other for no reason, and
+   * nothing is allowed past the sprint's end — a sprint whose work runs beyond
+   * it is not a sprint, and the editor already warned about the over-commitment.
+   */
+  const applySprint = async (): Promise<boolean> => {
+    if (!projectId) return false;
+    const rows = sprintTasks.filter((task) => task.name.trim().length > 0);
+    if (rows.length === 0) {
+      setError("Add at least one task, or cancel.");
+      return false;
+    }
+    const begins = startDate || today();
+    const length = Math.max(1, Number(sprintLength) || 14);
+    const lastDay = addDays(begins, length - 1);
+
+    const cursorByRole: Record<string, string> = {};
+    const tasks: TPlannedTask[] = rows.map((task, position) => {
+      const from = cursorByRole[task.role] ?? begins;
+      const to = minDate(addDays(from, Math.max(1, task.days) - 1), lastDay);
+      cursorByRole[task.role] = minDate(addDays(to, 1), lastDay);
+      return {
+        key: `sprint-${position}`,
+        name: task.name.trim(),
+        track: "sprint",
+        phase: "sprint",
+        role: task.role,
+        days: Math.max(1, task.days),
+        after: [],
+        start_date: from,
+        target_date: to,
+        assignee_id: null,
+        assignee_name: null,
+        sprint: 1,
+      };
+    });
+
+    setBusy("apply");
+    try {
+      const result = await service.setupApply(slug, projectId, {
+        tasks,
+        sprints: [
+          {
+            index: 1,
+            name: sprintName.trim() || `Sprint from ${begins}`,
+            start_date: begins,
+            end_date: lastDay,
+            task_count: tasks.length,
+          },
+        ],
+        // The project's own window is already set; widening it because one
+        // sprint was added would rewrite a date somebody agreed with a funder.
+        set_project_window: false,
+      });
+      onCompleted?.();
+      // A name that already exists in the project is skipped server-side, not
+      // written. Closing on "done" while rows were quietly dropped is how
+      // somebody finds out three weeks later that the sprint has no review in
+      // it, so the wizard stays open and says which ones.
+      if (result?.skipped?.length) {
+        setError(
+          `Created ${result.created}. Already in this project, so not added again: ${result.skipped.join(", ")}. ` +
+            `Rename them if this sprint needs its own.`
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      setError(errorMessage(e, "Could not create the sprint."));
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const next = async () => {
     if (busy) return;
     setError(null);
+    // Arriving at the sprint step seeds it with the ceremonies this team runs —
+    // once. Re-seeding on every visit would resurrect rows somebody deleted on
+    // purpose, which is why it only fires on an untouched list.
+    if (step.key === "cadence" && setupMode === "sprint" && sprintTasks.length === 0) {
+      setSprintTasks(defaultCeremonyTasks());
+      setIndex((i) => i + 1);
+      return;
+    }
     // Reaching the plan step with nothing computed yet builds it, rather than showing
     // an empty page with a button on it.
     if (step.key === "tasks") {
@@ -618,6 +817,13 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     if (isLast) {
       setBusy("step");
       try {
+        // The sprint route has no plan table to apply: its rows ARE the plan, so
+        // Finish writes them and stops.
+        if (setupMode === "sprint") {
+          const written = await applySprint();
+          if (written) finish();
+          return;
+        }
         // Finishing applies the plan. Someone who walked through every step and
         // pressed Finish meant "do it" — leaving the work items uncreated because
         // they did not also press Create on step five is a trap, not a safeguard.
@@ -652,6 +858,73 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
 
   const renderStep = () => {
     switch (step.key) {
+      case "mode":
+        return (
+          <div className="space-y-2">
+            {(
+              [
+                {
+                  key: "vcycle",
+                  title: "Set up a whole project — V-cycle",
+                  hint: "Design, build, verify, validate. One timeline; work starts when what it waits on finishes.",
+                },
+                {
+                  key: "agile",
+                  title: "Set up a whole project — sprints",
+                  hint: "The same project, cut into fixed periods. Creates a cycle per sprint.",
+                },
+                {
+                  key: "sprint",
+                  title: "Add one sprint to this project",
+                  hint: "The project already exists. Just the next fortnight: its ceremonies, plus whatever it is about.",
+                },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => {
+                  setSetupMode(option.key);
+                  // The cadence answer follows from this one; leaving them to be
+                  // set separately is how a "V-cycle" project ends up with cycles.
+                  setSprintMode(option.key === "vcycle" ? "flow" : "sprints");
+                }}
+                aria-pressed={setupMode === option.key}
+                className={cn(
+                  "block w-full rounded-lg border p-3 text-left transition-colors",
+                  setupMode === option.key
+                    ? "border-accent-strong bg-accent-primary/5"
+                    : "border-subtle hover:bg-layer-2"
+                )}
+              >
+                <span className="block text-13 font-semibold text-primary">{option.title}</span>
+                <span className="mt-0.5 block text-11 text-secondary">{option.hint}</span>
+              </button>
+            ))}
+            {setupMode !== "sprint" && hasExistingWork && (
+              <p className="pt-1 text-11 text-tertiary">
+                This project already has work in it. Setting it up again adds to what is there rather than replacing it
+                — you will see the existing items before anything is written.
+              </p>
+            )}
+          </div>
+        );
+
+      case "sprint":
+        return (
+          <SprintTaskEditor
+            tasks={sprintTasks}
+            onChange={setSprintTasks}
+            roleOptions={sprintRoleOptions}
+            context={sprintContext}
+            onContext={setSprintContext}
+            onSuggest={suggestSprintTasks}
+            suggesting={busy === "ai"}
+            aiAvailable={aiAvailable}
+            capacityDays={Number(sprintLength) || 14}
+          />
+        );
+
       case "scope":
         return (
           <div className="space-y-4">
@@ -981,7 +1254,57 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       case "cadence":
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {setupMode === "sprint" && (
+              // Adding one sprint: flow-vs-sprints was settled on step one, and the
+              // count belongs to a project being laid out, not to a single sprint.
+              // What is left is what this one is called and when it runs.
+              <div className="space-y-3 rounded-lg border border-subtle p-3">
+                <div>
+                  <label className={label} htmlFor={`${uid}-sprint-name`}>
+                    Sprint name
+                  </label>
+                  <input
+                    id={`${uid}-sprint-name`}
+                    className={field}
+                    value={sprintName}
+                    onChange={(e) => setSprintName(e.target.value)}
+                    placeholder="Sprint 7 — enclosure bench tests"
+                  />
+                </div>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div>
+                    <label className={label} htmlFor={`${uid}-sprint-start`}>
+                      Starts
+                    </label>
+                    <input
+                      id={`${uid}-sprint-start`}
+                      type="date"
+                      className={cn(field, "w-44")}
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={label} htmlFor={`${uid}-sprint-only-length`}>
+                      Length
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        id={`${uid}-sprint-only-length`}
+                        type="number"
+                        min={1}
+                        max={90}
+                        className={cn(field, "w-20")}
+                        value={sprintLength}
+                        onChange={(e) => setSprintLength(e.target.value)}
+                      />
+                      <span className="text-12 text-secondary">days</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className={cn("grid grid-cols-1 gap-2 sm:grid-cols-2", setupMode === "sprint" && "hidden")}>
               {(
                 [
                   {
@@ -1013,7 +1336,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                 </button>
               ))}
             </div>
-            {sprintMode === "sprints" && (
+            {sprintMode === "sprints" && setupMode !== "sprint" && (
               <div className="space-y-3 rounded-lg border border-subtle p-3">
                 <div className="flex flex-wrap items-end gap-4">
                   <div>

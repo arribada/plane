@@ -59,16 +59,20 @@ def _repos_to_sync():
     from plane.arribada.models import ProjectWikiDoc
     from plane.arribada.views import _github_url  # reuse the hardened extractor
 
-    explicit = os.environ.get("GITHUB_SYNC_REPOS", "").strip()
-    if explicit:
-        repos = set()
-        for part in explicit.split(","):
-            part = part.strip().removesuffix(".git").strip("/")
-            if part:
-                repos.add(part.lower())
-        return repos
-
+    # The explicit list ADDS to the mapped ones; it does not replace them.
+    #
+    # It used to return early, which made sense when it was written: nothing was
+    # mapped, so an env var was the only way to name a repo. Now that ten projects
+    # declare 43 repos between them, the early return meant the sync fetched nine
+    # and ignored the rest — so "issues go to the project that linked the repo"
+    # could never fire for a repo that was not also in the variable.
     repos = set()
+    explicit = os.environ.get("GITHUB_SYNC_REPOS", "").strip()
+    for part in explicit.split(","):
+        part = part.strip().removesuffix(".git").strip("/")
+        if part:
+            repos.add(part.lower())
+
     for doc in ProjectWikiDoc.objects.exclude(github_repo_urls=[]):
         for url in doc.github_repo_urls or []:
             u = _github_url(url) or str(url)

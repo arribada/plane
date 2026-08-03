@@ -30,6 +30,7 @@ import { OverviewJumpBar } from "./jump-bar";
 import { OverviewBudgetBlock } from "./budget-block";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewProgressSections } from "./progress-sections";
+import { OverviewPrintAnnex } from "./print-annex";
 import { OverviewPublicLinkBlock } from "./public-link-block";
 import { OverviewRecentPages } from "./recent-pages";
 import { OverviewSection } from "./section";
@@ -344,6 +345,9 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           onCleaned={refresh}
         />
       )}
+      {/* Printed only: the screen has counts and a link to the list, paper has
+          neither. */}
+      <OverviewPrintAnnex />
     </div>
   );
 });

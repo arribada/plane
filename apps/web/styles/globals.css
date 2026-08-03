@@ -253,6 +253,13 @@
 
   /* Sections collapse by default and most days nobody is looking at money — but
      a report with its budget folded away is not a report. */
+  /* The annex is display:none on screen and is the half of the report paper
+     actually needs — the task inventory and a condensed timeline. */
+  .print-root .print-annex {
+    display: block !important;
+    break-before: page;
+  }
+
   .print-root .overview-section-body {
     display: block !important;
   }

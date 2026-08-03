@@ -7,6 +7,8 @@
 //
 import type { IBlockUpdateDependencyData } from "@plane/types";
 import { GanttChartBlock } from "@/components/gantt-chart/blocks/block";
+import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 
 export type GanttChartBlocksProps = {
   blockIds: string[];
@@ -35,24 +37,33 @@ export function GanttChartBlocksList(props: GanttChartBlocksProps) {
 
   return (
     <>
-      {blockIds?.map((blockId) => (
-        <GanttChartBlock
-          key={blockId}
-          blockId={blockId}
-          showAllBlocks={showAllBlocks}
-          blockToRender={blockToRender}
-          enableBlockLeftResize={
-            typeof enableBlockLeftResize === "function" ? enableBlockLeftResize(blockId) : enableBlockLeftResize
-          }
-          enableBlockRightResize={
-            typeof enableBlockRightResize === "function" ? enableBlockRightResize(blockId) : enableBlockRightResize
-          }
-          enableBlockMove={typeof enableBlockMove === "function" ? enableBlockMove(blockId) : enableBlockMove}
-          enableDependency={typeof enableDependency === "function" ? enableDependency(blockId) : enableDependency}
-          ganttContainerRef={ganttContainerRef}
-          updateBlockDates={updateBlockDates}
-        />
-      ))}
+      {blockIds?.map((blockId) =>
+        // A group header takes a row in the sidebar and in the row-background
+        // layer, so it has to take one here too. It has no block behind it, so
+        // GanttChartBlock returns null — and a null contributes NO height, which
+        // is the whole bug: this layer is stacked in document flow, so every bar
+        // below a header climbed one row and sat against the wrong label.
+        isGroupRowId(blockId) ? (
+          <div key={blockId} style={{ height: `${BLOCK_HEIGHT}px` }} aria-hidden />
+        ) : (
+          <GanttChartBlock
+            key={blockId}
+            blockId={blockId}
+            showAllBlocks={showAllBlocks}
+            blockToRender={blockToRender}
+            enableBlockLeftResize={
+              typeof enableBlockLeftResize === "function" ? enableBlockLeftResize(blockId) : enableBlockLeftResize
+            }
+            enableBlockRightResize={
+              typeof enableBlockRightResize === "function" ? enableBlockRightResize(blockId) : enableBlockRightResize
+            }
+            enableBlockMove={typeof enableBlockMove === "function" ? enableBlockMove(blockId) : enableBlockMove}
+            enableDependency={typeof enableDependency === "function" ? enableDependency(blockId) : enableDependency}
+            ganttContainerRef={ganttContainerRef}
+            updateBlockDates={updateBlockDates}
+          />
+        )
+      )}
     </>
   );
 }

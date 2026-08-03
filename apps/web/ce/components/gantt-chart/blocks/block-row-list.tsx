@@ -12,7 +12,7 @@ import { BlockRow } from "@/components/gantt-chart/blocks/block-row";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { GanttGroupBand } from "../group-row";
-import { isGroupRowId } from "../grouping";
+import { groupKeyFromRowId, isGroupRowId } from "../grouping";
 // types
 
 export type GanttChartBlocksProps = {
@@ -42,7 +42,7 @@ export function GanttChartRowList(props: GanttChartBlocksProps) {
         // A group header occupies a row on both sides. It has no block behind it,
         // so it must be answered before anything asks the store for one.
         isGroupRowId(blockId) ? (
-          <GanttGroupBand key={blockId} />
+          <GanttGroupBand key={blockId} groupKey={groupKeyFromRowId(blockId)} />
         ) : (
           <RenderIfVisible
             key={blockId}

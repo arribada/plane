@@ -12,6 +12,9 @@ import { observer } from "mobx-react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
+import { getPositionFromDate } from "@/components/gantt-chart/views/helpers";
+import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import { useGanttGroups } from "./group-context";
 
 type Props = {
   label: string;
@@ -73,14 +76,48 @@ export const GanttGroupHeader = observer(function GanttGroupHeader(props: Props)
   );
 });
 
-/** The chart-pane counterpart: a full-width band so the group reads across the whole
- *  timeline, with nothing in it — the sidebar already carries the name. */
-export function GanttGroupBand() {
+/**
+ * The chart-pane counterpart: the group's span drawn as a brace.
+ *
+ * It used to be an empty full-width band, which said only "a group starts here"
+ * — so the one question a reader actually has, *when* does this sprint run,
+ * could only be answered by tracing its members' bars by eye. Worse, a task tied
+ * to the end of a sprint was drawn with a dependency arrow, which reads as "this
+ * task waits for that task" when it means "this waits for the sprint to close".
+ *
+ * A brace says it directly: two uprights at the sprint's first start and last
+ * end, a hairline between them. It is not a bar — a bar would compete with the
+ * work items for the same visual weight and invite someone to try dragging it.
+ */
+export const GanttGroupBand = observer(function GanttGroupBand({ groupKey }: { groupKey: string }) {
+  const { byKey } = useGanttGroups();
+  const store = useTimeLineChartStore();
+  const group = byKey.get(groupKey);
+  const chart = store.currentViewData;
+
+  let span: { left: number; width: number } | null = null;
+  if (group?.start && group?.end && chart) {
+    const left = getPositionFromDate(chart, group.start, 0);
+    const right = getPositionFromDate(chart, group.end, 0) + chart.data.dayWidth;
+    // A one-day sprint would otherwise be two uprights on top of each other.
+    if (Number.isFinite(left) && Number.isFinite(right)) {
+      span = { left, width: Math.max(right - left, 2) };
+    }
+  }
+
   return (
     <div
       style={{ height: `${BLOCK_HEIGHT}px` }}
-      className="w-full border-y-[0.5px] border-subtle bg-layer-2/40"
+      className="relative w-full border-y-[0.5px] border-subtle bg-layer-2/40"
       aria-hidden
-    />
+    >
+      {span && (
+        <div className="absolute inset-y-0 flex items-center" style={{ left: span.left, width: span.width }}>
+          <span className="bg-tertiary/70 h-3 w-px shrink-0" />
+          <span className="bg-tertiary/40 h-px flex-1" />
+          <span className="bg-tertiary/70 h-3 w-px shrink-0" />
+        </div>
+      )}
+    </div>
   );
-}
+});

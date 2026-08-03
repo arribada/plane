@@ -56,18 +56,40 @@ function edgeEndpoints(rel: TIssueRelationEdge): { from: string; to: string } {
   return { from: rel.issue_id, to: rel.related_issue_id };
 }
 
-// Orthogonal elbow with rounded corners, right edge of source -> left edge of target.
+/**
+ * Orthogonal elbow with rounded corners, drawn in whichever direction the pair
+ * actually sits — rightwards when the successor is later, leftwards when it is
+ * earlier.
+ *
+ * It used to always leave the source's right edge and arrive at the target's
+ * left, because that is the finish-to-start picture. When the two bars are the
+ * other way round on the timeline that forces the line to travel back past both
+ * of them, and it lands on the far side of the target — so a task whose
+ * dependency sits LATER got an arrow pinned to its left, pointing away from the
+ * thing it waits for. Mirroring the elbow makes it a short hop between the two
+ * facing edges instead.
+ *
+ * The leftward shape is the exact mirror of the rightward one about a vertical
+ * axis, which is why the arc sweep flags are inverted rather than re-derived:
+ * mirroring an arc always flips its sweep.
+ */
 function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
   const down = y2 >= y1 ? 1 : -1;
-  if (x2 >= x1 + 24) {
-    const midX = Math.max(x1 + 12, x2 - 20);
-    return `M ${x1} ${y1} H ${midX - R} a ${R} ${R} 0 0 ${down > 0 ? 1 : 0} ${R} ${down * R} V ${
+  const dir = x2 >= x1 ? 1 : -1;
+  const forwardIn = down > 0 ? 1 : 0;
+  const forwardOut = down > 0 ? 0 : 1;
+  const sweepIn = dir > 0 ? forwardIn : 1 - forwardIn;
+  const sweepOut = dir > 0 ? forwardOut : 1 - forwardOut;
+
+  if (Math.abs(x2 - x1) >= 24) {
+    const midX = dir > 0 ? Math.max(x1 + 12, x2 - 20) : Math.min(x1 - 12, x2 + 20);
+    return `M ${x1} ${y1} H ${midX - dir * R} a ${R} ${R} 0 0 ${sweepIn} ${dir * R} ${down * R} V ${
       y2 - down * R
-    } a ${R} ${R} 0 0 ${down > 0 ? 0 : 1} ${R} ${down * R} H ${x2}`;
+    } a ${R} ${R} 0 0 ${sweepOut} ${dir * R} ${down * R} H ${x2}`;
   }
-  // target is left of / near the source: loop under the source bar
+  // The two bars are nearly stacked: no room for an elbow, so step around.
   const backY = y1 + down * (BLOCK_HEIGHT / 2);
-  return `M ${x1} ${y1} h 12 V ${backY} H ${x2 - 12} V ${y2} H ${x2}`;
+  return `M ${x1} ${y1} h ${dir * 12} V ${backY} H ${x2 - dir * 12} V ${y2} H ${x2}`;
 }
 
 export const TimelineDependencyPaths = observer(function TimelineDependencyPaths(_props: { isEpic?: boolean }) {
@@ -123,13 +145,23 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       const si = indexById.get(from);
       const ti = indexById.get(to);
       if (!src?.position || !tgt?.position || si === undefined || ti === undefined) return null;
-      const x1 = src.position.marginLeft + src.position.width;
+      const srcLeft = src.position.marginLeft;
+      const srcRight = srcLeft + src.position.width;
+      const tgtLeft = tgt.position.marginLeft;
+      const tgtRight = tgtLeft + tgt.position.width;
+      // Leave from the edge that faces the other bar. Only when the target sits
+      // ENTIRELY left of the source is the pair genuinely backwards; bars that
+      // merely overlap still read best finish-to-start.
+      const backwards = tgtRight < srcLeft;
+      const x1 = backwards ? srcLeft : srcRight;
       const y1 = si * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      const x2 = tgt.position.marginLeft;
+      const x2 = backwards ? tgtRight : tgtLeft;
       const y2 = ti * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
       return {
         key: `${from}-${to}-${rel.relation_type}`,
-        d: elbowPath(x1, y1, x2 - HEAD, y2),
+        // Stop short of the bar on whichever side we arrive from, so the
+        // arrowhead touches the edge instead of overlapping the bar.
+        d: elbowPath(x1, y1, backwards ? x2 + HEAD : x2 - HEAD, y2),
         color: COLOR[rel.relation_type] ?? "#94a3b8",
         from,
         to,

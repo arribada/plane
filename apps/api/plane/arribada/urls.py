@@ -8,6 +8,7 @@ from .views import (
     ProjectProcurementDecisionEndpoint,
     ProjectProcurementEndpoint,
     GithubSyncNowEndpoint,
+    GithubTriageEndpoint,
     IssueEffortEndpoint,
     ProjectAiSprintTasksEndpoint,
     ProjectPublicTimelineEndpoint,
@@ -161,6 +162,11 @@ urlpatterns = [
         "workspaces/<str:slug>/adopt-issues/",
         AdoptIssuesEndpoint.as_view(),
         name="arribada-adopt-issues",
+    ),
+    path(
+        "workspaces/<str:slug>/github-triage/",
+        GithubTriageEndpoint.as_view(),
+        name="arribada-github-triage",
     ),
     path(
         "workspaces/<str:slug>/github-inbox/",

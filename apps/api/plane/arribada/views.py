@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Max, Min, Q, Sum
+from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -6186,5 +6186,56 @@ class GithubSyncNowEndpoint(BaseAPIView):
                 "fetched": (result or {}).get("fetched", 0),
                 "skipped": None,
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+def _github_untriaged(project_ids):
+    """Per project: GitHub-sourced items nobody has finished dealing with.
+
+    "Untriaged" is deliberately not "unread". An issue arrives with a title, a
+    link and nothing else — no dates, no owner, not attached to anything. It stops
+    being a queue item when somebody has made ANY of those three decisions, which
+    is why the test is a disjunction rather than a flag somebody has to remember
+    to set. A flag would need maintaining; this reads the work itself.
+    """
+    # `~Exists`, not `.exclude(issue_assignee__deleted_at__isnull=True)`. On a
+    # reverse relation Django turns `isnull=True` into a LEFT JOIN with an IS NULL
+    # test, which matches rows that have NO related record at all — so excluding
+    # it removed every issue, assigned or not, and the counter read zero forever.
+    # Verified against production: 34 GitHub issues, 34 "already assigned", 0 left.
+    assigned = IssueAssignee.objects.filter(issue_id=OuterRef("id"), deleted_at__isnull=True)
+    rows = (
+        Issue.issue_objects.filter(project_id__in=list(project_ids), external_source="github")
+        .filter(start_date__isnull=True, target_date__isnull=True, parent__isnull=True)
+        .filter(~Exists(assigned))
+        .values("project_id")
+        .annotate(n=Count("id", distinct=True))
+    )
+    return {str(r["project_id"]): r["n"] for r in rows}
+
+
+class GithubTriageEndpoint(BaseAPIView):
+    """How much GitHub work is still sitting untouched, and where.
+
+    Two readings from one call, because they are the same question at two
+    altitudes: the workspace total belongs on Home, where somebody decides
+    whether to spend the morning on it, and the per-project split belongs beside
+    each project, where somebody can actually act.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        projects = _visible_projects(request, slug).filter(archived_at__isnull=True)
+        by_project = _github_untriaged(projects.values_list("id", flat=True))
+        names = {str(p["id"]): p["name"] for p in projects.values("id", "name")}
+        rows = [
+            {"project_id": pid, "project_name": names.get(pid, ""), "untriaged": n}
+            for pid, n in by_project.items()
+            if n
+        ]
+        rows.sort(key=lambda r: -r["untriaged"])
+        return Response(
+            {"total": sum(r["untriaged"] for r in rows), "projects": rows},
             status=status.HTTP_200_OK,
         )

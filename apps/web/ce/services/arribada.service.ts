@@ -754,7 +754,16 @@ export class ArribadaService extends APIService {
     data: Partial<
       Pick<
         TProjectSchedule,
-        "start_date" | "target_date" | "budget_amount" | "budget_currency" | "schedule_from_deliveries"
+        | "start_date"
+        | "target_date"
+        | "budget_amount"
+        | "budget_currency"
+        | "schedule_from_deliveries"
+        // Lead-only, enforced server-side: a member who could unlock the timeline
+        // is not looking at a locked timeline.
+        | "timeline_locked"
+        | "allow_edit_others"
+        | "allow_add_items"
       >
     >
   ): Promise<TProjectSchedule> {

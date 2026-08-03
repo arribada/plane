@@ -114,6 +114,13 @@ export type TProjectSchedule = {
    *  budget view reports differently from zero. */
   budget_amount?: number | null;
   budget_currency?: string;
+  /** A hard stop on moving anything from the timeline. Not a permission: the lead
+   *  locks it too, because it says "this plan is agreed", not "you may not". */
+  timeline_locked?: boolean;
+  /** Whether a member may change a work item nobody assigned to them. */
+  allow_edit_others?: boolean;
+  /** Whether a member may add work items at all. */
+  allow_add_items?: boolean;
   id: string;
   project: string;
   start_date: string | null;

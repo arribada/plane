@@ -2165,6 +2165,14 @@ class ProjectScheduleEndpoint(BaseAPIView):
                 {"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND
             )
         payload = request.data
+        # The three settings that say who may change the plan are the lead's, and
+        # only the lead's. A member who could unlock the timeline is not looking at
+        # a locked timeline — the setting would only be documenting an intention.
+        governance = {"timeline_locked", "allow_edit_others", "allow_add_items"}
+        if governance & set(payload.keys()):
+            denied = _lead_guard(request, project_id)
+            if denied:
+                return denied
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
         if "budget_currency" in payload:
             # Nothing validated this before, because no UI had ever sent it. A typo

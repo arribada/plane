@@ -42,12 +42,14 @@ import { useLabel } from "@/hooks/store/use-label";
 import { useMember } from "@/hooks/store/use-member";
 import { useModule } from "@/hooks/store/use-module";
 import { useProjectState } from "@/hooks/store/use-project-state";
-import { useUserPermissions } from "@/hooks/store/user";
+import { useUser, useUserPermissions } from "@/hooks/store/user";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 // plane web hooks
 import { useBulkOperationStatus } from "@/plane-web/hooks/use-bulk-operation-status";
+import { GanttLockButton } from "@/plane-web/components/gantt-chart/lock-button";
+import { usePlanLock } from "@/plane-web/components/gantt-chart/use-plan-lock";
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
@@ -85,6 +87,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.ISSUE);
   // store hooks
   const { allowPermissions } = useUserPermissions();
+  const { data: currentUser } = useUser();
 
   const appliedDisplayFilters = issuesFilter.issueFilters?.displayFilters;
   // plane web hooks
@@ -323,7 +326,32 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     return () => ganttUndo.clear();
   }, [projectId]);
 
-  const isAllowed = allowPermissions([EUserPermissions.ADMIN, EUserPermissions.MEMBER], EUserPermissionsLevel.PROJECT);
+  const permitted = allowPermissions([EUserPermissions.ADMIN, EUserPermissions.MEMBER], EUserPermissionsLevel.PROJECT);
+  const planLock = usePlanLock(workspaceSlug?.toString(), projectId?.toString());
+  // Plane's permission is necessary but no longer sufficient. A locked plan stops
+  // everyone, the lead included, because the lock says "this is agreed" rather
+  // than "you may not" — a lock its owner can ignore by accident is not a lock.
+  const isAllowed = permitted && !planLock.locked;
+  // Adding is gated separately: a project can be open to edits and closed to new
+  // items, which is the usual shape once a scope has been agreed with a funder.
+  const canAddItems = isAllowed && planLock.allowAddItems;
+
+  /**
+   * Whether this specific bar may be moved.
+   *
+   * With `allow_edit_others` off, only the item's own assignees and the lead may
+   * touch it. Checked per block rather than globally because the answer differs
+   * per row — which is exactly why the gantt's enable* props accept a function.
+   */
+  const canEditBlock = useCallback(
+    (blockId: string) => {
+      if (!isAllowed) return false;
+      if (planLock.allowEditOthers) return true;
+      const assignees = getIssueById(blockId)?.assignee_ids ?? [];
+      return assignees.includes(currentUser?.id ?? "");
+    },
+    [isAllowed, planLock.allowEditOthers, getIssueById, currentUser?.id]
+  );
   const updateBlockDates = useCallback(
     (
       updates: {
@@ -354,7 +382,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   );
 
   const quickAdd =
-    enableIssueCreation && isAllowed && !isCompletedCycle ? (
+    enableIssueCreation && canAddItems && !isCompletedCycle ? (
       <QuickAddIssueRoot
         layout={EIssueLayoutTypes.GANTT}
         QuickAddButton={GanttQuickAddIssueButton}
@@ -387,6 +415,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
               <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
                 <GanttColorBy />
                 <GanttGroupBy />
+                <GanttLockButton lock={planLock} />
                 <BaselinePicker />
                 <GanttExportButton collect={collectForExport} />
                 <GanttUndoButton onUndo={handleGanttUndo} />
@@ -401,15 +430,15 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
                 sidebarToRender={(sidebarProps) => (
                   <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />
                 )}
-                enableBlockLeftResize={isAllowed}
-                enableBlockRightResize={isAllowed}
-                enableBlockMove={isAllowed}
+                enableBlockLeftResize={canEditBlock}
+                enableBlockRightResize={canEditBlock}
+                enableBlockMove={canEditBlock}
                 // Dragging to reorder writes a sort_order derived from the rows either
                 // side. With bands on screen those neighbours can be headers, or sit in
                 // another group entirely, so the drag would mean something the user did
                 // not ask for. Grouping and manual order are exclusive.
                 enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed && groupBy === "none"}
-                enableAddBlock={isAllowed}
+                enableAddBlock={canAddItems}
                 enableSelection={isBulkOperationsEnabled && isAllowed}
                 quickAdd={quickAdd}
                 loadMoreBlocks={loadMoreIssues}

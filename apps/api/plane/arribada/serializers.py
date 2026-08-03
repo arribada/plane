@@ -22,6 +22,10 @@ class ProjectScheduleSerializer(serializers.ModelSerializer):
             # default and per project: a planner that moved dates because of a
             # supplier's promise nobody opted into is one people stop using.
             "schedule_from_deliveries",
+            # Who may change the plan. All permissive by default — see the model.
+            "timeline_locked",
+            "allow_edit_others",
+            "allow_add_items",
             "budget_currency",
             "created_at",
             "updated_at",

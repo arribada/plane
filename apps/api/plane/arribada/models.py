@@ -49,6 +49,26 @@ class ProjectSchedule(models.Model):
     # then holds for every reflow.
     schedule_from_deliveries = models.BooleanField(default=False)
 
+    # --- who may change the plan -------------------------------------------
+    #
+    # All three default to the permissive answer, because a tool that starts by
+    # forbidding things is a tool people route around. They exist for the moment
+    # a plan stops being a draft: a lead about to show a funder a timeline needs
+    # to know it will still say the same thing tomorrow.
+
+    # A hard stop on moving anything: no dragging, no resizing, no new items from
+    # the timeline. Not a permission — the lead locks it too, on purpose, because
+    # the point is "this plan is agreed", not "you specifically may not".
+    timeline_locked = models.BooleanField(default=False)
+
+    # Whether a member may change a work item nobody has assigned to them. Off
+    # means the item's assignees and the lead can move it and nobody else can,
+    # which is what a project with an external contributor usually wants.
+    allow_edit_others = models.BooleanField(default=True)
+
+    # Whether a member may add work items to this project at all.
+    allow_add_items = models.BooleanField(default=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

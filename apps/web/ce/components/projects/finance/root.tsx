@@ -26,7 +26,13 @@ export const ProjectFinanceRoot = observer(function ProjectFinanceRoot() {
   if (!projectId) return null;
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-4 overflow-y-auto px-4 py-6 md:px-6">
+    // No `h-full` and no `overflow-y-auto` here, deliberately. ContentWrapper
+    // above already scrolls, and the page wrapper is `h-full` — adding a third
+    // scroll container clamped to the viewport meant the panel that opens when
+    // you set an hourly rate grew INSIDE a box that could not scroll, so its
+    // save button was simply unreachable. Overview gets this right by being a
+    // plain flex column and letting the wrapper do the scrolling.
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 md:px-6">
       <header>
         <h1 className="text-16 font-semibold text-primary">Finance</h1>
         <p className="mt-0.5 text-12 text-tertiary">

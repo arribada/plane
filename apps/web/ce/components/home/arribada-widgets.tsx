@@ -11,10 +11,11 @@
  * a month. All four are off until switched on in Manage widgets; nothing here
  * appears for somebody who did not ask for it.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Flag, ShoppingCart, TrendingDown } from "lucide-react";
+import { AlertTriangle, Flag, Github, RefreshCw, ShoppingCart, TrendingDown } from "lucide-react";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -316,6 +317,117 @@ export const DriftWidget = observer(function DriftWidget() {
           <span className="flex-shrink-0 text-11 font-medium text-danger-primary tabular-nums">+{row.drift} d</span>
         </li>
       ))}
+    </WidgetShell>
+  );
+});
+
+/**
+ * Why the GitHub inbox is still full, split by what you can actually do.
+ *
+ * Two different problems wear the same face on the board, and reporting them
+ * together as "unrouted" is what makes the fixable ones look unfixable. A repo NO
+ * project claims is a link somebody forgot — one edit and its issues file
+ * themselves on the next sync. A repo SEVERAL projects claim cannot be routed at
+ * all, because guessing an owner would put work under a project that never asked
+ * for it, so those stay a human decision per issue.
+ *
+ * The widget states which is which and how many issues each is holding, because
+ * "39 in the inbox" is a number nobody can act on.
+ */
+export const GithubInboxWidget = observer(function GithubInboxWidget() {
+  const { workspaceSlug } = useParams();
+  const [gap, setGap] = useState<Awaited<ReturnType<ArribadaService["getGithubInboxGap"]>> | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!workspaceSlug) return;
+    setGap(await service.getGithubInboxGap(workspaceSlug.toString()));
+  }, [workspaceSlug]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const resync = async () => {
+    if (!workspaceSlug || !gap?.inbox_project_id) return;
+    setSyncing(true);
+    try {
+      const r = await service.githubSyncNow(workspaceSlug.toString(), gap.inbox_project_id);
+      setToast({
+        type: r.skipped ? TOAST_TYPE.INFO : TOAST_TYPE.SUCCESS,
+        title: r.skipped ? "Nothing was pulled" : `${r.created} new, ${r.updated} updated`,
+        message: r.skipped ?? "Newly linked repos have filed their issues.",
+      });
+      await load();
+    } catch {
+      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't sync", message: "GitHub did not answer." });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const unclaimed = gap?.unclaimed ?? [];
+  const contested = gap?.contested ?? [];
+
+  return (
+    <WidgetShell
+      title="GitHub inbox"
+      icon={<Github className="size-3.5" />}
+      loading={gap === null}
+      count={unclaimed.length + contested.length}
+      empty="Nothing is stuck: every synced repo belongs to exactly one project."
+    >
+      <div className="space-y-2">
+        {unclaimed.length > 0 && (
+          <div>
+            <p className="mb-1 text-11 text-warning-primary">
+              No project claims these — link the repo on that project and they file themselves.
+            </p>
+            <ul className="space-y-0.5">
+              {unclaimed.map((row) => (
+                <li key={row.repo} className="flex items-baseline gap-2 text-11">
+                  <span className="min-w-0 flex-1 truncate text-secondary">{row.repo}</span>
+                  <span className="flex-shrink-0 text-tertiary tabular-nums">{row.count}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {contested.length > 0 && (
+          <div className={unclaimed.length > 0 ? "border-t border-subtle pt-2" : ""}>
+            <p className="mb-1 text-11 text-tertiary">
+              Claimed by several projects, so nobody can route them for you — these stay a per-issue call.
+            </p>
+            <ul className="space-y-0.5">
+              {contested.map((row) => (
+                <li key={row.repo} className="flex items-baseline gap-2 text-11">
+                  <span className="min-w-0 flex-1 truncate text-secondary" title={row.projects.join(", ")}>
+                    {row.repo}
+                  </span>
+                  <span className="flex-shrink-0 text-tertiary">{row.projects.length} projects</span>
+                  <span className="flex-shrink-0 text-tertiary tabular-nums">{row.count}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {unclaimed.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void resync()}
+            disabled={syncing}
+            className={cn(
+              "flex items-center gap-1.5 rounded border border-subtle px-2 py-1 text-11 text-secondary",
+              syncing ? "opacity-50" : "hover:bg-layer-1 hover:text-primary"
+            )}
+          >
+            <RefreshCw className={cn("size-3", syncing && "animate-spin")} />
+            {syncing ? "Syncing…" : "Sync again"}
+          </button>
+        )}
+      </div>
     </WidgetShell>
   );
 });

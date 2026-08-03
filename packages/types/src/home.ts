@@ -16,6 +16,7 @@ export type THomeWidgetKeys =
   | "new_at_plane"
   // Arribada's own, all off until switched on in Manage widgets.
   | "arribada_deliverables"
+  | "arribada_github_inbox"
   | "arribada_conflicts"
   | "arribada_approvals"
   | "arribada_drift";

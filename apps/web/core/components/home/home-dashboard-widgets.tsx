@@ -24,6 +24,7 @@ import { MyTasksWidget } from "@/plane-web/components/home/my-tasks-widget";
 import {
   ConflictsWidget,
   DeliverablesWidget,
+  GithubInboxWidget,
   DriftWidget,
   MyApprovalsWidget,
 } from "@/plane-web/components/home/arribada-widgets";
@@ -71,6 +72,11 @@ export const HOME_WIDGETS_LIST: {
     component: DeliverablesWidget,
     fullWidth: false,
     title: "Upcoming deliverables",
+  },
+  arribada_github_inbox: {
+    component: GithubInboxWidget,
+    fullWidth: false,
+    title: "GitHub inbox",
   },
   arribada_conflicts: {
     component: ConflictsWidget,

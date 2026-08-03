@@ -1053,6 +1053,24 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /**
+   * Pull GitHub issues now rather than waiting for the nightly run.
+   *
+   * Runs inline server-side, so the reply says what actually happened — a queued
+   * job returning an id would tell the caller nothing about whether the token is
+   * set, the repos are mapped, or anything arrived.
+   */
+  async githubSyncNow(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ created: number; updated: number; fetched: number; skipped: string | null }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/github-sync/`, {})
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   // --- Public project timeline -----------------------------------------------
 
   async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {

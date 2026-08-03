@@ -23,6 +23,7 @@ import {
   MessageSquare,
   Pencil,
   Plus,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -76,6 +77,34 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const editable = canEdit && loaded && !loadFailed;
 
   const repos = docs.github_repo_urls ?? [];
+
+  const [syncing, setSyncing] = useState(false);
+  const syncGithubNow = async () => {
+    if (!workspaceSlug || !projectId) return;
+    setSyncing(true);
+    try {
+      const r = await service.githubSyncNow(workspaceSlug.toString(), projectId.toString());
+      if (r.skipped) {
+        // A configuration answer, not a failure: say which one, because "no token"
+        // and "no repos mapped" need different people to do different things.
+        setToast({ type: TOAST_TYPE.INFO, title: "Nothing was pulled", message: r.skipped });
+      } else {
+        setToast({
+          type: TOAST_TYPE.SUCCESS,
+          title: `${r.created} new, ${r.updated} updated`,
+          message: `${r.fetched} open issues read from GitHub.`,
+        });
+      }
+    } catch (e) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't sync",
+        message: (e as { error?: string })?.error ?? "GitHub did not answer.",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
   const addRepo = async () => {
     const v = draftRepo.trim();
     if (!v) return;
@@ -368,6 +397,25 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
         </span>
         <div className="flex min-w-0 flex-grow flex-col gap-1.5">
           {repos.length === 0 && editing !== "github" && emptyRow("Not linked yet — add the project's GitHub repo(s).")}
+          {repos.length > 0 && (
+            // Beside the repos it acts on, not in a menu three clicks away. The
+            // sync has always run nightly; what was missing was being able to ask
+            // for it at the moment you care — right after linking a repo, or two
+            // minutes after opening an issue you want on the board.
+            <button
+              type="button"
+              onClick={() => void syncGithubNow()}
+              disabled={syncing}
+              title="Pull open issues from these repos into the GitHub inbox now, instead of waiting for tonight."
+              className={cn(
+                "flex items-center gap-1.5 self-start rounded border border-subtle px-2 py-1 text-11 text-secondary",
+                syncing ? "opacity-50" : "hover:bg-layer-2 hover:text-primary"
+              )}
+            >
+              <RefreshCw className={cn("size-3", syncing && "animate-spin")} />
+              {syncing ? "Syncing…" : "Sync issues now"}
+            </button>
+          )}
           {repos.map((url) => (
             <span key={url} className="flex items-center gap-1.5">
               <a

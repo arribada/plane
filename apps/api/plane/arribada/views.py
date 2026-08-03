@@ -6139,3 +6139,52 @@ def _add_working_days(start, count):
         if current.weekday() < 5:
             remaining -= 1
     return current
+
+
+class GithubSyncNowEndpoint(BaseAPIView):
+    """Pull GitHub issues now, instead of waiting for the nightly run.
+
+    The sync itself has existed and run on a schedule; what was missing was the
+    ability to ask for it. That matters at exactly the moment somebody cares: a
+    lead who has just linked a repo, or who opened an issue on GitHub two minutes
+    ago and wants it on the board before the stand-up, has otherwise no answer
+    but "tomorrow".
+
+    Runs INLINE rather than through the queue. The caller is watching, and a
+    queued job that returns "accepted" tells them nothing about whether the PAT
+    is set, the repos are mapped, or anything actually arrived — which are the
+    three things that go wrong and the three things they need to see.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from .github_sync_task import github_plane_sync
+
+        try:
+            # `.run()` on the shared task calls the function body directly: no
+            # broker, no worker, and the real return value rather than an id.
+            result = github_plane_sync.run()
+        except Exception as exc:  # noqa: BLE001 — the reason is shown verbatim
+            return Response(
+                {"error": f"The sync failed ({exc.__class__.__name__})."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if isinstance(result, dict) and result.get("skipped"):
+            # A configuration answer, not a failure: 200 with the reason, so the
+            # button can say "nothing to do, and here is why" instead of going red.
+            return Response({"skipped": result["skipped"], "created": 0, "updated": 0}, status=status.HTTP_200_OK)
+
+        return Response(
+            {
+                "created": (result or {}).get("created", 0),
+                "updated": (result or {}).get("updated", 0),
+                "fetched": (result or {}).get("fetched", 0),
+                "skipped": None,
+            },
+            status=status.HTTP_200_OK,
+        )

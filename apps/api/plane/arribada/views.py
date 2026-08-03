@@ -4856,6 +4856,28 @@ class ProjectBudgetEndpoint(BaseAPIView):
             key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
             by_month[key] = by_month.get(key, 0.0) + float(row.total)
 
+        # Labour belongs on the same timeline. A task that finished last month IS
+        # money the project spent, whether or not anybody typed an expense line —
+        # and a project whose cost is entirely people (most of them here) had an
+        # empty rhythm chart while carrying forty thousand euros of work.
+        #
+        # Attributed to the month a task ENDS rather than spread across its span.
+        # Spreading implies a precision nobody has: nothing here records when the
+        # hours were actually worked, and a smooth line invented from a start and
+        # an end date would read as measurement rather than as arithmetic.
+        rate_map = _rate_map(slug)
+        for row in rows:
+            role = (roles.get(str(row["id"])) or "").strip().lower()
+            rate = rate_map.get(role) if role else None
+            if not rate:
+                continue
+            days = _working_days_between(row["start_date"], row["target_date"])
+            cost = days * float(rate.get("hours_per_day") or 0) * float(rate.get("hourly_rate") or 0)
+            if cost <= 0 or rate.get("currency") != allocation_currency:
+                continue
+            key = f"{row['target_date'].year}-{row['target_date'].month:02d}"
+            by_month[key] = by_month.get(key, 0.0) + cost
+
         schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
         allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
         allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"

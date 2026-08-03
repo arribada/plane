@@ -4856,6 +4856,11 @@ class ProjectBudgetEndpoint(BaseAPIView):
             key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
             by_month[key] = by_month.get(key, 0.0) + float(row.total)
 
+
+        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+        allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
+        allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
+
         # Labour belongs on the same timeline. A task that finished last month IS
         # money the project spent, whether or not anybody typed an expense line —
         # and a project whose cost is entirely people (most of them here) had an
@@ -4877,10 +4882,6 @@ class ProjectBudgetEndpoint(BaseAPIView):
                 continue
             key = f"{row['target_date'].year}-{row['target_date'].month:02d}"
             by_month[key] = by_month.get(key, 0.0) + cost
-
-        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
-        allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
-        allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
 
         # What has been committed against the allocation, in the allocation's own
         # currency only. Anything billed in another currency is counted separately

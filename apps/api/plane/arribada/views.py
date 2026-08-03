@@ -36,6 +36,7 @@ from .models import (
     IssueRole,
     ProjectFolder,
     ProjectFolderItem,
+    ProjectPublicTimeline,
     ProjectBaseline,
     ProjectSchedule,
     ProjectStatusUpdate,
@@ -5624,3 +5625,235 @@ class WorkloadTimelineEndpoint(BaseAPIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+def _may_publish(request, project):
+    """Who may put a project's schedule outside the login.
+
+    The project lead, a project admin, or a workspace admin. Deliberately NOT any
+    member: publishing is irreversible in the only way that matters — whoever read
+    the page has read it, and revoking afterwards cannot take that back.
+    """
+    if project.project_lead_id and str(project.project_lead_id) == str(request.user.id):
+        return True
+    if ProjectMember.objects.filter(
+        project_id=project.id, member=request.user, is_active=True, role=ROLE.ADMIN.value
+    ).exists():
+        return True
+    return WorkspaceMember.objects.filter(
+        workspace_id=project.workspace_id, member=request.user, is_active=True, role=ROLE.ADMIN.value
+    ).exists()
+
+
+def _public_timeline_payload(project):
+    """Everything the public page shows, built field by field.
+
+    Written as an explicit whitelist rather than a serializer with `exclude`: an
+    exclude list starts leaking the day someone adds a field upstream, and the
+    fields next door here are assignees, rates and expenses.
+
+    Deliberately absent: assignees, budgets, expenses, rates, estimates,
+    priorities, descriptions, comments, artifact links (they point into the wiki
+    and Drive), state NAMES (a custom state can read "blocked on funder" — the
+    group is enough to colour a bar), and every other project.
+    """
+    schedule = ProjectSchedule.objects.filter(project_id=project.id).first()
+
+    issues = list(
+        Issue.issue_objects.filter(project_id=project.id)
+        .filter(Q(start_date__isnull=False) | Q(target_date__isnull=False))
+        .values("id", "name", "start_date", "target_date", "state__group")
+    )
+    milestones = {
+        str(m.issue_id): m for m in IssueMilestone.objects.filter(issue__project_id=project.id)
+    }
+
+    items = []
+    for row in issues:
+        milestone = milestones.get(str(row["id"]))
+        items.append(
+            {
+                # `label` exists for exactly this: the internal name is written for
+                # the team, and a funder reads a different one.
+                "name": (milestone.label or row["name"]) if milestone else row["name"],
+                "start_date": row["start_date"],
+                "target_date": row["target_date"],
+                "state_group": row["state__group"],
+                "milestone": {"kind": milestone.kind} if milestone else None,
+            }
+        )
+    # Undated items are filtered out above, so both keys below are always a date.
+    items.sort(key=lambda i: (i["start_date"] or i["target_date"], i["target_date"] or i["start_date"]))
+
+    return {
+        "project": {
+            "name": project.name,
+            "start_date": schedule.start_date if schedule else None,
+            "target_date": schedule.target_date if schedule else None,
+        },
+        "items": items,
+    }
+
+
+def _public_link_json(link):
+    if not link:
+        return None
+    return {
+        "anchor": link.anchor,
+        "created_at": link.created_at,
+        "created_by_name": (link.created_by.display_name if link.created_by else None),
+    }
+
+
+class ProjectPublicTimelineEndpoint(BaseAPIView):
+    """Create, read and revoke one project's public schedule link."""
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        link = ProjectPublicTimeline.objects.filter(
+            project_id=project_id, revoked_at__isnull=True
+        ).select_related("created_by").first()
+        return Response(
+            {
+                "link": _public_link_json(link),
+                "may_publish": _may_publish(request, project),
+                # So the dialog can state how many bars go out, rather than asking
+                # someone to publish first and look afterwards.
+                "item_count": len(_public_timeline_payload(project)["items"]),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not _may_publish(request, project):
+            return Response(
+                {"error": "Only the project lead or an admin can publish this project"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        existing = (
+            ProjectPublicTimeline.objects.filter(project_id=project_id, revoked_at__isnull=True)
+            .select_related("created_by")
+            .first()
+        )
+        if existing:
+            # A second click hands back the live link rather than minting a new
+            # anchor: a fresh one would silently kill a URL already sitting in
+            # somebody's inbox.
+            return Response(_public_link_json(existing), status=status.HTTP_200_OK)
+        try:
+            link = ProjectPublicTimeline.objects.create(project_id=project_id, created_by=request.user)
+        except IntegrityError:
+            # Two clicks landing together both pass the check above and both try to
+            # insert; the partial unique index rejects the loser. That is the
+            # constraint doing its job, not an error worth showing — hand back the
+            # link the winner created.
+            existing = (
+                ProjectPublicTimeline.objects.filter(project_id=project_id, revoked_at__isnull=True)
+                .select_related("created_by")
+                .first()
+            )
+            if not existing:
+                raise
+            return Response(_public_link_json(existing), status=status.HTTP_200_OK)
+        return Response(_public_link_json(link), status=status.HTTP_201_CREATED)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not _may_publish(request, project):
+            return Response(
+                {"error": "Only the project lead or an admin can revoke this link"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # Revoked, never deleted: the row is the only record that the link existed,
+        # who published it, and when it stopped working.
+        updated = ProjectPublicTimeline.objects.filter(
+            project_id=project_id, revoked_at__isnull=True
+        ).update(revoked_at=timezone.now(), revoked_by=request.user)
+        if not updated:
+            return Response({"error": "No live link for this project"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WorkspacePublicTimelinesEndpoint(BaseAPIView):
+    """Every live public link in the workspace, in one place.
+
+    A link with no expiry that nobody can enumerate is a link nobody remembers to
+    revoke. This makes "what of ours is readable without a login" answerable in
+    one look.
+    """
+
+    # Members and admins, NOT guests. This list names every published project in
+    # the workspace, and a guest is an outside collaborator scoped to the one
+    # project they were invited to — handing them the full project list would be
+    # the leak this page exists to prevent.
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def get(self, request, slug):
+        links = (
+            ProjectPublicTimeline.objects.filter(
+                project__workspace__slug=slug,
+                revoked_at__isnull=True,
+                # A soft-deleted project's link is dead to readers already; listing
+                # it here would just be a row nobody can act on.
+                project__deleted_at__isnull=True,
+            )
+            .select_related("project", "created_by")
+            .order_by("-created_at")
+        )
+        # Every member sees the whole list, including projects they are not in: a
+        # link outside the login is everyone's business, and hiding rows would
+        # defeat the point. Only the project NAME and who published it appear —
+        # never the project's contents.
+        return Response(
+            {
+                "links": [
+                    {
+                        "project_id": str(link.project_id),
+                        "project_name": link.project.name,
+                        "anchor": link.anchor,
+                        "created_at": link.created_at,
+                        "created_by_name": (link.created_by.display_name if link.created_by else None),
+                    }
+                    for link in links
+                ]
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PublicTimelineEndpoint(BaseAPIView):
+    """The page itself, read with no account.
+
+    The anchor is the only credential, so this view never accepts a project id or
+    a workspace slug from the caller: every field it returns is derived from the
+    row the anchor resolves to.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, anchor):
+        link = ProjectPublicTimeline.objects.filter(anchor=anchor).first()
+        if not link:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Resolved through the default manager rather than `link.project`, and NOT
+        # with select_related: a FK traversal is a plain join, so it applies no
+        # manager and happily returns a SOFT-DELETED project. Project.objects is a
+        # SoftDeletionManager, so asking it is what makes deleting a project take
+        # its public page down with it — and it keeps doing so if upstream adds
+        # another state later, which enumerating the states here would not.
+        project = Project.objects.filter(id=link.project_id, archived_at__isnull=True).first()
+        if not link.is_live or project is None:
+            # 410 rather than 404: whoever holds this URL already knew the page
+            # existed, so saying "it was turned off" tells them nothing new and
+            # saves them chasing a link they think is merely broken.
+            return Response({"error": "This link has been revoked"}, status=status.HTTP_410_GONE)
+        return Response(_public_timeline_payload(project), status=status.HTTP_200_OK)

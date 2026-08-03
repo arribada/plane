@@ -32,8 +32,12 @@ import type {
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
+  TPublicTimeline,
+  TPublicTimelineLink,
+  TPublicTimelineState,
   TTeamMember,
   TUserTimeline,
+  TWorkspacePublicTimeline,
 } from "@/plane-web/types/arribada";
 
 // The roster endpoint answers with the vocabulary too, so the editor can offer
@@ -987,6 +991,55 @@ export class ArribadaService extends APIService {
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;
+      });
+  }
+
+  // --- Public project timeline -----------------------------------------------
+
+  async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
+   * Publishing twice returns the SAME anchor. Minting a fresh one would silently
+   * kill a URL already sitting in somebody's inbox.
+   */
+  async publishTimeline(workspaceSlug: string, projectId: string): Promise<TPublicTimelineLink> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`, {})
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async revokeTimeline(workspaceSlug: string, projectId: string): Promise<unknown> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async getWorkspacePublicTimelines(workspaceSlug: string): Promise<TWorkspacePublicTimeline[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/public-timelines/`)
+      .then((r) => r?.data?.links ?? [])
+      .catch(() => []);
+  }
+
+  /**
+   * Read with no account. The anchor is the only credential, so nothing else is
+   * passed. The whole response is rethrown rather than `.data`: the page has to
+   * tell 404 (never existed) from 410 (revoked), and only the status says which.
+   */
+  async getPublicTimeline(anchor: string): Promise<TPublicTimeline> {
+    return this.get(`/api/arribada/public/timeline/${anchor}/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response;
       });
   }
 }

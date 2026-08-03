@@ -96,6 +96,39 @@ jobs:
             plane-backend:candidate \
             python -c "import django; django.setup(); from django.urls import get_resolver; routes = [str(p.pattern) for p in get_resolver().url_patterns]; assert 'api/arribada/' in routes, f'arribada routes missing: {routes}'; print('routes OK:', [r for r in routes if 'arribada' in r])"
 
+      - name: Run the arribada test suite
+        # Runs in the candidate image BEFORE the push, so a red test cannot produce
+        # a deployable artifact. The image carries production deps only, so the
+        # throwaway container installs the repo's pinned test tools itself.
+        #
+        # The floor is not decoration. pytest.ini collects `test_*.py`, and these
+        # files were once named `tests_*.py`: `pytest plane/arribada/` collected
+        # ZERO and a naive job would have gone green while testing nothing. Exit
+        # code 5 catches losing them ALL; the floor catches losing SOME. Raise it
+        # when you add tests.
+        run: |
+          docker run --rm \
+            -e DJANGO_SETTINGS_MODULE=plane.settings.test -e SECRET_KEY=ci \
+            -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/d \
+            -e REDIS_URL=redis://127.0.0.1:6379/ \
+            -e AMQP_URL=amqp://guest:guest@127.0.0.1:5672/ \
+            plane-backend:candidate \
+            sh -lc '
+              set -e
+              pip install -q "pytest==9.0.3" "pytest-django==4.5.2"
+              cd /code
+              # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
+              # that kills the script before the message below ever prints —
+              # turning the one failure this guard exists for into a bare exit 1.
+              N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
+              echo "collected $N arribada tests"
+              if [ "$N" -lt 76 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 76 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+                exit 1
+              fi
+              python -m pytest plane/arribada/
+            '
+
       - name: Push image
         uses: docker/build-push-action@v6
         with:

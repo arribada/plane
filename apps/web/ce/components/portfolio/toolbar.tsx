@@ -17,6 +17,7 @@ import {
   Flag,
   Folder,
   FolderKanban,
+  Globe,
   MoreHorizontal,
   Route,
   SlidersHorizontal,
@@ -31,6 +32,7 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioColorBy, TPortfolioProject, TPortfolioSortBy } from "@/plane-web/types/arribada";
 import { CloneProjectModal } from "./clone-project-modal";
 import { buildPortfolioSvg, downloadPng, downloadSvg } from "./export";
+import { PublishedLinksModal } from "./published-links-modal";
 import { UndatedItemsModal } from "./undated-items-modal";
 
 const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
@@ -67,6 +69,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const service = useMemo(() => new ArribadaService(), []);
   const [openMenu, setOpenMenu] = useState<TMenu | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [publishedOpen, setPublishedOpen] = useState(false);
   const [undatedProjectId, setUndatedProjectId] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
@@ -473,6 +476,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 <Copy className="size-3.5 text-secondary" />
                 New from template
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  setPublishedOpen(true);
+                }}
+                title="Every project schedule currently readable without a login"
+                className={menuRow}
+              >
+                <Globe className="size-3.5 text-secondary" />
+                Published links
+              </button>
               <div className="my-1 h-px bg-layer-2" />
               <div className="px-2 py-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
                 Export timeline
@@ -505,6 +520,8 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       </div>
 
       <CloneProjectModal isOpen={cloneOpen} onClose={() => setCloneOpen(false)} />
+
+      <PublishedLinksModal isOpen={publishedOpen} onClose={() => setPublishedOpen(false)} />
 
       <UndatedItemsModal
         // remount per project: none of the previous project's rows or drafts survive

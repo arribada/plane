@@ -981,3 +981,68 @@ class CycleScopeSnapshot(models.Model):
 
     def __str__(self):
         return f"{self.cycle_id} {self.date} {self.completed}/{self.total}"
+
+
+def public_anchor():
+    """32 unguessable hex characters. The anchor IS the credential."""
+    return uuid.uuid4().hex
+
+
+class ProjectPublicTimeline(models.Model):
+    """A read-only, no-login link to one project's schedule.
+
+    Funders and partners ask "where is this project" far more often than they can
+    be given accounts, so the answer today is a screenshot pasted into an email —
+    stale the moment it is sent.
+
+    Deliberately NOT upstream's DeployBoard. Publishing a project through that
+    model switches on Plane's own public board, which serves every work item with
+    its assignees, comments and reactions. What belongs outside is the schedule and
+    nothing else: milestones and bars. Assignees, budgets, expenses, rates, hours,
+    internal notes and every other project in the workspace stay behind the login,
+    and the only way to be sure of that is to build the public payload field by
+    field in this app rather than filter an existing serializer down.
+
+    The anchor is the credential: whoever holds the URL can read it, and there is
+    no expiry. That is the accepted trade, because a funder cannot be issued an
+    account. It is also why revoking is a first-class act rather than a delete —
+    the row outlives the link so "who published this, and when did it stop
+    working" keeps an answer.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_public_timelines"
+    )
+    anchor = models.CharField(max_length=64, default=public_anchor, unique=True, db_index=True)
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        db_table = "arribada_project_public_timeline"
+        ordering = ("-created_at",)
+        verbose_name = "Project public timeline"
+        verbose_name_plural = "Project public timelines"
+        constraints = [
+            # At most one LIVE link per project. Re-publishing after a revoke mints
+            # a NEW anchor, which is the entire point: the old URL has to go dead,
+            # so handing out a fresh link can never quietly resurrect the old one.
+            models.UniqueConstraint(
+                fields=["project"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="arribada_one_live_public_timeline_per_project",
+            )
+        ]
+
+    @property
+    def is_live(self):
+        return self.revoked_at is None
+
+    def __str__(self):
+        return f"{self.project_id} {'live' if self.is_live else 'revoked'}"

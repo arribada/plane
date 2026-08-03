@@ -30,6 +30,7 @@ import { OverviewJumpBar } from "./jump-bar";
 import { OverviewBudgetBlock } from "./budget-block";
 import { OverviewKpiTiles } from "./kpi-tiles";
 import { OverviewProgressSections } from "./progress-sections";
+import { OverviewPublicLinkBlock } from "./public-link-block";
 import { OverviewRecentPages } from "./recent-pages";
 import { OverviewSection } from "./section";
 import { OverviewSummary } from "./summary";
@@ -249,6 +250,13 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           nobody is looking at money. */}
       <OverviewSection title="What it costs">
         <OverviewBudgetBlock />
+      </OverviewSection>
+
+      {/* Straight after cost, and collapsed: publishing is rare, but somebody
+          looking for it looks among the project's outward-facing settings rather
+          than down among the sprints. */}
+      <OverviewSection title="Shared outside the login">
+        <OverviewPublicLinkBlock />
       </OverviewSection>
 
       <OverviewSection title="The numbers">

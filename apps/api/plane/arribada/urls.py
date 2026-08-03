@@ -7,6 +7,9 @@ from django.urls import path
 from .views import (
     ProjectProcurementDecisionEndpoint,
     ProjectProcurementEndpoint,
+    ProjectPublicTimelineEndpoint,
+    PublicTimelineEndpoint,
+    WorkspacePublicTimelinesEndpoint,
     ProjectBudgetEndpoint,
     ProjectExpenseDetailEndpoint,
     ProjectExpensesEndpoint,
@@ -295,5 +298,22 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/procurement/<uuid:request_id>/",
         ProjectProcurementDecisionEndpoint.as_view(),
         name="arribada-project-procurement-decision",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/public-timeline/",
+        ProjectPublicTimelineEndpoint.as_view(),
+        name="arribada-project-public-timeline",
+    ),
+    path(
+        "workspaces/<str:slug>/public-timelines/",
+        WorkspacePublicTimelinesEndpoint.as_view(),
+        name="arribada-workspace-public-timelines",
+    ),
+    # No workspace slug and no project id in this path on purpose: the anchor is
+    # the only credential, so nothing the caller supplies may widen what is read.
+    path(
+        "public/timeline/<str:anchor>/",
+        PublicTimelineEndpoint.as_view(),
+        name="arribada-public-timeline",
     ),
 ]

@@ -544,3 +544,34 @@ export type TProcurementRequest = {
   expense_id: string | null;
   created_at: string;
 };
+
+/** A live, no-login link to one project's schedule. */
+export type TPublicTimelineLink = {
+  anchor: string;
+  created_at: string;
+  created_by_name: string | null;
+};
+
+export type TPublicTimelineState = {
+  link: TPublicTimelineLink | null;
+  may_publish: boolean;
+  /** How many bars would go out, so the dialog can say so before publishing. */
+  item_count: number;
+};
+
+export type TWorkspacePublicTimeline = TPublicTimelineLink & {
+  project_id: string;
+  project_name: string;
+};
+
+/** What a reader with no account gets. Note what is NOT here. */
+export type TPublicTimeline = {
+  project: { name: string; start_date: string | null; target_date: string | null };
+  items: {
+    name: string;
+    start_date: string | null;
+    target_date: string | null;
+    state_group: string | null;
+    milestone: { kind: "gate" | "delivery" | "review" } | null;
+  }[];
+};

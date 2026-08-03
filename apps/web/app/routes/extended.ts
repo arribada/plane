@@ -8,15 +8,6 @@ import { layout, route } from "@react-router/dev/routes";
 import type { RouteConfigEntry } from "@react-router/dev/routes";
 
 export const extendedRoutes: RouteConfigEntry[] = [
-  // A project's money on its own page. The components are the Overview's — two
-  // surfaces computing a budget slightly differently is how a project ends up
-  // with two answers to "how much have we spent".
-  layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/finance/layout.tsx", [
-    route(
-      ":workspaceSlug/projects/:projectId/finance",
-      "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/finance/page.tsx"
-    ),
-  ]),
   // A project's schedule, readable with no account. Registered here rather than
   // in core.ts so the upstream route table stays untouched, and nested under its
   // own layout so it inherits no authentication wrapper — the sign-up wrapper

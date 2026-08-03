@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, Wallet } from "lucide-react";
 // plane imports
 import { EUserPermissions, EProjectFeatureKey } from "@plane/constants";
 import { CycleIcon, IntakeIcon, ModuleIcon, PageIcon, ViewsIcon, WorkItemsIcon } from "@plane/propel/icons";
@@ -31,6 +31,18 @@ export const getProjectFeatureNavigation = (
     access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
     shouldRender: true,
     sortOrder: 0,
+  },
+  {
+    i18n_key: "sidebar.finance",
+    key: EProjectFeatureKey.FINANCE,
+    name: "Finance",
+    href: `/${workspaceSlug}/projects/${projectId}/finance`,
+    icon: Wallet,
+    // Guests excluded: a budget is not something an outside collaborator is
+    // invited to read, and every other money surface here already says so.
+    access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    shouldRender: true,
+    sortOrder: 5,
   },
   {
     i18n_key: "sidebar.work_items",

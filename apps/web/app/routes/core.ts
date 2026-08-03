@@ -157,6 +157,18 @@ export const coreRoutes: RouteConfigEntry[] = [
             ),
           ]),
 
+          // Project Finance (Arribada). Nested inside the project layout like
+          // every other section: registered at the top level it rendered with no
+          // sidebar, no app header and none of the scroll container that
+          // ContentWrapper provides — a page you could not scroll and could not
+          // navigate away from.
+          layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/finance/layout.tsx", [
+            route(
+              ":workspaceSlug/projects/:projectId/finance",
+              "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/finance/page.tsx"
+            ),
+          ]),
+
           // Project Issues List
           layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/issues/(list)/layout.tsx", [
             route(

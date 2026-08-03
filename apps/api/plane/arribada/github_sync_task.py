@@ -109,7 +109,7 @@ def _fetch_open_issues(pat, repo, max_pages=5):
 
 @shared_task
 def github_plane_sync():
-    from plane.db.models import Issue, Project, State, WorkspaceMember
+    from plane.db.models import Issue, IssueAssignee, Project, State, WorkspaceMember
 
     pat = os.environ.get("GITHUB_PAT")
     if not pat:
@@ -178,6 +178,30 @@ def github_plane_sync():
                     .first()
                 )
                 if existing:
+                    # A row somebody has already dealt with is theirs, not the
+                    # sync's. Filing it, dating it, attaching it to a task or
+                    # assigning it are all acts of triage, and re-importing over
+                    # any of them undoes a decision a human made deliberately —
+                    # which is worse than the issue never arriving.
+                    #
+                    # Read from the work itself rather than a "touched" flag:
+                    # a flag has to be set by every code path that edits an
+                    # issue, and the one path that forgets is the one that
+                    # silently loses somebody's afternoon.
+                    triaged = bool(
+                        existing.start_date
+                        or existing.target_date
+                        or existing.parent_id
+                        # The explicit join, not `existing.assignees`: the M2M
+                        # goes through IssueAssignee, which is soft-deleted, so a
+                        # removed assignee would still count as triage.
+                        or IssueAssignee.objects.filter(
+                            issue_id=existing.id, deleted_at__isnull=True
+                        ).exists()
+                    )
+                    if triaged:
+                        continue
+
                     fields = []
                     if existing.project_id != target.id:
                         existing.project_id = target.id

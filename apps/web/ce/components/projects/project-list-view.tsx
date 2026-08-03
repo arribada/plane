@@ -17,7 +17,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, FolderPlus } from "lucide-react";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -97,12 +98,86 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
       return next;
     });
 
+  /**
+   * Moving a project between missions.
+   *
+   * Native HTML5 drag rather than a library: a row is already a link, the drop
+   * targets are the section headers that are already on screen, and pulling in a
+   * drag-and-drop dependency to move one row between two lists would be more
+   * machinery than the feature.
+   *
+   * The grouping is recomputed optimistically so the row lands where it was
+   * dropped, then corrected from the server — a row that snaps back for a second
+   * before settling reads as a bug even when the write succeeded.
+   */
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  const moveToFolder = async (projectId: string, folderKey: string) => {
+    if (!workspaceSlug) return;
+    const folderId = folderKey === UNFILED ? null : folderKey;
+    const before = folders;
+    setFolders((current) =>
+      current.map((f) => ({
+        ...f,
+        project_ids:
+          f.id === folderId
+            ? [...f.project_ids.filter((id) => id !== projectId), projectId]
+            : f.project_ids.filter((id) => id !== projectId),
+      }))
+    );
+    try {
+      await service.assignProjectToFolder(workspaceSlug.toString(), projectId, folderId);
+    } catch {
+      setFolders(before);
+      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't move it", message: "The project stayed where it was." });
+    }
+  };
+
+  const newMission = async () => {
+    if (!workspaceSlug) return;
+    const name = window.prompt("Name the mission");
+    if (!name?.trim()) return;
+    try {
+      const created = await service.createFolder(workspaceSlug.toString(), name.trim());
+      setFolders((current) => [...current, { id: created.id, name: created.name, project_ids: [] }]);
+    } catch {
+      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't create the mission" });
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 px-4 pb-8 md:px-6">
+      <button
+        type="button"
+        onClick={() => void newMission()}
+        className="flex items-center gap-1.5 self-start rounded border border-subtle px-2 py-1 text-12 text-secondary hover:bg-layer-2 hover:text-primary"
+      >
+        <FolderPlus className="size-3.5" />
+        New mission
+      </button>
       {groups.map(([key, group]) => {
         const open = !collapsed.has(key);
         return (
-          <section key={key}>
+          <section
+            key={key}
+            onDragOver={(e) => {
+              if (!dragging) return;
+              // preventDefault is what MAKES an element a drop target; without
+              // it the browser refuses the drop and nothing ever fires.
+              e.preventDefault();
+              setOver(key);
+            }}
+            onDragLeave={() => setOver((k) => (k === key ? null : k))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const id = dragging ?? e.dataTransfer.getData("text/plain");
+              setOver(null);
+              setDragging(null);
+              if (id) void moveToFolder(id, key);
+            }}
+            className={cn("rounded-lg", over === key && "outline outline-2 outline-accent-strong/50")}
+          >
             <button
               type="button"
               onClick={() => toggle(key)}
@@ -137,7 +212,23 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
                         derived_target_date: row.derived_target_date,
                       });
                       return (
-                        <tr key={id} className="border-b border-subtle last:border-0 hover:bg-layer-1">
+                        <tr
+                          key={id}
+                          draggable
+                          onDragStart={(e) => {
+                            setDragging(id);
+                            e.dataTransfer.setData("text/plain", id);
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragEnd={() => {
+                            setDragging(null);
+                            setOver(null);
+                          }}
+                          className={cn(
+                            "cursor-grab border-b border-subtle last:border-0 hover:bg-layer-1",
+                            dragging === id && "opacity-40"
+                          )}
+                        >
                           <td className="px-3 py-2">
                             <a
                               href={`/${workspaceSlug}/projects/${id}/overview`}

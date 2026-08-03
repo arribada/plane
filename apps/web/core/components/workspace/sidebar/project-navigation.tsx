@@ -8,7 +8,7 @@ import React, { useCallback, useMemo } from "react";
 import { observer } from "mobx-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, Wallet } from "lucide-react";
 import { EUserPermissionsLevel, EUserPermissions } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { CycleIcon, IntakeIcon, ModuleIcon, PageIcon, ViewsIcon, WorkItemsIcon } from "@plane/propel/icons";
@@ -80,6 +80,24 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
         access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
         shouldRender: true,
         sortOrder: 0,
+      },
+      {
+        // The sidebar keeps its OWN list, separate from the one the breadcrumb
+        // feature dropdown reads. Adding a section to only one of them is how it
+        // ends up reachable from the switcher and invisible in the sidebar —
+        // which is exactly what happened here.
+        i18n_key: "sidebar.finance",
+        key: "finance",
+        name: "Finance",
+        href: `/${navWorkspaceSlug}/projects/${navProjectId}/finance`,
+        icon: Wallet,
+        // No guests: a budget is not something an outside collaborator is
+        // invited to read, and every other money surface here already says so.
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+        shouldRender: true,
+        // 7, not 5: Pages already holds 5, and a tie leaves the order depending
+        // on array position rather than on intent.
+        sortOrder: 7,
       },
       {
         i18n_key: "sidebar.work_items",

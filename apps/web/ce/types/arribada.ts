@@ -485,6 +485,16 @@ export type TProjectBudget = {
   span: { start_date: string | null; target_date: string | null };
   /** Whether a reflow waits for expected deliveries. Off unless asked for. */
   schedule_from_deliveries: boolean;
+  /** Monthly spend, the rate that still fits, and where the current one lands.
+   *  Null on an older backend — the page must not assume it. */
+  rhythm?: {
+    months: { month: string; amount: number }[];
+    rate: number | null;
+    sustainable: number | null;
+    months_left: number | null;
+    exhausted_on: string | null;
+    over_rate: boolean;
+  } | null;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {
     amount: number | null;

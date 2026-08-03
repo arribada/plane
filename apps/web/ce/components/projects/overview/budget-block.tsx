@@ -33,6 +33,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn, renderFormattedDate } from "@plane/utils";
 import { downloadText } from "@/plane-web/components/gantt-chart/export";
 import { buildBudgetCsv } from "./budget-export";
+import { SpendAnalysis } from "./spend-analysis";
 import { SpendCurve } from "./spend-curve";
 import { useProject } from "@/hooks/store/use-project";
 import { useUserPermissions } from "@/hooks/store/user";
@@ -611,6 +612,18 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
       {/* Money against time, above the two halves.
           A percentage has no time in it: 60% spent is healthy at month 8 of 12
           and a crisis at month 3, and everything below renders those identically. */}
+      {/* Rate and composition first: they answer "will this hold", which the
+          cumulative curve below cannot. `by_category` was already computed by the
+          server and rendered nowhere — data that cost a query and reached no one. */}
+      <div className="rounded-lg border border-subtle bg-layer-2">
+        <SpendAnalysis
+          rhythm={budget?.rhythm}
+          byCategory={budget?.expenses?.by_category ?? []}
+          money={money}
+          currency={alloc?.currency ?? "EUR"}
+        />
+      </div>
+
       {expenses.length > 0 && (
         <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
           <p className="mb-1 text-11 font-medium tracking-wide text-tertiary uppercase">Spend over time</p>

@@ -4815,6 +4815,23 @@ class ProjectBudgetEndpoint(BaseAPIView):
             key = (row.currency, row.planned)
             spend_totals[key] = spend_totals.get(key, 0.0) + float(row.total)
 
+        # --- rhythm -----------------------------------------------------------
+        #
+        # A cumulative curve answers "how much so far". A project manager's
+        # question is "will this hold", and that needs a RATE. Monthly buckets are
+        # the smallest grain where a spend pattern is legible — weekly is noise on
+        # a project that buys parts twice a quarter.
+        #
+        # Only actual spend, and only rows carrying a date: a planned line has no
+        # month because it is an intention, and putting it on a rhythm chart would
+        # report money as spent that nobody has spent.
+        by_month = {}
+        for row in expenses:
+            if row.planned or not row.incurred_on:
+                continue
+            key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
+            by_month[key] = by_month.get(key, 0.0) + float(row.total)
+
         schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
         allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
         allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
@@ -4879,6 +4896,12 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     # visible rather than quietly missing from it.
                     "excluded_currencies": sorted(other_currencies),
                 },
+                "rhythm": _spend_rhythm(
+                    by_month,
+                    allocated,
+                    committed,
+                    schedule_row.target_date if schedule_row else None,
+                ),
                 "labour": labour,
                 "expenses": {
                     "by_category": sorted(
@@ -6239,3 +6262,79 @@ class GithubTriageEndpoint(BaseAPIView):
             {"total": sum(r["untriaged"] for r in rows), "projects": rows},
             status=status.HTTP_200_OK,
         )
+
+
+def _spend_rhythm(by_month, allocated, committed, target_date):
+    """Monthly spend, the rate that would still fit, and when the money runs out.
+
+    This is the only part of the budget view that turns a figure into a decision.
+    "60% spent" is healthy at month eight of twelve and a crisis at month three,
+    and every percentage renders those identically.
+
+    Three numbers, each with a reason to be separate:
+
+    - `months` is what was actually spent, month by month. Gaps are filled with
+      zero rather than skipped: a month with no spend is a fact about the
+      project, and a chart that omits it makes a stop-start pattern look steady.
+    - `sustainable` is what could be spent per month from now to the target date
+      and still land on the allocation. It is the line a bar is read against.
+    - `exhausted_on` is where the CURRENT rate lands. Null when there is no
+      allocation, no history, or the rate is zero — three different "we cannot
+      say", none of which should render as a date.
+
+    The rate is the mean of the last three months WITH spend, not of the last
+    three calendar months. A project that bought nothing in August is not a
+    project whose rate fell by a third; it is a project that bought nothing in
+    August.
+    """
+    from datetime import date as _date
+
+    months = []
+    if by_month:
+        keys = sorted(by_month)
+        first_y, first_m = (int(x) for x in keys[0].split("-"))
+        last_y, last_m = (int(x) for x in keys[-1].split("-"))
+        y, m = first_y, first_m
+        while (y, m) <= (last_y, last_m):
+            key = f"{y}-{m:02d}"
+            months.append({"month": key, "amount": round(by_month.get(key, 0.0), 2)})
+            m += 1
+            if m > 12:
+                y, m = y + 1, 1
+
+    spent_months = [row["amount"] for row in months if row["amount"] > 0]
+    recent = spent_months[-3:]
+    rate = round(sum(recent) / len(recent), 2) if recent else None
+
+    remaining = None if allocated is None else allocated - committed
+
+    # Whole months left, floored at zero: a target date in the past leaves no
+    # runway, and a negative divisor would produce a sustainable rate above the
+    # money that exists.
+    months_left = None
+    if target_date:
+        today = timezone.now().date()
+        months_left = max(0, (target_date.year - today.year) * 12 + (target_date.month - today.month))
+
+    sustainable = None
+    if remaining is not None and months_left:
+        sustainable = round(remaining / months_left, 2)
+
+    exhausted_on = None
+    if remaining is not None and rate and rate > 0 and remaining > 0:
+        months_of_runway = int(remaining // rate)
+        today = timezone.now().date()
+        y = today.year + (today.month - 1 + months_of_runway) // 12
+        m = (today.month - 1 + months_of_runway) % 12 + 1
+        exhausted_on = str(_date(y, m, 1))
+
+    return {
+        "months": months,
+        "rate": rate,
+        "sustainable": sustainable,
+        "months_left": months_left,
+        "exhausted_on": exhausted_on,
+        # True only when both are known AND the current rate exceeds what fits.
+        # Missing either one is not "on track", it is "no opinion".
+        "over_rate": bool(rate and sustainable and rate > sustainable),
+    }

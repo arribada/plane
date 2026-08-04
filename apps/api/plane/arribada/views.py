@@ -4925,9 +4925,16 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "days": float(recorded)
                     if recorded is not None
                     else _working_days_between(r["start_date"], r["target_date"]),
+                    # The month this work lands in. Carried on the task so the
+                    # timeline below costs the SAME days the total does — it used
+                    # to re-derive them from the calendar span, which billed a task
+                    # with a recorded effort one way in the total and another on
+                    # the curve.
+                    "ends": r["target_date"],
                 }
             )
-        labour = _labour_cost(tasks, _rate_map(slug))
+        rate_map = _rate_map(slug)
+        labour = _labour_cost(tasks, rate_map)
         labour["from_effort"] = from_effort
         labour["from_span"] = len(tasks) - from_effort
 
@@ -4952,17 +4959,18 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # Only actual spend, and only rows carrying a date: a planned line has no
         # month because it is an intention, and putting it on a rhythm chart would
         # report money as spent that nobody has spent.
-        by_month = {}
+        expense_by_month = {}
         for row in expenses:
             if row.planned or not row.incurred_on:
                 continue
             key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
-            by_month[key] = by_month.get(key, 0.0) + float(row.total)
-
+            expense_by_month[key] = expense_by_month.get(key, 0.0) + float(row.total)
 
         schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
         allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
         allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
+        currency_settings = _currency_settings(slug)
+        eur_gbp = currency_settings["eur_gbp_rate"]
 
         # Labour belongs on the same timeline. A task that finished last month IS
         # money the project spent, whether or not anybody typed an expense line —
@@ -4973,18 +4981,32 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # Spreading implies a precision nobody has: nothing here records when the
         # hours were actually worked, and a smooth line invented from a start and
         # an end date would read as measurement rather than as arithmetic.
-        rate_map = _rate_map(slug)
-        for row in rows:
-            role = (roles.get(str(row["id"])) or "").strip().lower()
+        #
+        # CONVERTED into the allocation's currency rather than dropped when the two
+        # differ. The old `rate.get("currency") != allocation_currency: continue`
+        # looked like a prudence and was a blackout: every rate in this workspace is
+        # sterling and every allocation defaults to euros, so it discarded 100% of
+        # the labour on 100% of the projects. The chart was empty on a project
+        # carrying £86,820 of work, and the panel underneath said "nothing has been
+        # spent yet" beside a figure that said otherwise. A currency the pair cannot
+        # reach is still left out — and named, so it is a stated omission and not a
+        # silent one.
+        labour_by_month = {}
+        labour_unconvertible = set()
+        for task in tasks:
+            role = (task["role"] or "").strip().lower()
             rate = rate_map.get(role) if role else None
-            if not rate:
+            if not rate or not task["ends"]:
                 continue
-            days = _working_days_between(row["start_date"], row["target_date"])
-            cost = days * float(rate.get("hours_per_day") or 0) * float(rate.get("hourly_rate") or 0)
-            if cost <= 0 or rate.get("currency") != allocation_currency:
+            cost = task["days"] * float(rate.get("hours_per_day") or 0) * float(rate.get("hourly_rate") or 0)
+            if cost <= 0:
                 continue
-            key = f"{row['target_date'].year}-{row['target_date'].month:02d}"
-            by_month[key] = by_month.get(key, 0.0) + cost
+            value = _convert_money(cost, rate.get("currency"), allocation_currency, eur_gbp)
+            if value is None:
+                labour_unconvertible.add((rate.get("currency") or "?").strip().upper())
+                continue
+            key = f"{task['ends'].year}-{task['ends'].month:02d}"
+            labour_by_month[key] = labour_by_month.get(key, 0.0) + value
 
         # What has been committed against the allocation, in the allocation's own
         # currency only. Anything billed in another currency is counted separately
@@ -5002,12 +5024,28 @@ class ProjectBudgetEndpoint(BaseAPIView):
             else:
                 other_currencies.add(row.currency)
 
+        # What the RHYTHM reads its runway against, which is not the same number.
+        # `committed` above counts only amounts already in the allocation's
+        # currency — deliberately, and the panel says so in prose. But a
+        # sustainable line computed from a committed of zero sits on the floor and
+        # marks every month as an overspend, on a project whose costs are simply
+        # held in another currency. This one converts, which is also what the
+        # headline figure directly above the chart does.
+        committed_in_allocation = 0.0
+        for row in labour["totals"]:
+            value = _convert_money(row["amount"], row["currency"], allocation_currency, eur_gbp)
+            if value is not None:
+                committed_in_allocation += value
+        for row in expenses:
+            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
+            if value is not None:
+                committed_in_allocation += value
+
         # The same figures read in one currency. A sibling block, never a
         # rewrite: `allocation`/`labour`/`expenses` below are untouched, so the
         # amounts somebody actually recorded stay available beside the estimate.
         # `?display=` overrides the workspace's choice for one read — looking at a
         # budget in sterling should not require changing it for everybody.
-        currency_settings = _currency_settings(slug)
         display = _budget_display(
             request.query_params.get("display") or currency_settings["display_currency"],
             currency_settings,
@@ -5047,10 +5085,13 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "excluded_currencies": sorted(other_currencies),
                 },
                 "rhythm": _spend_rhythm(
-                    by_month,
+                    expense_by_month,
+                    labour_by_month,
                     allocated,
-                    committed,
+                    committed_in_allocation,
                     schedule_row.target_date if schedule_row else None,
+                    allocation_currency,
+                    sorted(labour_unconvertible),
                 ),
                 "labour": labour,
                 "expenses": {
@@ -6455,8 +6496,16 @@ class GithubTriageEndpoint(BaseAPIView):
         )
 
 
-def _spend_rhythm(by_month, allocated, committed, target_date):
-    """Monthly spend, the rate that would still fit, and when the money runs out.
+def _spend_rhythm(
+    expense_by_month,
+    labour_by_month,
+    allocated,
+    committed,
+    target_date,
+    currency,
+    unconvertible,
+):
+    """Monthly cost, the rate that would still fit, and when the money runs out.
 
     This is the only part of the budget view that turns a figure into a decision.
     "60% spent" is healthy at month eight of twelve and a crisis at month three,
@@ -6464,7 +6513,7 @@ def _spend_rhythm(by_month, allocated, committed, target_date):
 
     Three numbers, each with a reason to be separate:
 
-    - `months` is what was actually spent, month by month. Gaps are filled with
+    - `months` is what the project cost, month by month. Gaps are filled with
       zero rather than skipped: a month with no spend is a fact about the
       project, and a chart that omits it makes a stop-start pattern look steady.
     - `sustainable` is what could be spent per month from now to the target date
@@ -6477,18 +6526,34 @@ def _spend_rhythm(by_month, allocated, committed, target_date):
     three calendar months. A project that bought nothing in August is not a
     project whose rate fell by a third; it is a project that bought nothing in
     August.
+
+    The two halves arrive separately and stay separately reported inside each
+    month. `amount` is their sum because the rate arithmetic needs one figure,
+    but `labour` and `expense` travel beside it so the chart can show which is
+    which — an estimate derived from a plan and a number somebody has a receipt
+    for are not the same kind of fact, and a bar that blends them silently gives
+    the estimate the receipt's authority.
     """
     from datetime import date as _date
 
     months = []
-    if by_month:
-        keys = sorted(by_month)
+    keys = sorted(set(expense_by_month) | set(labour_by_month))
+    if keys:
         first_y, first_m = (int(x) for x in keys[0].split("-"))
         last_y, last_m = (int(x) for x in keys[-1].split("-"))
         y, m = first_y, first_m
         while (y, m) <= (last_y, last_m):
             key = f"{y}-{m:02d}"
-            months.append({"month": key, "amount": round(by_month.get(key, 0.0), 2)})
+            labour = round(labour_by_month.get(key, 0.0), 2)
+            expense = round(expense_by_month.get(key, 0.0), 2)
+            months.append(
+                {
+                    "month": key,
+                    "amount": round(labour + expense, 2),
+                    "labour": labour,
+                    "expense": expense,
+                }
+            )
             m += 1
             if m > 12:
                 y, m = y + 1, 1
@@ -6528,6 +6593,13 @@ def _spend_rhythm(by_month, allocated, committed, target_date):
         # True only when both are known AND the current rate exceeds what fits.
         # Missing either one is not "on track", it is "no opinion".
         "over_rate": bool(rate and sustainable and rate > sustainable),
+        # The currency every figure above is in, so the client formats them rather
+        # than assuming the allocation's — it was assuming, and it was right only
+        # by luck.
+        "currency": currency,
+        # Rates held in a currency this pair cannot reach. Their days are still in
+        # the labour breakdown; only the timeline cannot place them.
+        "unconvertible": list(unconvertible),
     }
 
 

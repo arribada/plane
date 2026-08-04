@@ -488,12 +488,23 @@ export type TProjectBudget = {
   /** Monthly spend, the rate that still fits, and where the current one lands.
    *  Null on an older backend — the page must not assume it. */
   rhythm?: {
-    months: { month: string; amount: number }[];
+    /** `amount` is `labour + expense`. The two halves travel beside it rather
+     *  than only summed: an estimate derived from a plan and a number with a
+     *  receipt behind it are different kinds of fact, and a bar that blends them
+     *  silently lends the estimate the receipt's authority. Both optional — an
+     *  older server sends the sum alone. */
+    months: { month: string; amount: number; labour?: number; expense?: number }[];
     rate: number | null;
     sustainable: number | null;
     months_left: number | null;
     exhausted_on: string | null;
     over_rate: boolean;
+    /** The currency every figure in this block is in — the allocation's. Absent
+     *  on an older server, where the client had to assume it. */
+    currency?: string;
+    /** Rates held in a currency this reading cannot convert, so their cost has
+     *  no month. The days are still in `labour.by_role`. */
+    unconvertible?: string[];
   } | null;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {

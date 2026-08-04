@@ -619,6 +619,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         <SpendAnalysis
           rhythm={budget?.rhythm}
           byCategory={budget?.expenses?.by_category ?? []}
+          // The per-discipline breakdown was computed on every read and rendered
+          // as a row of pills at the very bottom of the page, below the expense
+          // ledger. On a project with no expenses — nearly all of them — it was
+          // the only cost information on screen and it was the last thing on it.
+          byRole={labour?.by_role ?? []}
           money={money}
           currency={alloc?.currency ?? "EUR"}
         />
@@ -774,22 +779,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 
       {panel === "calendar" && <CalendarPanel days={days} onAdd={addHoliday} onRemove={removeHoliday} />}
 
-      {labour && labour.by_role.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {labour.by_role.map((r) => (
-            <span
-              key={r.role}
-              className={cn(
-                "rounded px-2 py-0.5 text-11",
-                r.rated ? "bg-layer-2 text-secondary" : "bg-warning-subtle text-warning-primary"
-              )}
-              title={r.rated ? `${r.days} day(s), ${Math.round(r.hours)} hours` : "No hourly rate recorded"}
-            >
-              {r.role} · {r.days}d{r.rated && r.currency ? ` · ${money(r.cost, r.currency)}` : ""}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* The per-discipline pills that used to sit here are gone: SpendAnalysis
+          draws the same numbers as a sorted chart at the top of the page, which
+          is where somebody looking for "what does this project cost" arrives. */}
 
       {/* Requests waiting on a decision. Above the sheet, because a pending
           request is a claim on the budget that the figures above do not yet show. */}

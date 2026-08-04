@@ -18,6 +18,7 @@ import { AlertTriangle, Flag, Github, RefreshCw, ShoppingCart, TrendingDown } fr
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
+import { githubSyncToast } from "@/plane-web/components/github-triage/sync-toast";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -353,11 +354,9 @@ export const GithubInboxWidget = observer(function GithubInboxWidget() {
     setSyncing(true);
     try {
       const r = await service.githubSyncNow(workspaceSlug.toString(), gap.sync_project_id);
-      setToast({
-        type: r.skipped ? TOAST_TYPE.INFO : TOAST_TYPE.SUCCESS,
-        title: r.skipped ? "Nothing was pulled" : `${r.created} new, ${r.updated} updated`,
-        message: r.skipped ?? "Newly linked repos have filed their issues.",
-      });
+      setToast(
+        r.skipped ? { type: TOAST_TYPE.INFO, title: "Nothing was pulled", message: r.skipped } : githubSyncToast(r)
+      );
       await load();
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't sync", message: "GitHub did not answer." });

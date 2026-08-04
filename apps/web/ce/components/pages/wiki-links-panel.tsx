@@ -30,6 +30,7 @@ import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useUserPermissions } from "@/hooks/store/user";
+import { githubSyncToast } from "@/plane-web/components/github-triage/sync-toast";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectDocs } from "@/plane-web/types/arribada";
 
@@ -89,11 +90,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
         // and "no repos mapped" need different people to do different things.
         setToast({ type: TOAST_TYPE.INFO, title: "Nothing was pulled", message: r.skipped });
       } else {
-        setToast({
-          type: TOAST_TYPE.SUCCESS,
-          title: `${r.created} new, ${r.updated} updated`,
-          message: `${r.fetched} open issues read from GitHub.`,
-        });
+        setToast(githubSyncToast(r));
       }
     } catch (e) {
       setToast({

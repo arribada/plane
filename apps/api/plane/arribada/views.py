@@ -6587,13 +6587,33 @@ class GithubSyncNowEndpoint(BaseAPIView):
         if isinstance(result, dict) and result.get("skipped"):
             # A configuration answer, not a failure: 200 with the reason, so the
             # button can say "nothing to do, and here is why" instead of going red.
+            # `skipped` stays reserved for exactly these two answers — the caller
+            # reads it as "nothing happened at all".
             return Response({"skipped": result["skipped"], "created": 0, "updated": 0}, status=status.HTTP_200_OK)
 
+        # Everything the run distinguishes, because collapsing it to created and
+        # updated is how a successful sync came to report "0 created, 0 updated"
+        # after capturing 39 issues and filing 11. Those two count only work items
+        # written into a project; capturing an issue, routing it to the triage
+        # queue, and skipping one somebody dismissed are three other things that
+        # happened, and each answers a different worry about whether the button
+        # did anything.
+        result = result or {}
         return Response(
             {
-                "created": (result or {}).get("created", 0),
-                "updated": (result or {}).get("updated", 0),
-                "fetched": (result or {}).get("fetched", 0),
+                "created": result.get("created", 0),
+                "updated": result.get("updated", 0),
+                "fetched": result.get("fetched", 0),
+                "repos": result.get("repos", 0),
+                "captured": result.get("captured", 0),
+                "filed": result.get("filed", 0),
+                "queued": result.get("queued", 0),
+                "dismissed_skipped": result.get("dismissed_skipped", 0),
+                # Repos whose issues could not be placed in any workspace. A list
+                # of names, not a count: this is a mapping somebody has to fix and
+                # they cannot fix what they cannot see. Kept out of `skipped` on
+                # purpose, which the caller treats as "nothing to do".
+                "skipped_no_workspace": result.get("skipped_no_workspace", []),
                 "skipped": None,
             },
             status=status.HTTP_200_OK,

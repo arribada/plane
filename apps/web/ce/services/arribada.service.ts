@@ -1192,7 +1192,23 @@ export class ArribadaService extends APIService {
   async githubSyncNow(
     workspaceSlug: string,
     projectId: string
-  ): Promise<{ created: number; updated: number; fetched: number; skipped: string | null }> {
+  ): Promise<{
+    created: number;
+    updated: number;
+    fetched: number;
+    repos?: number;
+    /** Issues recorded from GitHub, whether or not they became work items. */
+    captured?: number;
+    /** Issues that became a work item and were linked back to it. */
+    filed?: number;
+    /** Left for a person: the repo is claimed by nobody, or by several projects. */
+    queued?: number;
+    dismissed_skipped?: number;
+    /** Repos nothing could place in a workspace — a mapping somebody must fix. */
+    skipped_no_workspace?: string[];
+    /** Only "no token" or "no repos mapped": the run did not happen. */
+    skipped: string | null;
+  }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/github-sync/`, {})
       .then((r) => r?.data)
       .catch((e) => {

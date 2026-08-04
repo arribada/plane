@@ -19,6 +19,7 @@ from .views import (
     ProjectIssueOrdersEndpoint,
     ProjectUndatedGapEndpoint,
     WorkspaceDirectoryEndpoint,
+    WorkspaceGithubTriageQueueEndpoint,
     WorkspaceGithubUnclassifiedEndpoint,
     WorkspaceGithubInboxGapEndpoint,
     ProjectAiSprintTasksEndpoint,
@@ -213,6 +214,11 @@ urlpatterns = [
         "workspaces/<str:slug>/github-unclassified/",
         WorkspaceGithubUnclassifiedEndpoint.as_view(),
         name="arribada-github-unclassified",
+    ),
+    path(
+        "workspaces/<str:slug>/github-triage-queue/",
+        WorkspaceGithubTriageQueueEndpoint.as_view(),
+        name="arribada-github-triage-queue",
     ),
     path(
         "workspaces/<str:slug>/directory/",

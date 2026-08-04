@@ -33,6 +33,7 @@ from .models import (
     IssueBaseline,
     BaselineEntry,
     IssueArtifact,
+    GithubIssue,
     IssueEffort,
     IssueMilestone,
     IssueRole,
@@ -6987,6 +6988,190 @@ class ProjectIssueOrderApplyEndpoint(BaseAPIView):
             return Response({"error": "issue_ids required"}, status=status.HTTP_400_BAD_REQUEST)
         applied = _apply_issue_order(project_id, [str(i) for i in ids][:2000])
         return Response({"applied": applied}, status=status.HTTP_200_OK)
+
+
+class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
+    """The GitHub issues nobody could route, with everything already guessed.
+
+    The router files what it can — a repo exactly one project claims — so what
+    reaches this queue is the residue: repos two projects claim, and repos
+    nobody has linked. Those are decisions, and a decision is what a person is
+    for.
+
+    Every row still arrives filled in as far as the evidence goes: the projects
+    that claim the repo, the discipline its labels imply, the person its GitHub
+    assignee resolves to. Filled in, not applied — the POST is what writes.
+
+    Filing accepts a `parent_issue_id`, because several GitHub issues routinely
+    belong to one piece of work. Three reports of the same regression are one
+    task, and forcing them to become three is how a board fills with noise.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        from .github_enrich import discipline_from_labels, member_from_github_assignees
+        from .github_sync_task import _repo_owners
+
+        visible = _visible_projects(request, slug).filter(archived_at__isnull=True)
+        project_names = {str(p["id"]): p["name"] for p in visible.values("id", "name")}
+        claimed = _repo_owners()
+
+        # Which projects name each repo, so a contested one can say who wants it.
+        claims = defaultdict(list)
+        for doc in ProjectWikiDoc.objects.filter(
+            project__in=visible, project__archived_at__isnull=True
+        ).select_related("project"):
+            for url in doc.github_repo_urls or []:
+                key = _repo_key_for(url)
+                if key:
+                    claims[key].append(str(doc.project_id))
+
+        rows = list(
+            GithubIssue.objects.filter(workspace__slug=slug, filed_issue__isnull=True)
+            .order_by("repo", "-github_created_at")[:300]
+        )
+
+        items = []
+        for row in rows:
+            # A repo one project claims is the router's job, not this queue's.
+            if row.repo in claimed:
+                continue
+            candidates = claims.get(row.repo, [])
+            suggested_project = candidates[0] if len(candidates) == 1 else None
+            items.append(
+                {
+                    "id": str(row.id),
+                    "repo": row.repo,
+                    "number": row.number,
+                    "title": row.title,
+                    "html_url": row.html_url,
+                    "labels": row.labels or [],
+                    "github_assignees": [a.get("login") for a in (row.github_assignees or [])],
+                    "milestone": row.milestone,
+                    "state": row.state,
+                    "created_at": row.github_created_at.isoformat() if row.github_created_at else None,
+                    # Who has named this repo. Several names is exactly why this
+                    # row is here rather than filed already.
+                    "claimed_by": [
+                        {"id": pid, "name": project_names.get(pid, "")} for pid in candidates
+                    ],
+                    "suggested_project": suggested_project,
+                    "suggested_discipline": discipline_from_labels(
+                        row.labels or [], _project_role_options(suggested_project)
+                    )
+                    if suggested_project
+                    else None,
+                }
+            )
+
+        return Response(
+            {
+                "items": items,
+                "projects": [
+                    {"id": str(p["id"]), "name": p["name"]}
+                    for p in visible.exclude(identifier="GHIN").values("id", "name").order_by("name")
+                ],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        """File a batch.
+
+        Each entry names a GitHub issue and where it goes. `parent_issue_id`
+        nests it under an existing work item instead of standing alone, which is
+        how several issues come to share one task.
+        """
+        from .github_enrich import discipline_from_labels, member_from_github_assignees
+
+        entries = request.data.get("items") or []
+        if not isinstance(entries, list):
+            return Response({"error": "items must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        visible = _visible_projects(request, slug)
+        allowed_projects = {str(p) for p in visible.values_list("id", flat=True)}
+        filed, skipped = 0, 0
+
+        for entry in entries[:200]:
+            if not isinstance(entry, dict):
+                skipped += 1
+                continue
+            row = GithubIssue.objects.filter(
+                workspace__slug=slug, id=entry.get("id"), filed_issue__isnull=True
+            ).first()
+            project_id = str(entry.get("project_id") or "")
+            if not row or project_id not in allowed_projects:
+                skipped += 1
+                continue
+            project = visible.filter(id=project_id).first()
+
+            parent = None
+            parent_id = entry.get("parent_issue_id")
+            if parent_id:
+                # Plane only allows same-project parents, so a parent from
+                # elsewhere is refused rather than silently ignored — the caller
+                # asked for a grouping that cannot exist.
+                parent = Issue.issue_objects.filter(project_id=project_id, id=parent_id).first()
+                if not parent:
+                    skipped += 1
+                    continue
+
+            state = (
+                State.objects.filter(project=project, default=True).first()
+                or State.objects.filter(project=project).order_by("sequence").first()
+            )
+            issue = Issue.objects.create(
+                workspace=project.workspace,
+                project=project,
+                name=row.title[:250] or f"{row.repo}#{row.number}",
+                description_html=f'<p><a href="{row.html_url}">{row.html_url}</a></p>',
+                external_source="github",
+                external_id=f"{row.repo}#{row.number}",
+                state=state,
+                parent=parent,
+                created_by=request.user,
+            )
+
+            discipline = entry.get("discipline") or discipline_from_labels(
+                row.labels or [], _project_role_options(project_id)
+            )
+            if discipline:
+                IssueRole.objects.update_or_create(
+                    issue_id=issue.id, defaults={"role": str(discipline)[:80]}
+                )
+
+            assignee_id = entry.get("assignee_id")
+            if not assignee_id:
+                candidates = list(
+                    ProjectMember.objects.filter(project_id=project_id, is_active=True)
+                    .exclude(member__email__startswith="bot_user_")
+                    .values_list("member_id", "member__email", "member__display_name")
+                )
+                assignee_id = member_from_github_assignees(row.github_assignees, candidates)
+            if assignee_id and ProjectMember.objects.filter(
+                project_id=project_id, member_id=assignee_id, is_active=True
+            ).exists():
+                IssueAssignee.objects.get_or_create(
+                    issue_id=issue.id, assignee_id=assignee_id, defaults={"project_id": project_id}
+                )
+
+            row.filed_issue = issue
+            row.filed_at = timezone.now()
+            row.filed_by_rule = "manual"
+            row.filed_by = request.user
+            row.save(update_fields=["filed_issue", "filed_at", "filed_by_rule", "filed_by"])
+            filed += 1
+
+        return Response({"filed": filed, "skipped": skipped}, status=status.HTTP_200_OK)
+
+
+def _repo_key_for(url):
+    """owner/repo from a GitHub url. Shared with the classification task, imported
+    lazily there to keep this module free of a circular import."""
+    from .github_classification_task import _repo_key
+
+    return _repo_key(url)
 
 class WorkspaceDirectoryEndpoint(BaseAPIView):
     """Everyone the workspace knows about, for the roster's name field.

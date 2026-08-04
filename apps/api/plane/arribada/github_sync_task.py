@@ -13,6 +13,7 @@
 # repos on purpose, so a first run can't flood GHIN with every open org issue.
 
 import os
+from datetime import datetime
 from datetime import timedelta
 
 import requests
@@ -112,6 +113,66 @@ def _fetch_open_issues(pat, repo, max_pages=5):
 
 
 @shared_task
+
+def _parse_gh_time(value):
+    """GitHub's ISO-8601 with a Z, which fromisoformat refuses before 3.11."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_github_issue(workspace, repo, gh):
+    """Keep the issue as GitHub describes it, whole.
+
+    Separate from creating a work item on purpose: an issue nobody has filed yet
+    is something GitHub knows about, not work this workspace has accepted. This
+    is the record every pre-fill will be read from — a label saying "firmware"
+    and an assignee who already has a Plane account were both being discarded
+    before anybody could use them.
+
+    Purely additive today: nothing reads this table yet, so a failure here must
+    never take the sync down with it.
+    """
+    from plane.arribada.models import GithubIssue
+
+    number = gh.get("number")
+    if number is None:
+        return
+    try:
+        GithubIssue.objects.update_or_create(
+            workspace=workspace,
+            repo=repo,
+            number=int(number),
+            defaults={
+                "title": (gh.get("title") or "").strip()[:512],
+                "body": (gh.get("body") or "")[:20000],
+                "html_url": (gh.get("html_url") or "")[:1024],
+                "labels": [
+                    (label.get("name") or "") if isinstance(label, dict) else str(label)
+                    for label in (gh.get("labels") or [])
+                ],
+                "github_assignees": [
+                    {"login": a.get("login") or "", "id": a.get("id")}
+                    for a in (gh.get("assignees") or [])
+                    if isinstance(a, dict)
+                ],
+                "milestone": ((gh.get("milestone") or {}).get("title") or "")[:255]
+                if isinstance(gh.get("milestone"), dict)
+                else "",
+                "state": (gh.get("state") or "open")[:32],
+                "github_created_at": _parse_gh_time(gh.get("created_at")),
+                "github_closed_at": _parse_gh_time(gh.get("closed_at")),
+                "github_updated_at": _parse_gh_time(gh.get("updated_at")),
+            },
+        )
+    except Exception:
+        # One malformed issue must not stop the rest of the run.
+        pass
+
+
 def github_plane_sync():
     from plane.db.models import Issue, IssueAssignee, Project, State, WorkspaceMember
 
@@ -165,6 +226,9 @@ def github_plane_sync():
             )
 
             for gh in issues:
+                # Recorded whether or not it becomes a work item here: the raw
+                # issue is what the triage view will be built on.
+                _record_github_issue(ghin.workspace, repo, gh)
                 gid = str(gh.get("id") or "")
                 if not gid:
                     continue

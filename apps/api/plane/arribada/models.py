@@ -1201,3 +1201,78 @@ class ProjectIssueOrder(models.Model):
 
     def __str__(self):
         return f"{self.name} ({len(self.issue_ids or [])})"
+
+
+class GithubIssue(models.Model):
+    """A GitHub issue as GitHub describes it, kept whole.
+
+    The sync used to read a title and a URL and throw the rest away, which put a
+    floor under how well anything could be pre-filled: a label saying "firmware"
+    and an assignee who already has a Plane account were both discarded before
+    anybody could use them.
+
+    This is the raw record. It is deliberately NOT a work item: an issue nobody
+    has filed yet is a thing GitHub knows about, not work this workspace has
+    accepted. `filed_issue` is set once somebody — or the auto-filer — turns it
+    into one, and is the flag that stops it being offered twice.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE, related_name="arribada_github_issues"
+    )
+    # owner/repo, lowercased — the same key the routing map is built on.
+    repo = models.CharField(max_length=255, db_index=True)
+    number = models.IntegerField()
+    title = models.CharField(max_length=512)
+    body = models.TextField(blank=True, default="")
+    html_url = models.CharField(max_length=1024)
+    # As GitHub gives them: names for labels, logins+emails for assignees. Stored
+    # rather than resolved, because the mapping to a discipline or a person is a
+    # decision this workspace makes and may change its mind about.
+    labels = models.JSONField(default=list, blank=True)
+    github_assignees = models.JSONField(default=list, blank=True)
+    milestone = models.CharField(max_length=255, blank=True, default="")
+    state = models.CharField(max_length=32, default="open")
+    github_created_at = models.DateTimeField(null=True, blank=True)
+    github_closed_at = models.DateTimeField(null=True, blank=True)
+    github_updated_at = models.DateTimeField(null=True, blank=True)
+
+    # The work item this ended up in. Null means it is still waiting to be filed.
+    #
+    # A plain ForeignKey, NOT one-to-one, and that is the point: several GitHub
+    # issues routinely belong to one piece of work — three bug reports about the
+    # same regression are one task — so many rows may share a filed_issue. The
+    # triage view can therefore file a batch into an existing work item, into a
+    # new one, or one apiece.
+    #
+    # SET_NULL rather than CASCADE so deleting the work item does not erase the
+    # record of the issues it came from.
+    filed_issue = models.ForeignKey(
+        "db.Issue", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    filed_at = models.DateTimeField(null=True, blank=True)
+    # "auto" when the router filed it because exactly one project claimed the
+    # repo, "manual" when a person did. Kept so an automatic decision can be
+    # found again and undone.
+    filed_by_rule = models.CharField(max_length=16, blank=True, default="")
+    filed_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_github_issue"
+        ordering = ("-github_created_at",)
+        verbose_name = "GitHub issue"
+        verbose_name_plural = "GitHub issues"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "repo", "number"], name="arribada_unique_github_issue"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.repo}#{self.number}"

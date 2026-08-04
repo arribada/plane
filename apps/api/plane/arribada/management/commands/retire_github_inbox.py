@@ -80,8 +80,13 @@ class Command(BaseCommand):
                     number_hit = NUMBER_FROM_URL.search(body)
                     if not repo_hit or not number_hit:
                         # Nothing links it back to GitHub, so removing it would
-                        # lose it entirely. Left alone and reported.
+                        # lose it entirely. Added to `touched` — not merely
+                        # counted — because that list is what decides whether the
+                        # project is archived or deleted, and deleting it would
+                        # cascade over the very rows this branch just spared.
+                        # Counting without listing was a spare that did nothing.
                         self.stdout.write(f"   ! no GitHub link, kept: {issue.name[:60]}")
+                        touched.append(issue)
                         touched_total += 1
                         untouched_total -= 1
                         continue

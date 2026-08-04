@@ -31,6 +31,11 @@ type Props = {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const short = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+/** Inclusive of both ends, matching the sidebar: a sprint that starts and ends on
+ *  the same day lasts one day, not zero. */
+const daysBetween = (start: Date, end: Date) => Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+/** Below this the label would overrun both uprights and read as another row's. */
+const LABEL_MIN_WIDTH = 150;
 
 export const GanttGroupHeader = observer(function GanttGroupHeader(props: Props) {
   const { label, color, count, collapsed, onToggle, start, end, days, done } = props;
@@ -96,6 +101,12 @@ export const GanttGroupBand = observer(function GanttGroupBand({ groupKey }: { g
   const chart = store.currentViewData;
 
   let span: { left: number; width: number } | null = null;
+  // Only worth printing once the brace is wide enough to hold it; on a narrow one
+  // the text would run past both uprights and read as belonging to the next row.
+  const label =
+    group?.start && group?.end
+      ? `${short(group.start)} – ${short(group.end)} · ${daysBetween(group.start, group.end)} d`
+      : null;
   if (group?.start && group?.end && chart) {
     const left = getPositionFromDate(chart, group.start, 0);
     const right = getPositionFromDate(chart, group.end, 0) + chart.data.dayWidth;
@@ -113,9 +124,18 @@ export const GanttGroupBand = observer(function GanttGroupBand({ groupKey }: { g
     >
       {span && (
         <div className="absolute inset-y-0 flex items-center" style={{ left: span.left, width: span.width }}>
-          <span className="bg-tertiary/70 h-3 w-px shrink-0" />
-          <span className="bg-tertiary/40 h-px flex-1" />
-          <span className="bg-tertiary/70 h-3 w-px shrink-0" />
+          {/* Hairlines at 40% opacity were invisible against the chart: the brace
+              was drawing correctly and still answered nothing, because nobody
+              could see it. Uprights at full weight, a dashed rule between. */}
+          <span className="bg-tertiary h-4 w-0.5 shrink-0 rounded-full" />
+          <span className="border-tertiary/60 h-0 flex-1 border-t border-dashed" />
+          <span className="bg-tertiary h-4 w-0.5 shrink-0 rounded-full" />
+          {/* The dates ride on the brace itself. The sidebar carries them too, but
+              a reader asking when a sprint runs is looking at the chart, and its
+              row was the one place on screen that did not say. */}
+          {label && span.width >= LABEL_MIN_WIDTH && (
+            <span className="absolute left-1.5 text-10 whitespace-nowrap text-tertiary tabular-nums">{label}</span>
+          )}
         </div>
       )}
     </div>

@@ -16,6 +16,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
+import { NARROW_BLOCK_PX } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { ganttLinking } from "@/plane-web/store/gantt-linking";
@@ -67,6 +68,7 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
   );
 
   const source = store.linkingSourceId;
+  const narrow = (store.getBlockById(blockId)?.position?.width ?? Number.POSITIVE_INFINITY) < NARROW_BLOCK_PX;
   const isSource = source === blockId;
   const isCandidate = !!source && source !== blockId;
 
@@ -176,9 +178,12 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
             ? "Click to cancel"
             : "Link: this item depends on the selected one"
       }
+      // On a short bar the handle steps fully outside it. At z-20 it sits above
+      // the move area, so half of it overlapping a twelve-pixel bar left nothing
+      // to grab — the bar could not be dragged at all at the coarser scales.
       className={cn(
         "shadow absolute top-1/2 z-20 size-3 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-2 border-white transition-opacity hover:opacity-100",
-        side === "right" ? "-right-1.5" : "-left-1.5",
+        narrow ? (side === "right" ? "-right-3" : "-left-3") : side === "right" ? "-right-1.5" : "-left-1.5",
         {
           "bg-blue-500 ring-blue-300 opacity-100 ring-2": isSource,
           "bg-success-primary opacity-100": isCandidate,

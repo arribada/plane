@@ -11,6 +11,7 @@ import { cn, renderFormattedDate } from "@plane/utils";
 //helpers
 //
 //hooks
+import { HANDLE_WIDTH, NARROW_BLOCK_PX } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 
 type LeftResizableProps = {
@@ -33,6 +34,12 @@ export const LeftResizable = observer(function LeftResizable(props: LeftResizabl
 
   const isLeftResizing = isMoving === "left" || isMoving === "move";
 
+  // A short bar has no middle to spare: the handle steps outside it entirely so
+  // the bar itself stays grabbable. Wide bars keep the straddling handle, which
+  // is easier to hit than one sitting off the edge.
+  const narrow = (position?.width ?? Number.POSITIVE_INFINITY) < NARROW_BLOCK_PX;
+  const handleLeft = narrow ? -HANDLE_WIDTH : -HANDLE_WIDTH / 2;
+
   if (!enableBlockLeftResize) return null;
 
   return (
@@ -52,7 +59,18 @@ export const LeftResizable = observer(function LeftResizable(props: LeftResizabl
         onMouseOut={() => {
           setIsHovering(false);
         }}
-        className="absolute top-1/2 -left-1.5 z-[6] h-full w-3 -translate-y-1/2 cursor-col-resize rounded-md"
+        // A resize grip is a separator by role, and the focus pair mirrors the
+        // hover pair so the date preview is not mouse-only.
+        role="separator"
+        aria-orientation="vertical"
+        onFocus={() => {
+          setIsHovering(true);
+        }}
+        onBlur={() => {
+          setIsHovering(false);
+        }}
+        style={{ left: `${handleLeft}px`, width: `${HANDLE_WIDTH}px` }}
+        className="absolute top-1/2 z-[6] h-full -translate-y-1/2 cursor-col-resize rounded-md"
       />
       <div
         className={cn(

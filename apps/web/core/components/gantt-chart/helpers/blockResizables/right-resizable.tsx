@@ -11,6 +11,7 @@ import { cn, renderFormattedDate } from "@plane/utils";
 //helpers
 //
 //hooks
+import { HANDLE_WIDTH, NARROW_BLOCK_PX } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 
 type RightResizableProps = {
@@ -33,6 +34,11 @@ export const RightResizable = observer(function RightResizable(props: RightResiz
 
   const isRightResizing = isMoving === "right" || isMoving === "move";
 
+  // Mirrors the left handle: below the threshold it steps outside the bar so the
+  // bar keeps a middle to grab.
+  const narrow = (position?.width ?? Number.POSITIVE_INFINITY) < NARROW_BLOCK_PX;
+  const handleRight = narrow ? -HANDLE_WIDTH : -HANDLE_WIDTH / 2;
+
   if (!enableBlockRightResize) return null;
 
   return (
@@ -50,7 +56,18 @@ export const RightResizable = observer(function RightResizable(props: RightResiz
         onMouseOut={() => {
           setIsHovering(false);
         }}
-        className="absolute top-1/2 -right-1.5 z-[6] h-full w-3 -translate-y-1/2 cursor-col-resize rounded-md"
+        // Mirrors the left grip: a separator role, and a focus pair so the date
+        // preview is not mouse-only.
+        role="separator"
+        aria-orientation="vertical"
+        onFocus={() => {
+          setIsHovering(true);
+        }}
+        onBlur={() => {
+          setIsHovering(false);
+        }}
+        style={{ right: `${handleRight}px`, width: `${HANDLE_WIDTH}px` }}
+        className="absolute top-1/2 z-[6] h-full -translate-y-1/2 cursor-col-resize rounded-md"
       />
       <div
         className={cn(

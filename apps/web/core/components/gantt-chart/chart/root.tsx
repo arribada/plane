@@ -194,8 +194,13 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     // settle for whichever of the three fixed steps happened to be closest.
     const factor = zoomToFill(span.days, available, view);
     // Fit generates and scrolls itself below; tell the zoom effect to stand down.
-    zoomHandledElsewhere.current = true;
-    setZoom(factor);
+    // Only when the value actually changes: React bails out of a no-op state
+    // update, so the effect never runs to clear the flag, and it would then eat
+    // the next real zoom press — press Fit twice, then "+", and nothing moved.
+    if (factor !== zoom) {
+      zoomHandledElsewhere.current = true;
+      setZoom(factor);
+    }
 
     // Rebuild the chart around the span's midpoint so the generated window
     // contains it — generating around today would put a distant project outside

@@ -34,6 +34,7 @@ from .models import (
     BaselineEntry,
     IssueArtifact,
     GithubIssue,
+    IssueChecklistItem,
     IssueEffort,
     IssueMilestone,
     IssueRole,
@@ -7172,6 +7173,123 @@ def _repo_key_for(url):
     from .github_classification_task import _repo_key
 
     return _repo_key(url)
+
+
+class IssueChecklistEndpoint(BaseAPIView):
+    """The work items on another work item's checklist.
+
+    Not sub-issues. A parent link propagates into every list, board and timeline;
+    this does not, which is the whole reason it exists as its own relation.
+
+    `done` is read from each member's state group rather than stored. Ticking a
+    box IS finishing the work item, so there is one fact and one place it lives —
+    a stored flag beside a state is two answers to one question.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = (
+            IssueChecklistItem.objects.filter(owner_id=issue_id)
+            .select_related("member", "member__state", "member__project")
+            .order_by("sort_order")
+        )
+        items = []
+        for row in rows:
+            member = row.member
+            # A member may live in another project — work really is shared — so
+            # the project is named rather than assumed.
+            items.append(
+                {
+                    "id": str(row.id),
+                    "issue_id": str(member.id),
+                    "name": member.name,
+                    "sequence_id": member.sequence_id,
+                    "project_id": str(member.project_id),
+                    "project_identifier": member.project.identifier if member.project else "",
+                    "state_id": str(member.state_id) if member.state_id else None,
+                    "done": bool(member.state and member.state.group == "completed"),
+                    "target_date": str(member.target_date) if member.target_date else None,
+                }
+            )
+        return Response({"items": items}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        """Put a work item on the checklist, or create one and put it there.
+
+        `name` creates a new work item in this project and adds it — which is
+        what typing a line into a checklist means. `member_issue_id` adds one
+        that already exists.
+        """
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        owner = Issue.issue_objects.filter(id=issue_id, project_id=project_id).first()
+        if not owner:
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        member = None
+        name = str(request.data.get("name") or "").strip()[:250]
+        member_id = request.data.get("member_issue_id")
+        if member_id:
+            # Scoped to what the caller can see, not to this project: a checklist
+            # may legitimately point at work in another project.
+            member = Issue.issue_objects.filter(
+                project__in=_visible_projects(request, slug), id=member_id
+            ).first()
+            if not member:
+                return Response({"error": "Work item not found"}, status=status.HTTP_404_NOT_FOUND)
+        elif name:
+            state = (
+                State.objects.filter(project_id=project_id, default=True).first()
+                or State.objects.filter(project_id=project_id).order_by("sequence").first()
+            )
+            member = Issue.objects.create(
+                workspace=owner.workspace,
+                project_id=project_id,
+                name=name,
+                state=state,
+                created_by=request.user,
+            )
+        else:
+            return Response(
+                {"error": "name or member_issue_id required"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if str(member.id) == str(owner.id):
+            return Response(
+                {"error": "A work item cannot be on its own checklist."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        last = (
+            IssueChecklistItem.objects.filter(owner_id=issue_id)
+            .order_by("-sort_order")
+            .values_list("sort_order", flat=True)
+            .first()
+        )
+        row, created = IssueChecklistItem.objects.get_or_create(
+            owner_id=issue_id,
+            member_id=member.id,
+            defaults={"sort_order": (last or 0) + 1000, "created_by": request.user},
+        )
+        return Response(
+            {"id": str(row.id), "issue_id": str(member.id), "created": created},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id, issue_id):
+        """Take a work item off the checklist. The work item itself survives —
+        removing a line from a list is not deleting the work it named."""
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        deleted, _ = IssueChecklistItem.objects.filter(
+            owner_id=issue_id, id=request.data.get("id")
+        ).delete()
+        return Response({"deleted": bool(deleted)}, status=status.HTTP_200_OK)
 
 class WorkspaceDirectoryEndpoint(BaseAPIView):
     """Everyone the workspace knows about, for the roster's name field.

@@ -9,6 +9,7 @@ from .views import (
     ProjectProcurementEndpoint,
     GithubSyncNowEndpoint,
     GithubTriageEndpoint,
+    IssueChecklistEndpoint,
     IssueEffortEndpoint,
     IssueRoleEndpoint,
     ProjectAssigneeGapEndpoint,
@@ -189,6 +190,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/undated-gap/",
         ProjectUndatedGapEndpoint.as_view(),
         name="arribada-project-undated-gap",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/checklist/",
+        IssueChecklistEndpoint.as_view(),
+        name="arribada-issue-checklist",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/disciplines/",

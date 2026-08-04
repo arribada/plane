@@ -435,10 +435,13 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // was already in it, in which case these ARE the recorded numbers and nothing
   // needs marking as approximate.
   const disp = budget?.display;
-  const near = !!disp?.converted;
   // The allocation currency itself may be one the pair cannot reach (a dollar
   // budget read in sterling); then there is nothing to show but the record.
   const useDisp = !!disp && (alloc?.amount == null || disp.allocation != null);
+  // Whichever block is on screen, the "≈" follows THAT block. `allocation.committed`
+  // converts too now, so reading it as exact would present an approximation as a
+  // recorded figure on exactly the projects where the two most differ.
+  const near = useDisp ? !!disp?.converted : !!alloc?.converted;
   const shownCcy = useDisp && disp ? disp.currency : (alloc?.currency ?? "EUR");
   const shownAmount = useDisp && disp ? disp.allocation : (alloc?.amount ?? null);
   const shownCommitted = useDisp && disp ? disp.committed : (alloc?.committed ?? 0);
@@ -451,10 +454,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const allocApprox = useDisp && !!disp && (alloc?.currency ?? "") !== disp.currency;
   const fig = (amount: number) => (near ? approx(amount, shownCcy) : money(amount, shownCcy));
   const figAlloc = (amount: number) => (allocApprox ? approx(amount, shownCcy) : money(amount, shownCcy));
-  // Currencies no total on this page includes. The display block knows about the
-  // ones its pair cannot reach; the allocation block knows about the ones that do
-  // not match the budget's own currency. Whichever view is on screen, the reader
-  // is told which figures are missing from the number above.
+  // Currencies no total on this page includes: the ones the EUR/GBP pair cannot
+  // reach. Both blocks now mean the same thing by it — the allocation's list used
+  // to mean "not the budget's own currency", which on this instance was every
+  // rate in the workspace, so the caveat named the project's entire cost as
+  // excluded from the project's cost.
   const missing = useDisp && disp ? disp.unconvertible : (alloc?.excluded_currencies ?? []);
   const options = currency?.available?.length ? currency.available : ["EUR", "GBP"];
 

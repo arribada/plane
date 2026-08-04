@@ -90,6 +90,9 @@ function ReportDocument({ overview, budget, expenses, requests, milestones, mone
       : "No project dates recorded";
 
   const currency = alloc?.currency ?? "EUR";
+  // "≈" only when something really was converted. A grant report that marks an
+  // exact figure as approximate is a report whose marks nobody reads.
+  const mark = alloc?.converted ? "≈ " : "";
   // Approved-but-unspent is a real claim on the budget and the reason a report
   // can look healthy the week before it is not.
   const outstanding = requests.filter((r) => r.status === "approved" || r.status === "ordered");
@@ -164,18 +167,40 @@ function ReportDocument({ overview, budget, expenses, requests, milestones, mone
         ) : (
           <>
             <Row left="Budget" right={money(alloc.amount, currency)} />
-            <Row left="Committed" right={money(alloc.committed, currency)} />
-            <Row left="Remaining" right={alloc.remaining == null ? "—" : money(alloc.remaining, currency)} />
+            {/* The same `committed` the Finance page shows, and now literally the
+                same number. It used to count only rows already held in the
+                budget's own currency: every rate in this workspace is sterling
+                and every budget defaults to euros, so this line read "€0" on
+                projects the screen reported as fully committed — and it was the
+                €0 that went to the funder. */}
+            <Row left="Committed" right={`${mark}${money(alloc.committed, currency)}`} />
+            <Row
+              left="Remaining"
+              right={alloc.remaining == null ? "—" : `${mark}${money(alloc.remaining, currency)}`}
+            />
             {outstanding.length > 0 && (
               <Text style={styles.caveat}>
                 Includes {outstanding.length} approved {outstanding.length === 1 ? "purchase" : "purchases"} not yet
                 paid.
               </Text>
             )}
+            {/* Where the "≈" comes from. A converted figure in a grant report has
+                to carry the rate and the day somebody wrote it down, or the
+                reader cannot tell an approximation from a bank statement. */}
+            {alloc.converted && (
+              <Text style={styles.caveat}>
+                Committed and remaining include costs recorded in another currency, converted at{" "}
+                {budget?.display?.rate ?? "?"} GBP per EUR
+                {budget?.display?.rate_captured_on
+                  ? ` as recorded on ${renderFormattedDate(budget.display.rate_captured_on)}`
+                  : ""}
+                . The amounts as recorded are listed below.
+              </Text>
+            )}
             {alloc.excluded_currencies.length > 0 && (
               <Text style={styles.caveat}>
-                Figures recorded in {alloc.excluded_currencies.join(", ")} are counted separately and are NOT included
-                above — this project's budget is held in {currency}.
+                Figures recorded in {alloc.excluded_currencies.join(", ")} cannot be converted to {currency} and are NOT
+                included above. They are listed below exactly as recorded.
               </Text>
             )}
           </>

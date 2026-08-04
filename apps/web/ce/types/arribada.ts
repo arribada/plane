@@ -532,8 +532,16 @@ export type TProjectBudget = {
     committed: number;
     remaining: number | null;
     percent: number | null;
-    /** Figures billed in another currency: counted apart, never converted. */
+    /** Currencies the EUR/GBP pair cannot reach, so `committed` leaves them out
+     *  and says so. NOT "every currency but this one" — `committed` converts
+     *  what it can, at the rate a human recorded, because a sum across
+     *  currencies has only two possible policies and discarding is not the
+     *  neutral one. */
     excluded_currencies: string[];
+    /** True when some of `committed` was converted, so it should be shown with a
+     *  "≈". False means every figure was already in this currency and the total
+     *  is exact. Absent on an older server. */
+    converted?: boolean;
   };
   /** Derived from the plan, so it moves whenever the plan does. */
   labour: {

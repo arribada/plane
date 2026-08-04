@@ -5330,38 +5330,45 @@ class ProjectBudgetEndpoint(BaseAPIView):
             key = f"{task['ends'].year}-{task['ends'].month:02d}"
             labour_by_month[key] = labour_by_month.get(key, 0.0) + value
 
-        # What has been committed against the allocation, in the allocation's own
-        # currency only. Anything billed in another currency is counted separately
-        # and named, rather than converted at a rate nobody in this system chose.
+        # What has been committed against the allocation, converted into the
+        # allocation's own currency at the rate a human recorded.
+        #
+        # There used to be TWO answers to this in one payload. This one counted
+        # only rows already in the allocation's currency and dropped the rest;
+        # `display.committed` converted them. Every rate in this workspace is
+        # sterling and every allocation defaults to euros, so the match-only sum
+        # was zero on every project that had one — and the two figures then went
+        # to different screens. Rewild Cyprus read €793,764 committed on the
+        # Finance page and €0 in the PDF a funder receives. Sea Turtle Tag GPS
+        # read €62,470 and €0, live, with `remaining` reporting the whole budget
+        # still available on a project already fully committed.
+        #
+        # Refusing to convert was the right instinct for a RECORDED amount, and
+        # `allocation.amount`, `labour.totals` and the expense lines still are
+        # exactly as recorded, per currency, unconverted. But `committed` was
+        # never a recorded amount — it is a sum across currencies, and the only
+        # ways to produce one are to convert or to discard. Discarding is not
+        # neutrality: it reported £53,100 of committed work as nothing.
+        #
+        # So: convert what the pair can reach, name what it cannot, and say
+        # whether any conversion happened at all so the reader can be shown a "≈".
+        # The rhythm chart already used exactly this figure; now the headline and
+        # the funder report use it too, because one thing cannot have two numbers.
         committed = 0.0
         other_currencies = set()
-        for row in labour["totals"]:
-            if row["currency"] == allocation_currency:
-                committed += row["amount"]
-            else:
-                other_currencies.add(row["currency"])
-        for row in expenses:
-            if row.currency == allocation_currency:
-                committed += float(row.total)
-            else:
-                other_currencies.add(row.currency)
-
-        # What the RHYTHM reads its runway against, which is not the same number.
-        # `committed` above counts only amounts already in the allocation's
-        # currency — deliberately, and the panel says so in prose. But a
-        # sustainable line computed from a committed of zero sits on the floor and
-        # marks every month as an overspend, on a project whose costs are simply
-        # held in another currency. This one converts, which is also what the
-        # headline figure directly above the chart does.
-        committed_in_allocation = 0.0
-        for row in labour["totals"]:
-            value = _convert_money(row["amount"], row["currency"], allocation_currency, eur_gbp)
-            if value is not None:
-                committed_in_allocation += value
-        for row in expenses:
-            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
-            if value is not None:
-                committed_in_allocation += value
+        converted_any = False
+        for amount, ccy in [(r["amount"], r["currency"]) for r in labour["totals"]] + [
+            (float(r.total), r.currency) for r in expenses
+        ]:
+            value = _convert_money(amount, ccy, allocation_currency, eur_gbp)
+            if value is None:
+                # Outside the EUR/GBP pair: no honest position in this total, so
+                # it is left out and named rather than guessed at.
+                other_currencies.add((ccy or "?").strip().upper())
+                continue
+            if (ccy or "").strip().upper() != allocation_currency.strip().upper():
+                converted_any = True
+            committed += value
 
         # The same figures read in one currency. A sibling block, never a
         # rewrite: `allocation`/`labour`/`expenses` below are untouched, so the
@@ -5402,15 +5409,23 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "percent": None
                     if not allocated
                     else round(100 * committed / allocated),
-                    # Named so a figure that does not count toward the allocation is
-                    # visible rather than quietly missing from it.
+                    # Currencies the EUR/GBP pair cannot reach, so no figure here
+                    # includes them. It used to mean "not the allocation's
+                    # currency", which on this instance was every rate in the
+                    # workspace — a caveat that named the whole cost of the
+                    # project as excluded from the project's cost.
                     "excluded_currencies": sorted(other_currencies),
+                    # True when some of `committed` was converted, so a reader can
+                    # be shown "≈". False means every figure was already in this
+                    # currency and the total is exact — marking that would train
+                    # people to ignore the mark.
+                    "converted": converted_any,
                 },
                 "rhythm": _spend_rhythm(
                     expense_by_month,
                     labour_by_month,
                     allocated,
-                    committed_in_allocation,
+                    committed,
                     schedule_row.target_date if schedule_row else None,
                     allocation_currency,
                     sorted(labour_unconvertible),

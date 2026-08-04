@@ -31,6 +31,7 @@ import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
 import { ListRowChecklist } from "@/plane-web/components/issues/checklist/list-row-checklist";
+import { WorkItemMilestoneMarker } from "@/plane-web/components/issues/milestone/marker";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // types
@@ -275,6 +276,11 @@ export const IssueBlock = observer(function IssueBlock(props: IssueBlockProps) {
                 <div className="absolute top-0 left-0 z-[99999] h-full w-full animate-pulse bg-surface-1/20" />
               )}
             </div>
+
+            {/* Arribada: a milestone reads as a quality of the item, so it sits
+                with the name and nowhere else. Rows that are not one render
+                nothing at all. */}
+            <WorkItemMilestoneMarker workspaceSlug={workspaceSlug} projectId={issue.project_id} issueId={issue.id} />
 
             <Tooltip
               tooltipContent={issue.name}

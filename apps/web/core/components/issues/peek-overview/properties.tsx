@@ -37,6 +37,7 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
 import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/panel";
+import { IssueMilestoneField } from "@/plane-web/components/issues/milestone/field";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
@@ -219,6 +220,16 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
             {issue.target_date && <DateAlert date={issue.target_date} workItem={issue} projectId={projectId} />}
           </div>
         </SidebarPropertyListItem>
+
+        {/* Same row, same place as the full work item page. This panel is what
+            opens from a list or the timeline, and a property only the full page
+            has is a property most people never find. */}
+        <IssueMilestoneField
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          isEditable={!disabled}
+        />
 
         {isEstimateEnabled && (
           <SidebarPropertyListItem icon={EstimatePropertyIcon} label={t("common.estimate")}>

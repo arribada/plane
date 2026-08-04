@@ -38,6 +38,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
 // components
 import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/panel";
+import { IssueMilestoneField } from "@/plane-web/components/issues/milestone/field";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
@@ -221,6 +222,17 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 {issue.target_date && <DateAlert date={issue.target_date} workItem={issue} projectId={projectId} />}
               </div>
             </SidebarPropertyListItem>
+
+            {/* Under the dates, because that is what a milestone is about: the
+                date something is delivered, passed or decided. It was only
+                markable from the timeline sidebar, which nobody opens to answer
+                a question about one work item. */}
+            <IssueMilestoneField
+              workspaceSlug={workspaceSlug?.toString() ?? ""}
+              projectId={projectId?.toString() ?? ""}
+              issueId={issueId}
+              isEditable={isEditable}
+            />
 
             {projectId && areEstimateEnabledByProjectId(projectId) && (
               <SidebarPropertyListItem icon={EstimatePropertyIcon} label={t("common.estimate")}>

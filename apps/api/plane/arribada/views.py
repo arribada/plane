@@ -826,10 +826,15 @@ class ProjectMilestonesEndpoint(BaseAPIView):
                 {"error": f"kind must be one of {', '.join(sorted(valid))}"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        row, _ = IssueMilestone.objects.update_or_create(
-            issue_id=issue_id,
-            defaults={"kind": kind, "label": str(request.data.get("label") or "")[:255]},
-        )
+        # The label is written ONLY when the caller sent the key. It always was,
+        # coerced through `or ""` — so any surface that changed a kind without
+        # re-sending the label silently erased it, and the label is the sentence
+        # a funder reads. Now three surfaces can change a kind, so the odds of
+        # that happening went from occasional to routine.
+        defaults = {"kind": kind}
+        if "label" in request.data:
+            defaults["label"] = str(request.data.get("label") or "")[:255]
+        row, _ = IssueMilestone.objects.update_or_create(issue_id=issue_id, defaults=defaults)
         return Response(
             {"issue_id": str(row.issue_id), "kind": row.kind, "label": row.label}, status=status.HTTP_200_OK
         )

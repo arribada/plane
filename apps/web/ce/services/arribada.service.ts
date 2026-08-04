@@ -223,7 +223,10 @@ export class ArribadaService extends APIService {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`, {
       issue_id: issueId,
       kind,
-      label: label ?? "",
+      // Omitted, not blanked, when the caller has no label to offer. Sending
+      // `""` told the server to erase one — so changing a kind from any surface
+      // that does not carry the label wiped the sentence a funder reads.
+      ...(label === undefined ? {} : { label }),
     })
       .then((r) => r?.data)
       .catch((e) => {

@@ -1241,6 +1241,45 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** What the router could not decide: repos several projects claim, and repos
+   *  nobody has linked. Everything routable is filed automatically and absent. */
+  async getGithubTriageQueue(workspaceSlug: string): Promise<{
+    items: {
+      id: string;
+      repo: string;
+      number: number;
+      title: string;
+      html_url: string;
+      labels: string[];
+      github_assignees: string[];
+      milestone: string;
+      state: string;
+      created_at: string | null;
+      claimed_by: { id: string; name: string }[];
+      suggested_project: string | null;
+      suggested_discipline: string | null;
+    }[];
+    projects: { id: string; name: string }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-triage-queue/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** File a batch. `parent_issue_id` nests several issues under one work item. */
+  async fileGithubTriage(
+    workspaceSlug: string,
+    items: { id: string; project_id: string; discipline?: string; assignee_id?: string; parent_issue_id?: string }[]
+  ): Promise<{ filed: number; skipped: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-triage-queue/`, { items })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** The GitHub inbox items no project claims, and where they could be filed.
    *  Behind the daily digest notification, which carries no work item and so
    *  could never show what it was counting. */

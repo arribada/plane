@@ -52,6 +52,7 @@ export const SidebarItemBase = observer(function SidebarItemBase({
     "pi_chat",
     "projects",
     "portfolio",
+    "github_triage",
     "workload",
     "your_work",
     "stickies",

@@ -278,6 +278,15 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS: Record<string, IWorkspac
     access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER, EUserWorkspaceRoles.GUEST],
     highlight: (pathname: string, url: string) => pathname === url,
   },
+  github_triage: {
+    key: "github_triage",
+    labelTranslationKey: "github_triage",
+    href: `/github-triage/`,
+    // Members and admins only: filing an issue into a project creates work
+    // there, which a guest cannot do anywhere else either.
+    access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
+    highlight: (pathname: string, url: string) => pathname === url,
+  },
   workload: {
     key: "workload",
     labelTranslationKey: "workload",

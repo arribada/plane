@@ -7262,6 +7262,77 @@ class WorkspaceGithubTriageArchiveEndpoint(BaseAPIView):
         return Response({"restored": restored}, status=status.HTTP_200_OK)
 
 
+class WorkspaceGithubRepoClaimEndpoint(BaseAPIView):
+    """Settle a contested repository once, instead of once per issue.
+
+    A repo two projects both list in `github_repo_urls` is unroutable by
+    construction: the router will not guess, so every issue it ever produces
+    arrives in the triage queue and is answered the same way by hand. The
+    decision is not really about the issue in front of you — it is about the
+    repository — and this is where that decision can be said out loud.
+
+    It EDITS ANOTHER PROJECT'S CONFIGURATION, which is why nothing calls it
+    implicitly. Picking a project for one row must stay a one-row act; unlinking
+    a repo from a team's project is a different size of change and the caller has
+    to ask for it by name.
+
+    Scoped to projects the caller can see, both ways round: a repo may be claimed
+    by a project outside their visibility, and this must not strip a link they
+    were never shown. Those are reported back as `untouched` rather than quietly
+    dropped, because the caller was promised "no more issues from this repo" and
+    an invisible rival claim would break that promise.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        repo = str(request.data.get("repo") or "").strip().lower()
+        project_id = str(request.data.get("project_id") or "")
+        if not repo or "/" not in repo:
+            return Response({"error": "repo required, as owner/name"}, status=status.HTTP_400_BAD_REQUEST)
+
+        visible = _visible_projects(request, slug)
+        winner = visible.filter(id=project_id).first() if _uuid_list([project_id]) else None
+        if not winner:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        removed_from, untouched = [], []
+        for doc in ProjectWikiDoc.objects.filter(project__workspace__slug=slug).select_related("project"):
+            urls = doc.github_repo_urls or []
+            if not any(_repo_key_for(url) == repo for url in urls):
+                continue
+            if str(doc.project_id) == str(winner.id):
+                continue
+            # Claimed by something the caller cannot see. Refusing the whole
+            # request would be worse — the visible half is still worth settling —
+            # but saying nothing would leave them believing it was settled.
+            if not visible.filter(id=doc.project_id).exists():
+                untouched.append({"id": str(doc.project_id), "name": doc.project.name})
+                continue
+            doc.github_repo_urls = [url for url in urls if _repo_key_for(url) != repo]
+            doc.save(update_fields=["github_repo_urls"])
+            removed_from.append({"id": str(doc.project_id), "name": doc.project.name})
+
+        # The winner must end up holding the claim, otherwise "this repo belongs
+        # to this project" would have unlinked everybody and routed nothing.
+        doc, _ = ProjectWikiDoc.objects.get_or_create(project=winner)
+        urls = doc.github_repo_urls or []
+        added = not any(_repo_key_for(url) == repo for url in urls)
+        if added:
+            doc.github_repo_urls = [*urls, f"https://github.com/{repo}"]
+            doc.save(update_fields=["github_repo_urls"])
+
+        return Response(
+            {
+                "repo": repo,
+                "kept": {"id": str(winner.id), "name": winner.name},
+                "removed_from": removed_from,
+                "untouched": untouched,
+                "added": added,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 def _repo_key_for(url):
     """owner/repo from a GitHub url. Shared with the classification task, imported
     lazily there to keep this module free of a circular import."""

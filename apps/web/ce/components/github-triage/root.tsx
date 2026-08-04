@@ -13,7 +13,10 @@
  *
  * Every row arrives filled in as far as the evidence goes. What it cannot know
  * — which of two projects owns a shared repo — is exactly what is left to
- * answer, and it is one dropdown.
+ * answer, and the row already names the candidates, so the names ARE the
+ * control: clicking one is the answer. The same row also offers to settle the
+ * repository itself, which is the answer to every issue it will ever produce,
+ * and that one asks first because it rewrites another project's settings.
  *
  * The second question is whether an issue deserves a work item of its own.
  * Often several of them are one task, so a row can instead join an existing work
@@ -33,6 +36,7 @@ import { useParams } from "next/navigation";
 import { Archive, ChevronRight, ExternalLink, Github, ListChecks, Loader2, Undo2, X } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { ISearchIssueResponse } from "@plane/types";
+import { AlertModalCore } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { ExistingIssuesListModal } from "@/components/core/modals/existing-issues-list-modal";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -83,6 +87,12 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
   // Rows mid-flight, so a second click cannot dismiss the same one twice while
   // the first request is still out.
   const [busyRows, setBusyRows] = useState<string[]>([]);
+  // The row whose repository is about to be settled for good, held while the
+  // confirmation is open. Held as the row rather than as ids because the
+  // confirmation has to name the projects that lose the link, and the row is
+  // the only thing that knows them.
+  const [settling, setSettling] = useState<TQueueItem | null>(null);
+  const [settlingBusy, setSettlingBusy] = useState(false);
 
   const slug = workspaceSlug?.toString();
 
@@ -190,6 +200,45 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
     }
   };
 
+  /** The claimant picked for this row, if the pick is one of the claimants.
+   *  Settling the repository on a project that never claimed it is a different
+   *  and much larger act than resolving a contest, so it is not offered here. */
+  const claimantChosen = (item: TQueueItem) => item.claimed_by.find((c) => c.id === choice[item.id]) ?? null;
+
+  const settle = async () => {
+    const winner = settling && claimantChosen(settling);
+    if (!slug || !settling || !winner) return;
+    setSettlingBusy(true);
+    try {
+      const result = await service.claimGithubRepo(slug, settling.repo, winner.id);
+      const lost = result.removed_from.map((p) => p.name).join(", ");
+      setToast({
+        type: TOAST_TYPE.SUCCESS,
+        title: `${settling.repo} is ${winner.name}'s`,
+        message: result.untouched.length
+          ? `Unlinked from ${lost || "nobody else"}. ${result.untouched
+              .map((p) => p.name)
+              .join(", ")} still claims it and is outside your access, so its issues may keep arriving here.`
+          : lost
+            ? `Unlinked from ${lost}. Its future issues file themselves.`
+            : "Nothing else claimed it, so its future issues already file themselves.",
+      });
+      setSettling(null);
+      // The whole queue, not just this row: settling a repository changes where
+      // every other row from it is going, and leaving them saying "claimed by
+      // two projects" would be a lie the page told about its own last action.
+      load();
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't settle it",
+        message: (error as { error?: string })?.error ?? "No project's links were changed.",
+      });
+    } finally {
+      setSettlingBusy(false);
+    }
+  };
+
   // The picker searches one project first and offers the whole workspace, so it
   // opens on the project the rows are going to rather than an arbitrary one.
   const pickingProjectId = picking?.map((id) => choice[id]).find(Boolean) ?? projects[0]?.id;
@@ -291,10 +340,45 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
                     {item.milestone && <span>· {item.milestone}</span>}
                     {/* Why this row is here at all. Without it, a repository two
                         projects claim looks identical to one nobody claims, and
-                        the answer to each is different. */}
+                        the answer to each is different.
+
+                        The names are the answer, so they are the control. Reading
+                        "claimed by Firmware and Hardware" and then hunting for one
+                        of those two words in a list of twenty-three is the same
+                        decision made twice, and the second time is where it goes
+                        wrong. */}
                     {item.claimed_by.length > 1 && (
                       <span className="text-warning-primary">
-                        · claimed by {item.claimed_by.map((c) => c.name).join(" and ")}
+                        ·{" "}
+                        {item.claimed_by.map((c, index) => (
+                          <span key={c.id}>
+                            {index === 0 ? "claimed by " : " and "}
+                            <button
+                              type="button"
+                              onClick={() => setChoice((current) => ({ ...current, [item.id]: c.id }))}
+                              title={`File this one in ${c.name}`}
+                              className={cn(
+                                "underline decoration-dotted underline-offset-2 hover:text-primary",
+                                choice[item.id] === c.id && "font-medium text-primary no-underline"
+                              )}
+                            >
+                              {c.name}
+                            </button>
+                          </span>
+                        ))}
+                        {/* The other half of the answer: this row, or this repo
+                            for good. Offered only once a claimant is chosen, so
+                            the sentence it completes is already on screen. */}
+                        {claimantChosen(item) && (
+                          <button
+                            type="button"
+                            onClick={() => setSettling(item)}
+                            title={`Give ${item.repo} to this project permanently and unlink it from the others`}
+                            className="ml-1.5 text-tertiary underline decoration-dotted underline-offset-2 hover:text-primary"
+                          >
+                            always
+                          </button>
+                        )}
                       </span>
                     )}
                     {item.claimed_by.length === 0 && <span>· no project names this repository</span>}
@@ -478,6 +562,38 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
           )}
         </section>
       )}
+
+      {/* Spelled out rather than summarised. This unlinks a repository from a
+          project somebody else set up, and the only honest way to ask is to name
+          the project and say what it loses. */}
+      <AlertModalCore
+        isOpen={settling !== null}
+        handleClose={() => setSettling(null)}
+        handleSubmit={() => void settle()}
+        isSubmitting={settlingBusy}
+        variant="primary"
+        title={settling ? `Give ${settling.repo} to ${claimantChosen(settling)?.name ?? ""}?` : ""}
+        primaryButtonText={{ default: "Settle it", loading: "Settling" }}
+        content={
+          settling ? (
+            <span>
+              {settling.repo} will be linked to <b>{claimantChosen(settling)?.name}</b> only. It will be removed from
+              the linked repositories of{" "}
+              <b>
+                {settling.claimed_by
+                  .filter((c) => c.id !== choice[settling.id])
+                  .map((c) => c.name)
+                  .join(" and ")}
+              </b>
+              , which changes those projects' settings. Every future issue from this repository will then file itself
+              into {claimantChosen(settling)?.name} without passing through this page. Issues already waiting here are
+              not moved.
+            </span>
+          ) : (
+            ""
+          )
+        }
+      />
 
       {slug && pickingProjectId && (
         <ExistingIssuesListModal

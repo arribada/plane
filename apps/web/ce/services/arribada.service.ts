@@ -1356,6 +1356,34 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Settle a contested repository for good: the named project keeps it, every
+   *  other project it was linked to loses the link, and the router can decide
+   *  every future issue from it on its own.
+   *
+   *  This edits OTHER projects' configuration, so nothing should call it without
+   *  asking first. `untouched` names claims outside the caller's visibility, which
+   *  are the reason "no more issues from this repo" could still turn out false. */
+  async claimGithubRepo(
+    workspaceSlug: string,
+    repo: string,
+    projectId: string
+  ): Promise<{
+    repo: string;
+    kept: { id: string; name: string };
+    removed_from: { id: string; name: string }[];
+    untouched: { id: string; name: string }[];
+    added: boolean;
+  }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-repo-claim/`, {
+      repo,
+      project_id: projectId,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** The rows somebody decided were nothing. Kept, never deleted — the archive
    *  is what makes dismissing safe enough to do quickly. */
   async getGithubTriageArchive(workspaceSlug: string): Promise<{

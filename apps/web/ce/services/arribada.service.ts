@@ -1356,6 +1356,44 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** The rows somebody decided were nothing. Kept, never deleted — the archive
+   *  is what makes dismissing safe enough to do quickly. */
+  async getGithubTriageArchive(workspaceSlug: string): Promise<{
+    items: {
+      id: string;
+      repo: string;
+      number: number;
+      title: string;
+      html_url: string;
+      dismissed_at: string | null;
+    }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Take rows off the queue without filing them anywhere. The sync reads the
+   *  same flag, so they do not come back tomorrow. */
+  async dismissGithubTriage(workspaceSlug: string, ids: string[]): Promise<{ dismissed: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`, { ids })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Put dismissed rows back in the queue, undecided again. */
+  async restoreGithubTriage(workspaceSlug: string, ids: string[]): Promise<{ restored: number }> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`, { ids })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** The GitHub inbox items no project claims, and where they could be filed.
    *  Behind the daily digest notification, which carries no work item and so
    *  could never show what it was counting. */

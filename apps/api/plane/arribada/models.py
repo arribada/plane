@@ -1260,6 +1260,23 @@ class GithubIssue(models.Model):
     filed_by_rule = models.CharField(max_length=16, blank=True, default="")
     filed_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
 
+    # Off the queue WITHOUT being filed anywhere.
+    #
+    # Some GitHub issues will never belong to a project — noise, duplicates,
+    # wontfix. Filing was the only exit, so clearing the list meant polluting a
+    # project with work nobody intends to do, and the row came straight back on
+    # the next sync anyway. Dismissed is the third answer the queue was missing:
+    # decided, and decided to be nothing.
+    #
+    # Separate from `filed_issue` on purpose. "Filed" says where it went;
+    # "dismissed" says it went nowhere, deliberately. Collapsing them into one
+    # nullable FK would make "handled" indistinguishable from "handled by
+    # someone who gave up", and only one of those is worth reviewing later.
+    dismissed_at = models.DateTimeField(null=True, blank=True)
+    dismissed_by = models.ForeignKey(
+        "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

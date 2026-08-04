@@ -133,16 +133,23 @@ def _record_github_issue(workspace, repo, gh):
     and an assignee who already has a Plane account were both being discarded
     before anybody could use them.
 
-    Purely additive today: nothing reads this table yet, so a failure here must
-    never take the sync down with it.
+    Returns the row so the caller can read what triage has already decided about
+    it — specifically whether somebody dismissed it. A failure here must never
+    take the sync down with it, so the caller gets None and is expected to treat
+    that as "no decision on record" rather than as an error.
+
+    `dismissed_at` and `dismissed_by` are deliberately absent from `defaults`:
+    everything listed there is GitHub's version of the truth and is meant to be
+    overwritten on every run, while a dismissal is this workspace's decision and
+    an upsert that carried it away would undo it once a day.
     """
     from plane.arribada.models import GithubIssue
 
     number = gh.get("number")
     if number is None:
-        return
+        return None
     try:
-        GithubIssue.objects.update_or_create(
+        row, _ = GithubIssue.objects.update_or_create(
             workspace=workspace,
             repo=repo,
             number=int(number),
@@ -168,9 +175,10 @@ def _record_github_issue(workspace, repo, gh):
                 "github_updated_at": _parse_gh_time(gh.get("updated_at")),
             },
         )
+        return row
     except Exception:
         # One malformed issue must not stop the rest of the run.
-        pass
+        return None
 
 
 
@@ -313,7 +321,15 @@ def github_plane_sync():
             for gh in issues:
                 # Recorded whether or not it becomes a work item here: the raw
                 # issue is what the triage view will be built on.
-                _record_github_issue(ghin.workspace, repo, gh)
+                record = _record_github_issue(ghin.workspace, repo, gh)
+                # Somebody looked at this and decided it belongs nowhere. Making a
+                # work item for it now is exactly the thing dismissing was meant to
+                # prevent — the row would be back in the inbox tomorrow and the
+                # decision would have cost nothing. The record itself stays current
+                # (title, labels, state), so restoring it later shows today's issue
+                # rather than the one from the day it was set aside.
+                if record is not None and record.dismissed_at is not None:
+                    continue
                 gid = str(gh.get("id") or "")
                 if not gid:
                     continue

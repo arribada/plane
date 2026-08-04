@@ -7036,8 +7036,9 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                     claims[key].append(str(doc.project_id))
 
         rows = list(
-            GithubIssue.objects.filter(workspace__slug=slug, filed_issue__isnull=True)
-            .order_by("repo", "-github_created_at")[:300]
+            GithubIssue.objects.filter(
+                workspace__slug=slug, filed_issue__isnull=True, dismissed_at__isnull=True
+            ).order_by("repo", "-github_created_at")[:300]
         )
 
         items = []
@@ -7195,6 +7196,70 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
             filed += 1
 
         return Response({"filed": filed, "skipped": skipped}, status=status.HTTP_200_OK)
+
+
+class WorkspaceGithubTriageArchiveEndpoint(BaseAPIView):
+    """The rows somebody decided were nothing, and the way back.
+
+    The queue only ever had one exit — file it into a project — so an issue that
+    belongs in no project could only be cleared by putting it in one. That is a
+    bad trade twice over: a project gains work nobody intends to do, and the
+    queue is only briefly shorter because the next sync brings the row back.
+
+    Dismissing sets `dismissed_at` on the raw GitHub record, which is the thing
+    the sync writes and the queue reads, so it survives a resync by construction
+    rather than by a filter somebody has to remember to add. Nothing is deleted:
+    the archive is a list, every entry restores, and a wrong dismissal costs a
+    click rather than a lost issue.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        rows = GithubIssue.objects.filter(
+            workspace__slug=slug, dismissed_at__isnull=False
+        ).order_by("-dismissed_at")[:300]
+        return Response(
+            {
+                "items": [
+                    {
+                        "id": str(row.id),
+                        "repo": row.repo,
+                        "number": row.number,
+                        "title": row.title,
+                        "html_url": row.html_url,
+                        "dismissed_at": row.dismissed_at.isoformat() if row.dismissed_at else None,
+                    }
+                    for row in rows
+                ]
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        """Set rows aside. Already-filed rows are refused, not silently archived —
+        they left the queue by a different door and hiding one would only make the
+        work item it became harder to trace back."""
+        ids = _uuid_list(request.data.get("ids") or [])
+        if not ids:
+            return Response({"error": "ids required"}, status=status.HTTP_400_BAD_REQUEST)
+        dismissed = GithubIssue.objects.filter(
+            workspace__slug=slug, id__in=ids[:200], filed_issue__isnull=True, dismissed_at__isnull=True
+        ).update(dismissed_at=timezone.now(), dismissed_by=request.user)
+        return Response({"dismissed": dismissed}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug):
+        """Put rows back in the queue. Clears who dismissed them as well as when:
+        a restored row is undecided again, and a name beside it would suggest
+        somebody still stands behind a decision that has been undone."""
+        ids = _uuid_list(request.data.get("ids") or [])
+        if not ids:
+            return Response({"error": "ids required"}, status=status.HTTP_400_BAD_REQUEST)
+        restored = GithubIssue.objects.filter(
+            workspace__slug=slug, id__in=ids[:200], dismissed_at__isnull=False
+        ).update(dismissed_at=None, dismissed_by=None)
+        return Response({"restored": restored}, status=status.HTTP_200_OK)
 
 
 def _repo_key_for(url):

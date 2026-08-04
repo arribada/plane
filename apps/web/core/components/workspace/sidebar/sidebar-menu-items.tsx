@@ -9,6 +9,7 @@ import { observer } from "mobx-react";
 import { Ellipsis } from "lucide-react";
 import { Disclosure, Transition } from "@headlessui/react";
 // plane imports
+import type { IWorkspaceSidebarNavigationItem } from "@plane/constants";
 import {
   WORKSPACE_SIDEBAR_DYNAMIC_NAVIGATION_ITEMS_LINKS,
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS,
@@ -79,26 +80,35 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
     personalItems.sort((a, b) => a.sort_order - b.sort_order);
 
     // Merge static items with sorted personal items
-    return [...items, ...personalItems];
+    const merged: IWorkspaceSidebarNavigationItem[] = [...items, ...personalItems];
+
+    // Raising an expense sits at the bottom of this group, under Stickies —
+    // which is where it was asked for. It has no preference row of its own
+    // because it is not a page you can turn off; it is a button, and hiding a
+    // button behind a preference nobody knows exists is how features go unused.
+    const requestExpenseItem = WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["request-expense"];
+    if (requestExpenseItem) merged.push(requestExpenseItem);
+
+    return merged;
   }, [personalPreferences]);
 
+  // Sorted by preference, without cloning each item to carry a sort_order that
+  // nothing downstream reads. `slice()` because the source is a module-level
+  // constant and `sort` is in place.
   const sortedNavigationItems = useMemo(
     () =>
-      WORKSPACE_SIDEBAR_DYNAMIC_NAVIGATION_ITEMS_LINKS.map((item) => {
-        const preference = workspacePreferences.items[item.key];
-        return {
-          ...item,
-          sort_order: preference ? preference.sort_order : 0,
-        };
-      }).sort((a, b) => a.sort_order - b.sort_order),
+      WORKSPACE_SIDEBAR_DYNAMIC_NAVIGATION_ITEMS_LINKS.slice().sort(
+        (a, b) =>
+          (workspacePreferences.items[a.key]?.sort_order ?? 0) - (workspacePreferences.items[b.key]?.sort_order ?? 0)
+      ),
     [workspacePreferences]
   );
 
   return (
     <>
       <div className="flex flex-col gap-0.5">
-        {filteredStaticNavigationItems.map((item, _index) => (
-          <SidebarItem key={`static_${_index}`} item={item} />
+        {filteredStaticNavigationItems.map((item) => (
+          <SidebarItem key={`static_${item.key}`} item={item} />
         ))}
       </div>
       <Disclosure as="div" className="flex flex-col" defaultOpen={!!isWorkspaceMenuOpen}>
@@ -148,11 +158,11 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
           {isWorkspaceMenuOpen && (
             <Disclosure.Panel as="div" className="flex flex-col gap-0.5" static>
               <>
-                {WORKSPACE_SIDEBAR_STATIC_PINNED_NAVIGATION_ITEMS_LINKS.map((item, _index) => (
-                  <SidebarItem key={`static_${_index}`} item={item} />
+                {WORKSPACE_SIDEBAR_STATIC_PINNED_NAVIGATION_ITEMS_LINKS.map((item) => (
+                  <SidebarItem key={`static_${item.key}`} item={item} />
                 ))}
-                {sortedNavigationItems.map((item, _index) => (
-                  <SidebarItem key={`dynamic_${_index}`} item={item} />
+                {sortedNavigationItems.map((item) => (
+                  <SidebarItem key={`dynamic_${item.key}`} item={item} />
                 ))}
                 <SidebarNavItem>
                   <button

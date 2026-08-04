@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { GanttChartSquare, Inbox, Users } from "lucide-react";
+import { GanttChartSquare, Inbox, ReceiptText, Users } from "lucide-react";
 import {
   AnalyticsIcon,
   ArchiveIcon,
@@ -47,5 +47,7 @@ export const getSidebarNavigationItemIcon = (key: string, className: string = ""
       return <Inbox className={cn("size-4 flex-shrink-0", className)} />;
     case "workload":
       return <Users className={cn("size-4 flex-shrink-0", className)} />;
+    case "request_expense":
+      return <ReceiptText className={cn("size-4 flex-shrink-0", className)} />;
   }
 };

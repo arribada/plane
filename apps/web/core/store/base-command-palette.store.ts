@@ -36,6 +36,7 @@ export interface IBaseCommandPaletteStore {
     isOpen: boolean;
   };
   allStickiesModal: boolean;
+  requestExpenseModal: boolean;
   projectListOpenMap: Record<string, boolean>;
   getIsProjectListOpen: (projectId: string) => boolean;
   // toggle actions
@@ -48,6 +49,7 @@ export interface IBaseCommandPaletteStore {
   toggleDeleteIssueModal: (value?: boolean) => void;
   toggleBulkDeleteIssueModal: (value?: boolean) => void;
   toggleAllStickiesModal: (value?: boolean) => void;
+  toggleRequestExpenseModal: (value?: boolean) => void;
   toggleProjectListOpen: (projectId: string, value?: boolean) => void;
   toggleProfileSettingsModal: (value: { activeTab?: TProfileSettingsTabs | null; isOpen?: boolean }) => void;
 }
@@ -69,6 +71,7 @@ export abstract class BaseCommandPaletteStore implements IBaseCommandPaletteStor
     isOpen: false,
   };
   allStickiesModal: boolean = false;
+  requestExpenseModal: boolean = false;
   projectListOpenMap: Record<string, boolean> = {};
 
   constructor() {
@@ -86,6 +89,7 @@ export abstract class BaseCommandPaletteStore implements IBaseCommandPaletteStor
       createWorkItemAllowedProjectIds: observable,
       profileSettingsModal: observable,
       allStickiesModal: observable,
+      requestExpenseModal: observable,
       projectListOpenMap: observable,
       // toggle actions
       toggleCreateProjectModal: action,
@@ -97,6 +101,7 @@ export abstract class BaseCommandPaletteStore implements IBaseCommandPaletteStor
       toggleDeleteIssueModal: action,
       toggleBulkDeleteIssueModal: action,
       toggleAllStickiesModal: action,
+      toggleRequestExpenseModal: action,
       toggleProjectListOpen: action,
       toggleProfileSettingsModal: action,
     });
@@ -117,7 +122,8 @@ export abstract class BaseCommandPaletteStore implements IBaseCommandPaletteStor
       this.isBulkDeleteIssueModalOpen ||
       this.isDeleteIssueModalOpen ||
       this.createPageModal.isOpen ||
-      this.allStickiesModal
+      this.allStickiesModal ||
+      this.requestExpenseModal
     );
   }
   // computedFn
@@ -258,6 +264,21 @@ export abstract class BaseCommandPaletteStore implements IBaseCommandPaletteStor
       this.allStickiesModal = value;
     } else {
       this.allStickiesModal = !this.allStickiesModal;
+    }
+  };
+
+  /**
+   * Toggles the "request an expense" modal
+   * @param value
+   * @returns
+   */
+  toggleRequestExpenseModal = (value?: boolean) => {
+    // `value !== undefined`, not the truthiness test its neighbours use: with
+    // the latter, toggle(false) falls into the else and *opens* the modal.
+    if (value !== undefined) {
+      this.requestExpenseModal = value;
+    } else {
+      this.requestExpenseModal = !this.requestExpenseModal;
     }
   };
 

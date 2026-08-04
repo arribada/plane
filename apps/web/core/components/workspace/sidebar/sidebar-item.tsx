@@ -17,6 +17,7 @@ import { joinUrlPath } from "@plane/utils";
 import { SidebarNavItem } from "@/components/sidebar/sidebar-navigation";
 // hooks
 import { useAppTheme } from "@/hooks/store/use-app-theme";
+import { useCommandPalette } from "@/hooks/store/use-command-palette";
 import { useUser, useUserPermissions } from "@/hooks/store/user";
 import { useWorkspaceNavigationPreferences } from "@/hooks/use-navigation-preferences";
 // plane web imports
@@ -41,10 +42,16 @@ export const SidebarItemBase = observer(function SidebarItemBase({
   const { data } = useUser();
 
   const { toggleSidebar, isExtendedSidebarOpened, toggleExtendedSidebar } = useAppTheme();
+  const { toggleRequestExpenseModal } = useCommandPalette();
 
   const handleLinkClick = () => {
     if (window.innerWidth < 768) toggleSidebar();
     if (isExtendedSidebarOpened) toggleExtendedSidebar(false);
+  };
+
+  const handleModalItemClick = (key: string) => {
+    handleLinkClick();
+    if (key === "request_expense") toggleRequestExpenseModal(true);
   };
 
   const staticItems = [
@@ -57,6 +64,7 @@ export const SidebarItemBase = observer(function SidebarItemBase({
     "your_work",
     "stickies",
     "drafts",
+    "request_expense",
     ...(additionalStaticItems || []),
   ];
   const slug = workspaceSlug?.toString() || "";
@@ -69,13 +77,31 @@ export const SidebarItemBase = observer(function SidebarItemBase({
   const itemHref =
     item.key === "your_work" && data?.id ? joinUrlPath(slug, item.href, data?.id) : joinUrlPath(slug, item.href);
   const icon = getSidebarNavigationItemIcon(item.key);
+  const label = t(item.labelTranslationKey);
+
+  // Entries that open a modal get a button, not a link: an <a> that swallows its
+  // own navigation still offers a URL to middle-click and to copy, and there is
+  // no page at the other end of this one.
+  if (item.opensModal) {
+    return (
+      <button type="button" className="w-full text-left" onClick={() => handleModalItemClick(item.key)}>
+        <SidebarNavItem>
+          <div className="flex items-center gap-1.5 py-[1px]">
+            {icon}
+            <p className="text-13 leading-5 font-medium">{label}</p>
+          </div>
+          {additionalRender?.(item.key, slug)}
+        </SidebarNavItem>
+      </button>
+    );
+  }
 
   return (
     <Link href={itemHref} onClick={handleLinkClick}>
       <SidebarNavItem isActive={item.highlight(pathname, itemHref)}>
         <div className="flex items-center gap-1.5 py-[1px]">
           {icon}
-          <p className="text-13 leading-5 font-medium">{t(item.labelTranslationKey)}</p>
+          <p className="text-13 leading-5 font-medium">{label}</p>
         </div>
         {additionalRender?.(item.key, slug)}
       </SidebarNavItem>

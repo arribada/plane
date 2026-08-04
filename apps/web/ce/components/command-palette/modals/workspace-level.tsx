@@ -9,6 +9,8 @@ import { observer } from "mobx-react";
 import { CreateProjectModal } from "@/components/project/create-project-modal";
 // hooks
 import { useCommandPalette } from "@/hooks/store/use-command-palette";
+// plane web components
+import { RequestExpenseModal } from "@/plane-web/components/workspace/request-expense-modal";
 
 export type TWorkspaceLevelModalsProps = {
   workspaceSlug: string;
@@ -17,13 +19,19 @@ export type TWorkspaceLevelModalsProps = {
 export const WorkspaceLevelModals = observer(function WorkspaceLevelModals(props: TWorkspaceLevelModalsProps) {
   const { workspaceSlug } = props;
   // store hooks
-  const { isCreateProjectModalOpen, toggleCreateProjectModal } = useCommandPalette();
+  const { isCreateProjectModalOpen, toggleCreateProjectModal, requestExpenseModal, toggleRequestExpenseModal } =
+    useCommandPalette();
 
   return (
     <>
       <CreateProjectModal
         isOpen={isCreateProjectModalOpen}
         onClose={() => toggleCreateProjectModal(false)}
+        workspaceSlug={workspaceSlug.toString()}
+      />
+      <RequestExpenseModal
+        isOpen={requestExpenseModal}
+        onClose={() => toggleRequestExpenseModal(false)}
         workspaceSlug={workspaceSlug.toString()}
       />
     </>

@@ -196,6 +196,13 @@ export interface IWorkspaceSidebarNavigationItem {
   href: string;
   access: EUserWorkspaceRoles[];
   highlight: (pathname: string, url: string) => boolean;
+  /**
+   * The entry opens a modal instead of navigating. `href` is then dead weight —
+   * kept because the field is required and because a link that goes nowhere is
+   * worse than one that is never rendered. The sidebar renders a button for
+   * these, so no route needs to exist.
+   */
+  opensModal?: boolean;
 }
 
 export const WORKSPACE_SIDEBAR_DYNAMIC_NAVIGATION_ITEMS: Record<string, IWorkspaceSidebarNavigationItem> = {
@@ -298,6 +305,20 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS: Record<string, IWorkspac
     access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
     highlight: (pathname: string, url: string) => pathname === url,
   },
+  "request-expense": {
+    key: "request_expense",
+    // Same story as github_triage: no catalogue entry, and `t()` hands back the
+    // key on a miss, so the key has to read as the label.
+    labelTranslationKey: "Request an expense",
+    // Never used — see `opensModal`. Kept non-empty so joinUrlPath cannot be
+    // handed "" by some future caller that forgets the flag.
+    href: `/projects/`,
+    // POST /procurement/ is ADMIN or MEMBER; a guest would only get a 403 out
+    // of the form, so it is not offered to them.
+    access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
+    highlight: () => false,
+    opensModal: true,
+  },
 };
 
 export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS_LINKS: IWorkspaceSidebarNavigationItem[] = [
@@ -316,6 +337,16 @@ export const WORKSPACE_SIDEBAR_STATIC_PINNED_NAVIGATION_ITEMS_LINKS: IWorkspaceS
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["github_triage"],
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["workload"],
 ];
+
+/**
+ * `request_expense` is deliberately NOT in the array above. That array feeds the
+ * collapsible "Workspace" section, and Stickies does not live there — Stickies is
+ * a personal-preference entry in the top group, assembled in
+ * `sidebar-menu-items.tsx`. "Below Stickies" therefore means the top group, and
+ * that file appends this entry after the personal items. The lesson from the two
+ * entries that shipped invisible still stands: the record is a declaration, only
+ * an array that something maps over puts a row on screen.
+ */
 
 export const IS_FAVORITE_MENU_OPEN = "is_favorite_menu_open";
 export const WORKSPACE_DEFAULT_SEARCH_RESULT: IWorkspaceSearchResults = {

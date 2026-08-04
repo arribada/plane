@@ -596,6 +596,10 @@ export type TPublicTimeline = {
 /** Work in person-days, plus the span it implies when a date is missing. */
 export type TIssueEffort = {
   days: number | null;
+  /** What it actually took, asked for when the item is finished. Kept beside the
+   *  estimate rather than replacing it, so the project can still tell how good
+   *  its estimates were. */
+  actual_days?: number | null;
   /** What the dates imply: working days x assignees. Null once an effort is
    *  recorded — there is nothing left to derive. */
   derived?: number | null;

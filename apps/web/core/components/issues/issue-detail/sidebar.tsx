@@ -39,6 +39,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 // components
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
+import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-details/parent-select-root";
 import { DateAlert } from "@/plane-web/components/issues/issue-details/sidebar/date-alert";
@@ -70,6 +71,12 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   const { getUserDetails } = useMember();
   const { getStateById } = useProjectState();
   const issue = getIssueById(issueId);
+  const finished = useFinishedPrompt({
+    workspaceSlug,
+    projectId,
+    issueId,
+    issueName: issue?.name ?? "",
+  });
   if (!issue) return <></>;
 
   const createdByDetails = getUserDetails(issue.created_by);
@@ -86,6 +93,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
 
   return (
     <>
+      {finished.prompt}
       <div className="flex h-full w-full flex-col items-center divide-y-2 divide-subtle-1 overflow-hidden">
         <div className="h-full w-full overflow-y-auto px-6">
           <h5 className="mt-5 text-body-xs-medium">{t("common.properties")}</h5>
@@ -93,7 +101,12 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             <SidebarPropertyListItem icon={StatePropertyIcon} label={t("common.state")}>
               <StateDropdown
                 value={issue?.state_id}
-                onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
+                onChange={(val) => {
+                  // Asked on the way in: the one moment somebody knows how long
+                  // it took is the moment they close it.
+                  finished.onStateChange(issue?.state_id, val);
+                  issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val });
+                }}
                 projectId={projectId?.toString() ?? ""}
                 disabled={!isEditable}
                 buttonVariant="transparent-with-text"

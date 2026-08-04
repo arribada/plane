@@ -1098,6 +1098,11 @@ class IssueEffort(models.Model):
     # project rather than a task, and a typo of 3000 would silently swamp every
     # capacity figure it feeds.
     days = models.DecimalField(max_digits=5, decimal_places=1)
+    # What it actually took, asked for when the item is finished. Kept apart from
+    # the estimate rather than overwriting it: a project that quietly replaces
+    # every estimate with its outcome can never answer "were we any good at
+    # estimating", and that is the only question an estimate is for afterwards.
+    actual_days = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")

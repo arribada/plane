@@ -39,6 +39,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
+import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
 import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-details/parent-select-root";
 import { DateAlert } from "@/plane-web/components/issues/issue-details/sidebar/date-alert";
 import { TransferHopInfo } from "@/plane-web/components/issues/issue-details/sidebar/transfer-hop-info";
@@ -68,6 +69,12 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
   const { getUserDetails } = useMember();
   // derived values
   const issue = getIssueById(issueId);
+  const finished = useFinishedPrompt({
+    workspaceSlug,
+    projectId,
+    issueId,
+    issueName: issue?.name ?? "",
+  });
   if (!issue) return <></>;
   const createdByDetails = getUserDetails(issue?.created_by);
   const projectDetails = getProjectById(issue.project_id);
@@ -82,12 +89,18 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
 
   return (
     <div>
+      {finished.prompt}
       <h6 className="text-body-xs-medium">{t("common.properties")}</h6>
       <div className={`mt-3 w-full space-y-3 ${disabled ? "opacity-60" : ""}`}>
         <SidebarPropertyListItem icon={StatePropertyIcon} label={t("common.state")}>
           <StateDropdown
             value={issue?.state_id}
-            onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
+            onChange={(val) => {
+              // Asked on the way in, because the one moment somebody knows how
+              // long it took is the moment they close it.
+              finished.onStateChange(issue?.state_id, val);
+              issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val });
+            }}
             projectId={projectId}
             disabled={disabled}
             buttonVariant="transparent-with-text"

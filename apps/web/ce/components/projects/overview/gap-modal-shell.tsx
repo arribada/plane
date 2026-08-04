@@ -84,26 +84,32 @@ export function GapModalShell(props: Props) {
         </div>
 
         {count !== null && count > 0 && (
-          <footer className="flex items-center gap-2 border-t border-subtle px-4 py-3">
-            {footerExtra}
-            <span className="ml-auto text-11 text-tertiary">
+          // Wraps, and the actions stay glued together on their own line.
+          // `ml-auto` alone kept everything on one row, so a footer with an
+          // extra control on the left squeezed the count into the buttons and
+          // then over them.
+          <footer className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 border-t border-subtle px-4 py-3">
+            {footerExtra && <div className="mr-auto flex min-w-0 items-center gap-2">{footerExtra}</div>}
+            <span className="text-11 whitespace-nowrap text-tertiary">
               {filled} of {count} {filledNoun}
             </span>
-            <button type="button" onClick={onClose} className="rounded border border-subtle px-3 py-1.5 text-12">
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={saving || filled === 0}
-              className={cn(
-                "flex items-center gap-1.5 rounded bg-accent-primary px-3 py-1.5 text-12 text-on-color",
-                saving || filled === 0 ? "opacity-50" : "hover:opacity-90"
-              )}
-            >
-              {saving && <Loader2 className="size-3.5 animate-spin" />}
-              {saveLabel} {filled}
-            </button>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <button type="button" onClick={onClose} className="rounded border border-subtle px-3 py-1.5 text-12">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={saving || filled === 0}
+                className={cn(
+                  "flex items-center gap-1.5 rounded bg-accent-primary px-3 py-1.5 text-12 text-on-color",
+                  saving || filled === 0 ? "opacity-50" : "hover:opacity-90"
+                )}
+              >
+                {saving && <Loader2 className="size-3.5 animate-spin" />}
+                {saveLabel} {filled}
+              </button>
+            </div>
           </footer>
         )}
       </div>

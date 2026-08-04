@@ -4362,7 +4362,12 @@ def _labour_cost(tasks, rates):
             # was the inconsistency.
             role = "unassigned"
         rate = rates.get(role)
-        days = max(1, int(task.get("days") or 1))
+        # Fractional and floored at zero, not int(...) with a minimum of one.
+        # The old form existed when the input was a calendar span, which is always
+        # a whole day or more; now that a recorded effort feeds this, half a day
+        # has to stay half a day — int() would truncate 2.5 to 2, and the minimum
+        # would bill a fifteen-minute errand as a full day.
+        days = max(0.0, float(task.get("days") or 0))
         entry = by_role.setdefault(
             role,
             {"role": role, "days": 0, "hours": 0.0, "cost": 0.0, "currency": None, "rated": False},
@@ -4378,6 +4383,9 @@ def _labour_cost(tasks, rates):
         entry["currency"] = rate["currency"]
         entry["rated"] = True
 
+    for row in by_role.values():
+        row["days"] = round(row["days"], 2)
+        row["hours"] = round(row["hours"], 2)
     rows = sorted(by_role.values(), key=lambda r: (-r["cost"], r["role"]))
     totals = {}
     for row in rows:
@@ -4887,15 +4895,34 @@ class ProjectBudgetEndpoint(BaseAPIView):
             str(r.issue_id): r.role
             for r in IssueRole.objects.filter(issue__project_id=project_id).only("issue_id", "role")
         }
-        tasks = [
-            {
-                "role": roles.get(str(r["id"])),
-                # Working days the item occupies, which is what a rate is applied to.
-                "days": _working_days_between(r["start_date"], r["target_date"]),
-            }
-            for r in rows
-        ]
+        # Effort, not the calendar window. "Post the parcel some time this week"
+        # occupies five working days and costs about an hour, and charging the
+        # span put five person-days of somebody's rate against it. The span is
+        # only a fallback, for items nobody has estimated — there it is the best
+        # guess available, and the panel says which is which.
+        effort = {
+            str(e.issue_id): (e.actual_days if e.actual_days is not None else e.days)
+            for e in IssueEffort.objects.filter(issue__project_id=project_id).only(
+                "issue_id", "days", "actual_days"
+            )
+        }
+        tasks = []
+        from_effort = 0
+        for r in rows:
+            recorded = effort.get(str(r["id"]))
+            if recorded is not None:
+                from_effort += 1
+            tasks.append(
+                {
+                    "role": roles.get(str(r["id"])),
+                    "days": float(recorded)
+                    if recorded is not None
+                    else _working_days_between(r["start_date"], r["target_date"]),
+                }
+            )
         labour = _labour_cost(tasks, _rate_map(slug))
+        labour["from_effort"] = from_effort
+        labour["from_span"] = len(tasks) - from_effort
 
         expenses = list(ProjectExpense.objects.filter(project_id=project_id))
         by_category = {}
@@ -6175,6 +6202,10 @@ class IssueEffortEndpoint(BaseAPIView):
         return Response(
             {
                 "days": days,
+                # What it actually took, when somebody has said. Separate from the
+                # estimate so both survive: replacing one with the other loses the
+                # only evidence of how good the estimate was.
+                "actual_days": float(row.actual_days) if row and row.actual_days is not None else None,
                 # What the dates already imply, when nobody has recorded an
                 # effort. Effort is not duration: a fortnight worked by two people
                 # is twenty person-days, not ten — so the span is multiplied by
@@ -6199,6 +6230,36 @@ class IssueEffortEndpoint(BaseAPIView):
         if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
             return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
         from .models import IssueEffort
+
+        # An actual on its own: the finished-task prompt sends only this, and it
+        # must not be read as "clear the estimate".
+        if "actual_days" in request.data and "days" not in request.data:
+            raw_actual = request.data.get("actual_days")
+            if raw_actual in (None, ""):
+                IssueEffort.objects.filter(issue_id=issue_id).update(actual_days=None)
+                return Response({"actual_days": None}, status=status.HTTP_200_OK)
+            try:
+                actual = round(float(raw_actual), 1)
+            except (TypeError, ValueError):
+                return Response({"error": "actual_days must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+            if not 0 < actual <= 999:
+                return Response(
+                    {"error": "actual_days must be between 0.1 and 999"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row = IssueEffort.objects.filter(issue_id=issue_id).first()
+            if row:
+                row.actual_days = actual
+                row.updated_by = request.user
+                row.save(update_fields=["actual_days", "updated_by", "updated_at"])
+            else:
+                # No estimate was ever recorded. The actual becomes both, because
+                # a project with an outcome and no estimate should still be able
+                # to cost the work.
+                IssueEffort.objects.create(
+                    issue_id=issue_id, days=actual, actual_days=actual, updated_by=request.user
+                )
+            return Response({"actual_days": actual}, status=status.HTTP_200_OK)
 
         raw = request.data.get("days")
         if raw in (None, ""):

@@ -1072,6 +1072,22 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** What it actually took. Sent on its own, so the estimate is left alone. */
+  async setIssueActualEffort(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    actualDays: number | null
+  ): Promise<{ actual_days: number | null }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/effort/`, {
+      actual_days: actualDays,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /**
    * Pull GitHub issues now rather than waiting for the nightly run.
    *

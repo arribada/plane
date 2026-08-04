@@ -1721,12 +1721,16 @@ class WorkloadEndpoint(BaseAPIView):
 
 
 class AdoptIssuesEndpoint(BaseAPIView):
-    """Adopt inbox items (e.g. GitHub → GHIN) into a real project, losslessly.
+    """Adopt work items into another project, losslessly.
 
     Plane CE cannot move an issue across projects. Instead this creates a copy in
     the target project, links it back to the original (relates_to), and marks the
-    original as completed — so nothing is lost, traceability stays, and the GitHub
-    cron (which dedups on existence) won't recreate a duplicate.
+    original as completed — so nothing is lost and traceability stays.
+
+    Written for the GHIN staging inbox and now general: bulk operations use it to
+    move a selection into another project. Nothing GitHub-related reaches it any
+    more — a captured GitHub issue is not a work item, so there is nothing to
+    copy; filing one creates the work item instead (see `_file_github_row`).
 
     Optional `target_parent_id`: when given, each copy is created as a sub-issue of
     that work item — this is how a single work item comes to "contain" several

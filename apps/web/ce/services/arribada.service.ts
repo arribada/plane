@@ -355,9 +355,10 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // Adopt inbox items (e.g. GHIN) into a project — lossless copy + relates_to link.
-  // Pass targetParentId to nest the copies under a work item (that item then
-  // "contains" the adopted GitHub tasks as sub-issues).
+  // Adopt work items into another project — lossless copy + relates_to link back.
+  // Pass targetParentId to nest the copies under a work item. Used by bulk
+  // operations; GitHub filing does not go through here, because a captured GitHub
+  // issue is not a work item and there is nothing to copy.
   async adoptIssues(
     workspaceSlug: string,
     sourceIssueIds: string[],

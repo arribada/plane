@@ -377,8 +377,6 @@ export type TIssueRelationEdge = {
   relation_type: string;
 };
 
-// An open item in a GitHub-inbox (GHIN) project, offered in the "link GitHub
-// tasks to this work item" picker.
 /** A captured GitHub issue nobody has filed yet — the inbox is the GithubIssue
  *  table, not a staging project, so `id` is that row and not a work item. */
 export type TGithubInboxItem = {

@@ -580,6 +580,13 @@ class IssueArtifactsEndpoint(BaseAPIView):
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # The join below already refuses a mismatched pair, by returning nothing.
+        # Said explicitly anyway, so that every issue-scoped endpoint in this app
+        # answers a mismatch the SAME way — "an empty list" and "a 404" are both
+        # safe here, and a rule with two acceptable answers is a rule the test in
+        # `test_project_issue_binding.py` cannot enforce for the next one written.
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
         rows = IssueArtifact.objects.filter(issue_id=issue_id, issue__project_id=project_id).select_related(
             "created_by"
         )
@@ -654,6 +661,10 @@ class IssueArtifactsEndpoint(BaseAPIView):
     def delete(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # See the GET above: the join is already safe, the check is what makes the
+        # rule uniform and therefore testable.
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
         deleted, _ = IssueArtifact.objects.filter(
             id=request.data.get("id"), issue_id=issue_id, issue__project_id=project_id
         ).delete()
@@ -1642,6 +1653,12 @@ class IssueAllocationEndpoint(BaseAPIView):
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Same binding as the POST below, and for the same reason as IssueRole's
+        # GET: a project the caller can see plus an issue id from anywhere else
+        # was enough to read the row. No rows exist yet and nothing calls it,
+        # which is precisely why it had to be fixed now rather than after.
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
         from .models import IssueAllocation
 
         rows = IssueAllocation.objects.filter(issue_id=issue_id).values("assignee_id", "percent")
@@ -7188,6 +7205,15 @@ class IssueRoleEndpoint(BaseAPIView):
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Bound to the project, not merely to a project the caller can see. This
+        # GET filtered on the issue id alone, so passing a project one is a member
+        # of together with an issue id from any other project — including a Secret
+        # one — returned that item's discipline. The POST below already binds
+        # correctly; the read did not. See `test_project_issue_binding.py`, which
+        # walks the URLconf so the next endpoint written cannot repeat it.
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
 
         role = IssueRole.objects.filter(issue_id=issue_id).values_list("role", flat=True).first()
         return Response(

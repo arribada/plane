@@ -116,6 +116,11 @@ export const coreRoutes: RouteConfigEntry[] = [
           route(":workspaceSlug/portfolio", "./(all)/[workspaceSlug]/(projects)/portfolio/page.tsx"),
         ]),
 
+        // GitHub triage (Arribada)
+        layout("./(all)/[workspaceSlug]/(projects)/github-triage/layout.tsx", [
+          route(":workspaceSlug/github-triage", "./(all)/[workspaceSlug]/(projects)/github-triage/page.tsx"),
+        ]),
+
         // Workload (Arribada)
         layout("./(all)/[workspaceSlug]/(projects)/workload/layout.tsx", [
           route(":workspaceSlug/workload", "./(all)/[workspaceSlug]/(projects)/workload/page.tsx"),

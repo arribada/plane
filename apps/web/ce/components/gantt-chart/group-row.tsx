@@ -8,7 +8,9 @@
  * compute their y from a row's index in it, so a header of any other height would
  * slide every arrow below it off its bar.
  */
+import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
+import { dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@plane/utils";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
@@ -27,6 +29,8 @@ type Props = {
   end: Date | null;
   days: number;
   done: number;
+  /** The band's own key, so a drop can say which band it landed on. */
+  groupKey?: string;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -38,15 +42,44 @@ const daysBetween = (start: Date, end: Date) => Math.round((end.getTime() - star
 const LABEL_MIN_WIDTH = 150;
 
 export const GanttGroupHeader = observer(function GanttGroupHeader(props: Props) {
-  const { label, color, count, collapsed, onToggle, start, end, days, done } = props;
+  const { label, color, count, collapsed, onToggle, start, end, days, done, groupKey } = props;
   const complete = count > 0 ? Math.round((done / count) * 100) : 0;
+  const { assign } = useGanttGroups();
+  const ref = useRef<HTMLButtonElement | null>(null);
+  const [over, setOver] = useState(false);
+
+  // Dropping a work item on the header moves it into the band. Registered on the
+  // same payload the sidebar's reorder drag emits, so an item is dragged the one
+  // way people already drag them — and only where the context offers an `assign`,
+  // which is sprint and module. See base-gantt-root for why not the others.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || !assign || !groupKey) return;
+    return dropTargetForElements({
+      element,
+      canDrop: ({ source }) => source?.data?.dragInstanceId === "GANTT_REORDER",
+      onDragEnter: () => setOver(true),
+      onDragLeave: () => setOver(false),
+      onDrop: ({ source }) => {
+        setOver(false);
+        const id = source?.data?.id;
+        if (typeof id === "string") void assign(id, groupKey);
+      },
+    });
+  }, [assign, groupKey]);
+
   return (
     <button
       type="button"
+      ref={ref}
       onClick={onToggle}
       aria-expanded={!collapsed}
       style={{ height: `${BLOCK_HEIGHT}px` }}
-      className="flex w-full items-center gap-2 border-y-[0.5px] border-subtle bg-layer-2 px-3 text-left"
+      className={cn(
+        "flex w-full items-center gap-2 border-y-[0.5px] border-subtle bg-layer-2 px-3 text-left",
+        over && "outline outline-2 -outline-offset-2 outline-accent-strong"
+      )}
+      title={assign && groupKey ? "Drop a work item here to move it into this band" : undefined}
     >
       {collapsed ? (
         <ChevronRight className="size-3.5 flex-shrink-0 text-tertiary" />

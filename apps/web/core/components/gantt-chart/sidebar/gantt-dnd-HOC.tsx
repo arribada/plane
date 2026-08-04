@@ -18,12 +18,17 @@ type Props = {
   id: string;
   isLastChild: boolean;
   isDragEnabled: boolean;
+  /** Whether THIS row accepts a drop to reorder. Separate from isDragEnabled
+   *  because grouping needs the opposite pair: items must be draggable so they
+   *  can be dropped on a band header, while reordering between rows stays off —
+   *  a drop between two rows of another group has no meaning. */
+  isReorderTarget?: boolean;
   children: (isDragging: boolean) => React.ReactNode;
   onDrop: (draggingBlockId: string | undefined, droppedBlockId: string | undefined, dropAtEndOfList: boolean) => void;
 };
 
 export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
-  const { id, isLastChild, children, onDrop, isDragEnabled } = props;
+  const { id, isLastChild, children, onDrop, isDragEnabled, isReorderTarget = true } = props;
   // states
   const [isDragging, setIsDragging] = useState(false);
   const [instruction, setInstruction] = useState<"DRAG_OVER" | "DRAG_BELOW" | undefined>(undefined);
@@ -49,14 +54,15 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
       }),
       dropTargetForElements({
         element,
-        canDrop: ({ source }) => source?.data?.id !== id && source?.data?.dragInstanceId === "GANTT_REORDER",
-        getData: ({ input, element }) => {
+        canDrop: ({ source }) =>
+          isReorderTarget && source?.data?.id !== id && source?.data?.dragInstanceId === "GANTT_REORDER",
+        getData: ({ input, element: target }) => {
           const data = { id };
 
           // attach instruction for last in list
           return attachInstruction(data, {
             input,
-            element,
+            element: target,
             currentLevel: 0,
             indentPerLevel: 0,
             mode: isLastChild ? "last-in-group" : "standard",
@@ -94,7 +100,11 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
         },
       })
     );
-  }, [blockRef?.current, isLastChild, onDrop]);
+    // isReorderTarget and isDragEnabled belong here: grouping toggles them at
+    // runtime, and a target registered under the old value would keep accepting
+    // (or refusing) drops until the row happened to remount. blockRef.current is
+    // not a dependency React can track — the mount is what schedules this.
+  }, [id, isLastChild, onDrop, isDragEnabled, isReorderTarget]);
 
   useOutsideClickDetector(blockRef, () => blockRef?.current?.classList?.remove(HIGHLIGHT_WITH_LINE));
 

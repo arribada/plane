@@ -95,6 +95,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
               return (
                 <GanttGroupHeader
                   key={blockId}
+                  groupKey={key}
                   label={group.label}
                   color={group.color}
                   count={group.ids.length}
@@ -126,7 +127,11 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                 <GanttDnDHOC
                   id={block.id}
                   isLastChild={index === blockIds.length - 1}
-                  isDragEnabled={enableReorder}
+                  // Draggable either to reorder, or — when the chart is grouped
+                  // by something a work item can actually belong to — to drop on
+                  // a band header and join it.
+                  isDragEnabled={enableReorder || !!groups.assign}
+                  isReorderTarget={enableReorder}
                   onDrop={handleOnDrop}
                 >
                   {(isDragging: boolean) => (

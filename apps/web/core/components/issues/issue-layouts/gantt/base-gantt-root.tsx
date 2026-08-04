@@ -250,13 +250,45 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     projectDetails,
   ]);
 
+  /**
+   * Dropping a work item on a band moves it into that band — but only where the
+   * band is a real container. Sprint and module are: an item belongs to one, and
+   * putting it there is the edit somebody means. State, priority and assignee
+   * bands are views of a field, and dragging onto "High" to re-prioritise is a
+   * gesture nobody intends to make by aiming at a header, so those refuse it.
+   *
+   * UNSET moves it out, which is what dropping on "Not in a sprint" reads as.
+   */
+  const assignToGroup = useCallback(
+    async (issueId: string, groupKey: string) => {
+      const issue = getIssueById(issueId);
+      if (!issue || !updateIssue) return;
+      const value = groupKey === "__unset__" ? null : groupKey;
+      if (groupBy === "cycle") {
+        await updateIssue(issue.project_id, issue.id, { cycle_id: value });
+        return;
+      }
+      if (groupBy === "module") {
+        // Modules are a list, and an item can sit in several. Dropping means
+        // "put it in this one", not "make this its only one" — except that the
+        // band it came from is the one it is leaving, so that one goes.
+        const current = (issue.module_ids ?? []).filter((id) => groups.some((g) => g.key === id) === false);
+        const next = value ? [...new Set([...current, value])] : current;
+        await updateIssue(issue.project_id, issue.id, { module_ids: next });
+      }
+    },
+    [getIssueById, updateIssue, groupBy, groups]
+  );
+
   const groupContext = useMemo(
     () => ({
       byKey: new Map(groups.map((g) => [g.key, g])),
       isCollapsed: (key: string) => collapsedGroups.has(key),
       toggle: (key: string) => ganttDisplay.toggleGroupCollapsed(key),
+      groupBy,
+      assign: groupBy === "cycle" || groupBy === "module" ? assignToGroup : null,
     }),
-    [groups, collapsedGroups]
+    [groups, collapsedGroups, groupBy, assignToGroup]
   );
 
   const { enableIssueCreation } = issues?.viewFlags || {};

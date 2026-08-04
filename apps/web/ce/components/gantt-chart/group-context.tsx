@@ -13,19 +13,29 @@
  * render loop. This is computed once in the layout root and read from there.
  */
 import { createContext, useContext } from "react";
-import type { TGanttGroup } from "./grouping";
+import type { TGanttGroup, TGanttGroupBy } from "./grouping";
 
 export type TGanttGroupContext = {
   /** Empty when grouping is off. */
   byKey: Map<string, TGanttGroup>;
   isCollapsed: (key: string) => boolean;
   toggle: (key: string) => void;
+  /** What the bands are bands OF. A drop onto a band means something different
+   *  for each: joining a sprint is a real edit, whereas "drop onto High" would
+   *  quietly re-prioritise, so only some are accepted. */
+  groupBy: TGanttGroupBy;
+  /** Move a work item into the band, or null when this grouping cannot be set by
+   *  dropping. The layout root owns the mutation; the header only reports the
+   *  gesture. */
+  assign: ((issueId: string, groupKey: string) => Promise<void>) | null;
 };
 
 const EMPTY: TGanttGroupContext = {
   byKey: new Map(),
   isCollapsed: () => false,
   toggle: () => undefined,
+  groupBy: "none",
+  assign: null,
 };
 
 export const GanttGroupContext = createContext<TGanttGroupContext>(EMPTY);

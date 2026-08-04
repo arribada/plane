@@ -112,6 +112,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // so this needs nothing configured to be useful on a generated plan.
   const {
     issue: { getIssueById },
+    addCycleToIssue,
+    removeIssueFromCycle,
+    changeModulesInIssue,
   } = useIssueDetail();
   const { getModuleById } = useModule();
   const { getLabelById } = useLabel();
@@ -262,22 +265,39 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const assignToGroup = useCallback(
     async (issueId: string, groupKey: string) => {
       const issue = getIssueById(issueId);
-      if (!issue || !updateIssue) return;
+      const slug = workspaceSlug?.toString();
+      // project_id is nullable on the type: a draft item has none, and there is
+      // nothing to file one into.
+      const pid = issue?.project_id;
+      if (!issue || !slug || !pid) return;
       const value = groupKey === "__unset__" ? null : groupKey;
+      // Not updateIssue({ cycle_id }) / ({ module_ids }): a cycle or module
+      // membership is its own endpoint, and writing the field went through
+      // without the local store ever learning — so the row stayed in the band it
+      // came from until the page was reloaded, which reads as the drop having
+      // failed. These are the same operations the work item panel uses.
       if (groupBy === "cycle") {
-        await updateIssue(issue.project_id, issue.id, { cycle_id: value });
+        if (value) await addCycleToIssue(slug, pid, value, issue.id);
+        else if (issue.cycle_id) await removeIssueFromCycle(slug, pid, issue.cycle_id, issue.id);
         return;
       }
       if (groupBy === "module") {
-        // Modules are a list, and an item can sit in several. Dropping means
-        // "put it in this one", not "make this its only one" — except that the
-        // band it came from is the one it is leaving, so that one goes.
-        const current = (issue.module_ids ?? []).filter((id) => groups.some((g) => g.key === id) === false);
-        const next = value ? [...new Set([...current, value])] : current;
-        await updateIssue(issue.project_id, issue.id, { module_ids: next });
+        // Modules are a list and an item can sit in several. A drop means "put
+        // it in this one" and leaves the band it came from — not "make this its
+        // only one", which would silently strip memberships nobody touched.
+        const leaving = (issue.module_ids ?? []).filter((id) => groups.some((g) => g.key === id));
+        const joining = value && !(issue.module_ids ?? []).includes(value) ? [value] : [];
+        if (joining.length === 0 && leaving.length === 0) return;
+        await changeModulesInIssue(
+          slug,
+          pid,
+          issue.id,
+          joining,
+          leaving.filter((id) => id !== value)
+        );
       }
     },
-    [getIssueById, updateIssue, groupBy, groups]
+    [getIssueById, workspaceSlug, groupBy, groups, addCycleToIssue, removeIssueFromCycle, changeModulesInIssue]
   );
 
   const groupContext = useMemo(

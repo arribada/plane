@@ -349,10 +349,10 @@ export const GithubInboxWidget = observer(function GithubInboxWidget() {
   }, [load]);
 
   const resync = async () => {
-    if (!workspaceSlug || !gap?.inbox_project_id) return;
+    if (!workspaceSlug || !gap?.sync_project_id) return;
     setSyncing(true);
     try {
-      const r = await service.githubSyncNow(workspaceSlug.toString(), gap.inbox_project_id);
+      const r = await service.githubSyncNow(workspaceSlug.toString(), gap.sync_project_id);
       setToast({
         type: r.skipped ? TOAST_TYPE.INFO : TOAST_TYPE.SUCCESS,
         title: r.skipped ? "Nothing was pulled" : `${r.created} new, ${r.updated} updated`,
@@ -375,7 +375,16 @@ export const GithubInboxWidget = observer(function GithubInboxWidget() {
       icon={<Github className="size-3.5" />}
       loading={gap === null}
       count={unclaimed.length + contested.length}
-      empty="Nothing is stuck: every synced repo belongs to exactly one project."
+      // "Nothing is stuck" is a claim, and it was being made while 27 issues sat
+      // in repos two projects were arguing over — the endpoint had given up early
+      // and returned nothing, which looks identical to good news. It is only good
+      // news when something was actually examined, so an empty answer computed
+      // from nothing says so instead.
+      empty={
+        gap?.tracked
+          ? "Nothing is stuck: every synced repo belongs to exactly one project."
+          : "Nothing has been captured from GitHub yet, so there is nothing to say about it."
+      }
     >
       <div className="space-y-2">
         {unclaimed.length > 0 && (
@@ -413,7 +422,7 @@ export const GithubInboxWidget = observer(function GithubInboxWidget() {
           </div>
         )}
 
-        {unclaimed.length > 0 && (
+        {unclaimed.length > 0 && gap?.sync_project_id && (
           <button
             type="button"
             onClick={() => void resync()}

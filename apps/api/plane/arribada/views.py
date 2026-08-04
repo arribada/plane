@@ -1797,37 +1797,157 @@ class AdoptIssuesEndpoint(BaseAPIView):
         )
 
 
-class GithubInboxEndpoint(BaseAPIView):
-    """Open items sitting in a GitHub-inbox (GHIN) project.
+def _github_queue(slug):
+    """The GitHub inbox: captured, filed nowhere, dismissed by nobody.
 
-    Powers the "link GitHub tasks to this work item" picker: the caller lists open
-    GHIN tasks, selects some, then POSTs them to adopt-issues with target_parent_id
-    set to the work item. Scoped to the caller's own projects (IDOR-safe).
+    One definition, used by everything that shows the inbox, because the four
+    surfaces that read it disagreeing about what is in it is how three of them
+    came to show an empty list while 39 issues were waiting.
+    """
+    return GithubIssue.objects.filter(
+        workspace__slug=slug, filed_issue__isnull=True, dismissed_at__isnull=True
+    )
+
+
+def _file_github_row(row, project, user, parent=None, checklist_owner=None, discipline=None, assignee_id=None):
+    """Turn one captured GitHub issue into a work item, and record where it went.
+
+    Shared by the triage queue and the "link GitHub tasks to this work item"
+    picker, which answer the same question — which project does this belong to —
+    and differ only in how the result is attached to an existing item.
+    `checklist_owner` puts it on a list; `parent` makes it a sub-issue. The
+    triage queue offers only the first, deliberately, because a parent link
+    propagates into every list, board and timeline belonging to people who never
+    asked. The picker lives inside the sub-issues widget, where a sub-issue is
+    exactly what was asked for.
+
+    Enrichment is a guess made from what GitHub already said, and every part of
+    it is silent when unsure — an explicit `discipline` or `assignee_id` from the
+    caller always wins, because a person picking is not a guess.
+    """
+    from .github_enrich import discipline_from_labels, member_from_github_assignees
+
+    state = (
+        State.objects.filter(project=project, default=True).first()
+        or State.objects.filter(project=project).order_by("sequence").first()
+    )
+    issue = Issue.objects.create(
+        workspace=project.workspace,
+        project=project,
+        parent=parent,
+        name=row.title[:250] or f"{row.repo}#{row.number}",
+        description_html=f'<p><a href="{row.html_url}">{row.html_url}</a></p>',
+        external_source="github",
+        external_id=f"{row.repo}#{row.number}",
+        state=state,
+        created_by=user,
+    )
+
+    if checklist_owner:
+        last = (
+            IssueChecklistItem.objects.filter(owner_id=checklist_owner.id)
+            .order_by("-sort_order")
+            .values_list("sort_order", flat=True)
+            .first()
+        )
+        IssueChecklistItem.objects.create(
+            owner_id=checklist_owner.id,
+            member_id=issue.id,
+            sort_order=(last or 0) + 1000,
+            created_by=user,
+        )
+
+    discipline = discipline or discipline_from_labels(
+        row.labels or [], _project_role_options(project.id)
+    )
+    if discipline:
+        IssueRole.objects.update_or_create(issue_id=issue.id, defaults={"role": str(discipline)[:80]})
+
+    if not assignee_id:
+        candidates = list(
+            ProjectMember.objects.filter(project_id=project.id, is_active=True)
+            .exclude(member__email__startswith="bot_user_")
+            .values_list("member_id", "member__email", "member__display_name")
+        )
+        assignee_id = member_from_github_assignees(row.github_assignees, candidates)
+    if assignee_id and ProjectMember.objects.filter(
+        project_id=project.id, member_id=assignee_id, is_active=True
+    ).exists():
+        IssueAssignee.objects.get_or_create(
+            issue_id=issue.id, assignee_id=assignee_id, defaults={"project_id": project.id}
+        )
+
+    row.filed_issue = issue
+    row.filed_at = timezone.now()
+    row.filed_by_rule = "manual"
+    row.filed_by = user
+    row.save(update_fields=["filed_issue", "filed_at", "filed_by_rule", "filed_by"])
+    return issue
+
+
+class GithubInboxEndpoint(BaseAPIView):
+    """The GitHub inbox, for the "link GitHub tasks to this work item" picker.
+
+    It used to list open work items in the GHIN staging project and hand them to
+    adopt-issues. GHIN was retired and soft-deleted, `Project.objects` filters
+    soft-deleted rows, so the query matched nothing and the picker has been
+    permanently empty ever since — with 39 issues waiting in the table that
+    replaced it.
+
+    The inbox is `GithubIssue` now: what GitHub said, kept whole, before anybody
+    decided it was this workspace's work. So there is nothing to adopt — the POST
+    creates the work item and records that this GitHub issue became it, which is
+    the same record the triage queue writes and the sync reads.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
-        visible = _visible_projects(request, slug)
-        rows = (
-            Issue.issue_objects.filter(
-                project__in=visible, project__identifier="GHIN", workspace__slug=slug
-            )
-            .exclude(state__group__in=["completed", "cancelled"])
-            .order_by("-created_at")
-            .values("id", "name", "sequence_id", "description_html", "project__identifier", "state__name")[:200]
+        rows = _github_queue(slug).order_by("repo", "-github_created_at")[:200]
+        return Response(
+            [
+                {
+                    "id": str(row.id),
+                    "repo": row.repo,
+                    "number": row.number,
+                    "title": row.title,
+                    "html_url": row.html_url,
+                    "labels": row.labels or [],
+                    "state": row.state,
+                }
+                for row in rows
+            ],
+            status=status.HTTP_200_OK,
         )
-        items = [
-            {
-                "id": str(r["id"]),
-                "name": r["name"],
-                "sequence_id": r["sequence_id"],
-                "project_identifier": r["project__identifier"],
-                "state": r["state__name"],
-                "github_url": _github_url(r["description_html"]),
-            }
-            for r in rows
-        ]
-        return Response(items, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug):
+        """File the picked issues as sub-issues of one work item.
+
+        The parent must live in the target project: Plane CE only allows
+        same-project parents, and a cross-project parent would be written and
+        then quietly ignored by every view that reads it.
+        """
+        ids = _uuid_list(request.data.get("ids") or [])
+        parent_id = request.data.get("parent_issue_id")
+        project_id = request.data.get("project_id")
+        if not ids:
+            return Response({"error": "ids required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        parent = Issue.issue_objects.filter(project=project, id=parent_id).first() if parent_id else None
+        if parent_id and not parent:
+            return Response(
+                {"error": "parent_issue_id must be a work item in the target project"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        filed = 0
+        for row in _github_queue(slug).filter(id__in=ids[:200]):
+            _file_github_row(row, project, request.user, parent=parent)
+            filed += 1
+        return Response({"filed": filed, "skipped": len(ids) - filed}, status=status.HTTP_200_OK)
 
 
 class HubProjectsEndpoint(BaseAPIView):
@@ -6907,52 +7027,51 @@ def _assignable_members(project_id):
 class WorkspaceGithubUnclassifiedEndpoint(BaseAPIView):
     """The GitHub inbox items no project claims, and where they could go.
 
-    The daily digest notification says "18 unclassified GitHub tasks" and, until
-    now, opened onto nothing: it carries no work item, so the notification pane
-    had nothing to peek at. A count nobody can act on is worse than no
-    notification — this is the list behind the number, with the projects it could
-    be filed into, so the digest becomes a place to do the work.
+    The daily digest notification says "12 unclassified GitHub tasks" and carries
+    no work item, so Plane's own pane has nothing to peek at. This is the list
+    behind the number, with the projects each could be filed into, which turns
+    the digest into a place to do the work rather than a number that only makes
+    somebody feel behind.
+
+    It read open work items in the GHIN project until GHIN was soft-deleted, at
+    which point it returned an empty list to 32 outstanding notifications. The
+    inbox is `GithubIssue` now.
+
+    A thinner projection of the same rows as the triage queue, on purpose: this
+    pane renders a title, a repo and a picker, and paying per row for the
+    discipline suggestion it does not show would make the notification pane the
+    most expensive thing in the bell.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         # Imported here rather than at module scope: the task modules import
         # from this one, and a top-level import would close the circle.
-        from .github_classification_task import _repo_key
         from .github_sync_task import _repo_owners
 
         visible = _visible_projects(request, slug).filter(archived_at__isnull=True)
-        # owner/repo -> the project that linked it. A repo two projects claim
-        # is absent from this map, so its issues stay in the list — which is
-        # right: nobody but a person can settle that one.
+        # owner/repo -> the project that linked it. A repo two projects claim is
+        # absent from this map, so its issues stay in the list — which is right:
+        # nobody but a person can settle that one. A repo exactly one project
+        # claims files itself on the next sync, and showing it here would invite
+        # somebody to do by hand what already happens.
         claimed = _repo_owners()
 
-        items = []
-        for ghin in visible.filter(identifier="GHIN"):
-            rows = (
-                Issue.issue_objects.filter(project=ghin)
-                .exclude(state__group__in=["completed", "cancelled"])
-                .values("id", "name", "sequence_id", "description_html")
-                .order_by("-created_at")
-            )
-            for row in rows:
-                repo = _repo_key(row["description_html"] or "")
-                # Claimed repos file themselves on the next sync; showing them
-                # here would invite somebody to do by hand what already happens.
-                if repo and repo in claimed:
-                    continue
-                items.append(
-                    {
-                        "id": str(row["id"]),
-                        "name": row["name"],
-                        "sequence_id": row["sequence_id"],
-                        "repo": repo or None,
-                    }
-                )
+        items = [
+            {
+                "id": str(row.id),
+                "name": row.title,
+                "repo": row.repo,
+                "number": row.number,
+                "html_url": row.html_url,
+            }
+            for row in _github_queue(slug).order_by("repo", "-github_created_at")[:300]
+            if row.repo not in claimed
+        ]
 
         projects = [
             {"id": str(p["id"]), "name": p["name"]}
-            for p in visible.exclude(identifier="GHIN").values("id", "name").order_by("name")
+            for p in visible.values("id", "name").order_by("name")
         ]
         return Response({"items": items, "projects": projects}, status=status.HTTP_200_OK)
 
@@ -7186,7 +7305,7 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                 "items": items,
                 "projects": [
                     {"id": str(p["id"]), "name": p["name"]}
-                    for p in visible.exclude(identifier="GHIN").values("id", "name").order_by("name")
+                    for p in visible.values("id", "name").order_by("name")
                 ],
             },
             status=status.HTTP_200_OK,
@@ -7205,8 +7324,6 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
         projects by design, unlike a parent — so it is checked against
         everything the caller can see rather than against the target project.
         """
-        from .github_enrich import discipline_from_labels, member_from_github_assignees
-
         entries = request.data.get("items") or []
         if not isinstance(entries, list):
             return Response({"error": "items must be a list"}, status=status.HTTP_400_BAD_REQUEST)
@@ -7243,63 +7360,14 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                     skipped += 1
                     continue
 
-            state = (
-                State.objects.filter(project=project, default=True).first()
-                or State.objects.filter(project=project).order_by("sequence").first()
+            _file_github_row(
+                row,
+                project,
+                request.user,
+                checklist_owner=checklist_owner,
+                discipline=entry.get("discipline"),
+                assignee_id=entry.get("assignee_id"),
             )
-            issue = Issue.objects.create(
-                workspace=project.workspace,
-                project=project,
-                name=row.title[:250] or f"{row.repo}#{row.number}",
-                description_html=f'<p><a href="{row.html_url}">{row.html_url}</a></p>',
-                external_source="github",
-                external_id=f"{row.repo}#{row.number}",
-                state=state,
-                created_by=request.user,
-            )
-
-            if checklist_owner:
-                last = (
-                    IssueChecklistItem.objects.filter(owner_id=checklist_owner.id)
-                    .order_by("-sort_order")
-                    .values_list("sort_order", flat=True)
-                    .first()
-                )
-                IssueChecklistItem.objects.create(
-                    owner_id=checklist_owner.id,
-                    member_id=issue.id,
-                    sort_order=(last or 0) + 1000,
-                    created_by=request.user,
-                )
-
-            discipline = entry.get("discipline") or discipline_from_labels(
-                row.labels or [], _project_role_options(project_id)
-            )
-            if discipline:
-                IssueRole.objects.update_or_create(
-                    issue_id=issue.id, defaults={"role": str(discipline)[:80]}
-                )
-
-            assignee_id = entry.get("assignee_id")
-            if not assignee_id:
-                candidates = list(
-                    ProjectMember.objects.filter(project_id=project_id, is_active=True)
-                    .exclude(member__email__startswith="bot_user_")
-                    .values_list("member_id", "member__email", "member__display_name")
-                )
-                assignee_id = member_from_github_assignees(row.github_assignees, candidates)
-            if assignee_id and ProjectMember.objects.filter(
-                project_id=project_id, member_id=assignee_id, is_active=True
-            ).exists():
-                IssueAssignee.objects.get_or_create(
-                    issue_id=issue.id, assignee_id=assignee_id, defaults={"project_id": project_id}
-                )
-
-            row.filed_issue = issue
-            row.filed_at = timezone.now()
-            row.filed_by_rule = "manual"
-            row.filed_by = request.user
-            row.save(update_fields=["filed_issue", "filed_at", "filed_by_rule", "filed_by"])
             filed += 1
 
         return Response({"filed": filed, "skipped": skipped}, status=status.HTTP_200_OK)
@@ -8000,42 +8068,38 @@ class WorkspaceGithubInboxGapEndpoint(BaseAPIView):
 
     Reporting them together as "unrouted" is what makes the fixable ones look
     unfixable, so they come back apart.
+
+    It used to count work items in the GHIN project and gave up early when that
+    project was missing. GHIN was retired and soft-deleted, so the early return
+    fired on every call: the Home widget received nothing and rendered its empty
+    state, which asserts "every synced repo belongs to exactly one project" — a
+    sentence that was flatly untrue while 27 issues sat in contested repos. A
+    dashboard that asserts something false is worse than a blank one, so
+    `tracked` now says how many issues this answer was computed from, and the
+    widget stays silent about the happy path when the answer is "nothing has
+    been captured yet".
     """
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def get(self, request, slug):
-        import re
-
         from .github_sync_task import _repos_to_sync
         from .models import ProjectWikiDoc
-
-        ghin = Project.objects.filter(workspace__slug=slug, identifier="GHIN").first()
-        if not ghin:
-            return Response({"unclaimed": [], "contested": [], "total": 0}, status=status.HTTP_200_OK)
 
         claims = {}
         for pid, urls in ProjectWikiDoc.objects.filter(project__workspace__slug=slug).exclude(
             github_repo_urls=[]
         ).values_list("project_id", "github_repo_urls"):
             for url in urls or []:
-                parts = str(url).lower().split("github.com/", 1)
-                if len(parts) != 2:
-                    continue
-                bits = parts[1].strip("/").split("/")
-                if len(bits) >= 2:
-                    claims.setdefault(f"{bits[0]}/{bits[1]}".removesuffix(".git"), set()).add(pid)
+                key = _repo_key_for(url)
+                if key:
+                    claims.setdefault(key, set()).add(pid)
 
-        # Counted from the items actually sitting in the inbox, not from the repo
-        # list: a repo with no stuck issues is not a problem to report.
-        counts = {}
-        for html in Issue.issue_objects.filter(project=ghin, external_source="github").values_list(
-            "description_html", flat=True
-        ):
-            found = re.search(r"github\.com/([^/]+/[^/\"'<\s]+)", html or "")
-            if found:
-                counts[found.group(1).lower().removesuffix(".git")] = (
-                    counts.get(found.group(1).lower().removesuffix(".git"), 0) + 1
-                )
+        # Counted from the issues actually stuck, not from the repo list: a repo
+        # whose issues have all been filed or dismissed is not a problem to
+        # report, however it is linked.
+        counts = defaultdict(int)
+        for repo in _github_queue(slug).values_list("repo", flat=True):
+            counts[repo] += 1
 
         synced = _repos_to_sync()
         names = dict(Project.objects.filter(workspace__slug=slug).values_list("id", "name"))
@@ -8059,7 +8123,21 @@ class WorkspaceGithubInboxGapEndpoint(BaseAPIView):
                 "unclaimed": unclaimed,
                 "contested": contested,
                 "total": sum(counts.values()),
-                "inbox_project_id": str(ghin.id),
+                # How much GitHub this workspace has ever captured. Zero means
+                # the sync has never brought anything back — not that nothing is
+                # stuck — and the widget has to be able to tell those apart.
+                "tracked": GithubIssue.objects.filter(workspace__slug=slug).count(),
+                # The sync is workspace-wide; its endpoint takes a project only
+                # to anchor the permission check. Any project the caller can see
+                # does that job, and the widget has none of its own.
+                "sync_project_id": str(
+                    _visible_projects(request, slug)
+                    .filter(archived_at__isnull=True)
+                    .values_list("id", flat=True)
+                    .first()
+                    or ""
+                )
+                or None,
             },
             status=status.HTTP_200_OK,
         )

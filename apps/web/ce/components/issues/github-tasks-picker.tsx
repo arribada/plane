@@ -3,10 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * "Link GitHub tasks to this work item": lists the open items sitting in the
- * GitHub-inbox (GHIN) project, lets you tick several, and adopts them as
- * sub-issues of the current work item (lossless copy + relates_to back to the
- * GHIN original). This is how one work item comes to contain many GitHub tasks.
+ * "Link GitHub tasks to this work item": lists the GitHub issues nobody has
+ * filed or dismissed, lets you tick several, and files them as sub-issues of the
+ * current work item. This is how one work item comes to contain many GitHub
+ * tasks.
+ *
+ * These are GitHub records, not work items, so nothing is adopted or copied: the
+ * work item is created here and the GitHub row records that it became this. The
+ * list used to come from the GHIN staging project, which was retired — after
+ * which the picker was permanently empty.
  */
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
@@ -81,11 +86,11 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
     setBusy(true);
     setError(null);
     try {
-      const res = await service.adoptIssues(workspaceSlug, [...selected], projectId, parentIssueId);
+      const res = await service.fileGithubInbox(workspaceSlug, [...selected], projectId, parentIssueId);
       setToast({
         type: TOAST_TYPE.SUCCESS,
         title: "GitHub tasks linked",
-        message: `${res.adopted} task${res.adopted === 1 ? "" : "s"} added to this work item.`,
+        message: `${res.filed} task${res.filed === 1 ? "" : "s"} added to this work item.`,
       });
       await onLinked();
       onClose();
@@ -135,7 +140,7 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
                   // rule inspects, so the control is tied to the label explicitly
                   // and the name is repeated as the accessible label.
                   htmlFor={`github-task-${it.id}`}
-                  aria-label={it.name}
+                  aria-label={it.title}
                   className={cn(
                     "flex cursor-pointer items-start gap-3 rounded-md px-2.5 py-2 hover:bg-layer-2",
                     checked && "bg-layer-2"
@@ -149,15 +154,15 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
                     className="accent-blue-500 mt-0.5 size-4 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-13 text-primary">{it.name}</div>
+                    <div className="truncate text-13 text-primary">{it.title}</div>
                     <div className="mt-0.5 flex items-center gap-2 text-11 text-placeholder">
                       <span className="font-mono">
-                        {it.project_identifier}-{it.sequence_id}
+                        {it.repo}#{it.number}
                       </span>
                       {it.state && <span>· {it.state}</span>}
-                      {it.github_url && (
+                      {it.html_url && (
                         <a
-                          href={it.github_url}
+                          href={it.html_url}
                           target="_blank"
                           rel="noreferrer"
                           onClick={(e) => e.stopPropagation()}

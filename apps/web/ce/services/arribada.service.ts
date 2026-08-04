@@ -375,10 +375,30 @@ export class ArribadaService extends APIService {
       });
   }
 
-  // Open items waiting in the GitHub-inbox (GHIN) project, for the "link GitHub
+  // Captured GitHub issues nobody has filed or dismissed, for the "link GitHub
   // tasks to this work item" picker.
   async listGithubInbox(workspaceSlug: string): Promise<TGithubInboxItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  /** File picked inbox issues as sub-issues of one work item. There is nothing to
+   *  adopt — these are GitHub records, not work items — so this creates the work
+   *  item and records that the GitHub issue became it. */
+  async fileGithubInbox(
+    workspaceSlug: string,
+    ids: string[],
+    projectId: string,
+    parentIssueId: string
+  ): Promise<{ filed: number; skipped: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-inbox/`, {
+      ids,
+      project_id: projectId,
+      parent_issue_id: parentIssueId,
+    })
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;
@@ -1426,7 +1446,7 @@ export class ArribadaService extends APIService {
    *  Behind the daily digest notification, which carries no work item and so
    *  could never show what it was counting. */
   async getGithubUnclassified(workspaceSlug: string): Promise<{
-    items: { id: string; name: string; sequence_id: number; repo: string | null }[];
+    items: { id: string; name: string; repo: string; number: number; html_url: string }[];
     projects: { id: string; name: string }[];
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-unclassified/`)
@@ -1538,16 +1558,22 @@ export class ArribadaService extends APIService {
       });
   }
 
-  /** Why the GitHub inbox is still full, split by what you can actually do. */
+  /** Why the GitHub inbox is still full, split by what you can actually do.
+   *
+   *  `tracked` is how many GitHub issues this workspace has ever captured, and it
+   *  is the difference between "nothing is stuck" and "nothing is known". The
+   *  catch below returns null for it on purpose: a failed request must not let
+   *  the widget announce the happy path. */
   async getGithubInboxGap(workspaceSlug: string): Promise<{
     unclaimed: { repo: string; count: number; synced: boolean }[];
     contested: { repo: string; count: number; projects: string[] }[];
     total: number;
-    inbox_project_id?: string;
+    tracked: number | null;
+    sync_project_id?: string | null;
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox-gap/`)
       .then((r) => r?.data)
-      .catch(() => ({ unclaimed: [], contested: [], total: 0 }));
+      .catch(() => ({ unclaimed: [], contested: [], total: 0, tracked: null }));
   }
 
   // --- Public project timeline -----------------------------------------------

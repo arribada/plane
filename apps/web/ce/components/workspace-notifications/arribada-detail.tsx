@@ -27,7 +27,9 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
 
-type TUnclassified = { id: string; name: string; sequence_id: number; repo: string | null };
+/** A captured GitHub issue, not a work item: `id` is the GithubIssue row, which
+ *  is what filing takes. */
+type TUnclassified = { id: string; name: string; repo: string; number: number; html_url: string };
 type TProjectOption = { id: string; name: string };
 
 type Props = {
@@ -44,7 +46,11 @@ type Props = {
 export const ArribadaNotificationDetail = observer(function ArribadaNotificationDetail(props: Props) {
   const { workspaceSlug, title, messageHtml, sender, entityId, projectId } = props;
   const router = useAppRouter();
-  const isDigest = (sender ?? "").includes("github_triage_digest");
+  // Both GitHub-triage senders open onto the same queue. The "N unclassified"
+  // digest and the "this repo is claimed by 3 projects" warning are two views of
+  // one list, neither carries a work item, and only one of them used to show
+  // anything at all.
+  const isDigest = (sender ?? "").includes("github_triage");
 
   const [items, setItems] = useState<TUnclassified[] | null>(null);
   const [projects, setProjects] = useState<TProjectOption[]>([]);
@@ -77,27 +83,19 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
     if (chosen.length === 0) return;
     setSaving(true);
     try {
-      // Adoption takes one target project per call, so the picks are grouped
-      // rather than sent per row: eighteen tasks into three projects is three
-      // requests, not eighteen.
-      const byTarget = new Map<string, string[]>();
-      for (const [issueId, target] of chosen) {
-        byTarget.set(target, [...(byTarget.get(target) ?? []), issueId]);
-      }
-      const results = await Promise.all(
-        [...byTarget].map(([target, ids]) =>
-          service
-            .adoptIssues(workspaceSlug, ids, target)
-            // The endpoint reports how many it actually adopted, which can be
-            // fewer than asked for; the request length would overstate it.
-            .then((r) => (typeof r?.adopted === "number" ? r.adopted : ids.length))
-        )
+      // One call, carrying a project per row: filing is per GitHub issue, so
+      // eighteen tasks into three projects is one request rather than three.
+      const result = await service.fileGithubTriage(
+        workspaceSlug,
+        chosen.map(([id, project_id]) => ({ id, project_id }))
       );
-      const moved = results.reduce((sum, n) => sum + n, 0);
+      // The endpoint reports how many it actually filed, which can be fewer than
+      // asked for; the request length would overstate it.
+      const moved = typeof result?.filed === "number" ? result.filed : chosen.length;
       setToast({
         type: TOAST_TYPE.SUCCESS,
         title: `${moved} filed`,
-        message: "Each one now lives in its project, linked back to the inbox copy.",
+        message: "Each one is now a work item in its project, enriched from what GitHub already knew.",
       });
       setItems((current) => (current ?? []).filter((i) => !choice[i.id]));
       setChoice({});
@@ -149,8 +147,9 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
           ) : (
             <>
               <p className="mb-3 text-12 text-tertiary">
-                Picking a project copies the task there, links it back to the inbox item and closes the original — so
-                the GitHub sync will not raise it again. Rows you leave blank stay where they are.
+                Picking a project creates the work item there, filled in from the issue&apos;s labels and assignee, and
+                records that this GitHub issue became it — so the sync will not raise it again. Rows you leave blank
+                stay in the queue.
               </p>
               {/* The list is longer than the number in the title, and saying so
                   beats letting somebody wonder which figure is wrong. The digest
@@ -167,14 +166,21 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
                     <span className="min-w-0 flex-1 truncate text-13 text-primary" title={item.name}>
                       {item.name}
                     </span>
-                    <span className="flex-shrink-0 text-11 text-tertiary">{item.repo ?? "no repo found"}</span>
+                    <a
+                      href={item.html_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-shrink-0 text-11 text-tertiary hover:underline"
+                    >
+                      {item.repo}#{item.number}
+                    </a>
                     <select
                       value={choice[item.id] ?? ""}
                       onChange={(e) => setChoice((c) => ({ ...c, [item.id]: e.target.value }))}
                       aria-label={`Project for ${item.name}`}
                       className="w-52 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
                     >
-                      <option value="">Leave in the inbox</option>
+                      <option value="">Leave in the queue</option>
                       {projects.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name}

@@ -7291,6 +7291,38 @@ class IssueChecklistEndpoint(BaseAPIView):
         ).delete()
         return Response({"deleted": bool(deleted)}, status=status.HTTP_200_OK)
 
+
+class ProjectChecklistSummaryEndpoint(BaseAPIView):
+    """done/total for every work item in this project that owns a checklist.
+
+    One call for a whole list view. Without it the list had to ask per row, and
+    even lazily — only visible rows, queued, cached — scrolling a long board
+    still issued a small request per row it passed. That is the classic N+1: it
+    passes every test, because a test never scrolls.
+
+    Only owners WITH members are returned. A row with no checklist has nothing to
+    show, and sending a zero for every work item in the project would make the
+    payload grow with the project rather than with the feature.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Owners are this project's items; members may live anywhere, so the
+        # state is read through the join rather than assumed local.
+        rows = IssueChecklistItem.objects.filter(owner__project_id=project_id).values_list(
+            "owner_id", "member__state__group"
+        )
+        summary = {}
+        for owner_id, group in rows:
+            entry = summary.setdefault(str(owner_id), {"done": 0, "total": 0})
+            entry["total"] += 1
+            if group == "completed":
+                entry["done"] += 1
+        return Response({"summaries": summary}, status=status.HTTP_200_OK)
+
 class WorkspaceDirectoryEndpoint(BaseAPIView):
     """Everyone the workspace knows about, for the roster's name field.
 

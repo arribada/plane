@@ -40,6 +40,7 @@ import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/pan
 import { IssueMilestoneField } from "@/plane-web/components/issues/milestone/field";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
+import { IssueFixedCostField } from "@/plane-web/components/issues/issue-details/fixed-cost-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
 import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-details/parent-select-root";
@@ -121,6 +122,17 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
             existed and were unreachable for anyone who never opened the full
             page. */}
         <IssueEffortField
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          isEditable={!disabled}
+        />
+
+        {/* Directly under Effort, and on BOTH surfaces from the start: this fork
+            has shipped one-of-two three times, and a field only on the full page
+            is a field most people never meet — the peek panel is what opens from
+            a list or the timeline. */}
+        <IssueFixedCostField
           workspaceSlug={workspaceSlug}
           projectId={projectId}
           issueId={issueId}

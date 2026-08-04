@@ -40,6 +40,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/panel";
 import { IssueMilestoneField } from "@/plane-web/components/issues/milestone/field";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
+import { IssueFixedCostField } from "@/plane-web/components/issues/issue-details/fixed-cost-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
@@ -125,6 +126,17 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 END of the list. Each sits beside the field it belongs with:
                 effort is a property of the work, discipline of who does it. */}
             <IssueEffortField
+              workspaceSlug={workspaceSlug?.toString() ?? ""}
+              projectId={projectId?.toString() ?? ""}
+              issueId={issueId}
+              isEditable={isEditable}
+            />
+
+            {/* Directly under Effort, because it is the answer to the same
+                question for an item nobody here works on: what does this cost.
+                Recording one is what stops the other being invented from the
+                item's calendar span. */}
+            <IssueFixedCostField
               workspaceSlug={workspaceSlug?.toString() ?? ""}
               projectId={projectId?.toString() ?? ""}
               issueId={issueId}

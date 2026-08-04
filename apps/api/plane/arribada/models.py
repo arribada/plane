@@ -573,6 +573,56 @@ class ProjectExpense(models.Model):
     # edit form.
     url = models.URLField(max_length=2000, blank=True, default="")
     manufacturer_part_number = models.CharField(max_length=120, blank=True, default="")
+
+    # --- the work item this line belongs to ---------------------------------
+    #
+    # Null is the ordinary case: most spending is a project's, not a task's.
+    #
+    # It exists for the case the sheet could not say at all — a work item that is
+    # not our labour. "Hardware production, six weeks, £4,000 to the supplier" has
+    # a calendar window that is LEAD TIME, an invoice instead of person-days, and
+    # nobody on the team occupied by it. Costed as labour it became about thirty
+    # fabricated person-days of somebody's rate, and the project was then billed
+    # twice: once for time nobody spent, once for the invoice.
+    #
+    # SET_NULL rather than CASCADE, deliberately. Deleting a work item must not
+    # delete money the project committed — the invoice outlives the task, and a
+    # ledger that quietly loses a line when somebody tidies the board is a ledger
+    # nobody can reconcile a grant against.
+    issue = models.ForeignKey(
+        "db.Issue",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="arribada_expenses",
+    )
+    # Whether this line IS the cost of the linked item, rather than a cost beside
+    # it. Ticked, the item stops being costed as labour and stops consuming
+    # anybody's capacity; the invoice is the whole of what it costs.
+    #
+    # A separate flag rather than "linked means supplied", because both cases are
+    # real and they are opposites: £200 of parts for a task we also spend three
+    # days on must still be costed as three days. Deriving the exclusion from the
+    # link alone would silently zero the labour on every such item.
+    #
+    # Only ever true with an issue — a line attached to nothing has no labour to
+    # replace — which the endpoints enforce rather than the schema, since a
+    # CheckConstraint here would need a data migration on a table already in use.
+    replaces_labour = models.BooleanField(default=False)
+    # Who is doing it. ProcurementRequest has carried this since lead times were
+    # added and approval dropped it on the floor; a line that says "£4,000,
+    # hardware" without saying to whom cannot be chased.
+    supplier = models.CharField(max_length=255, blank=True, default="")
+    # What the supplier quoted, in CALENDAR days — their factory does not observe
+    # our weekends or our bank holidays.
+    #
+    # Not the same fact as ProcurementRequest.expected_on, which is a delivery
+    # DATE for a purchase some other task waits on and can floor that task's
+    # start. This is a DURATION belonging to the item itself: it is how long the
+    # bar should be. Offered as a target date the reader may accept, never
+    # written — the same contract every suggestion in this fork follows.
+    lead_time_days = models.PositiveSmallIntegerField(null=True, blank=True)
+
     created_by = models.ForeignKey(
         "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -582,7 +632,13 @@ class ProjectExpense(models.Model):
     class Meta:
         db_table = "arribada_project_expense"
         ordering = ("-incurred_on", "-created_at")
-        indexes = [models.Index(fields=["project", "planned"])]
+        indexes = [
+            models.Index(fields=["project", "planned"]),
+            # The budget and capacity reads both ask "which items are supplied",
+            # on every page load, across every visible project. Without this they
+            # scan the sheet.
+            models.Index(fields=["issue", "replaces_labour"]),
+        ]
 
     @property
     def total(self):

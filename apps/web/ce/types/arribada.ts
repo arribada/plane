@@ -452,6 +452,20 @@ export type TProjectExpense = {
   url: string;
   /** What a distributor's search box wants when this has to be reordered. */
   manufacturer_part_number: string;
+  /** Who is supplying it. Carried through from a purchase request on approval. */
+  supplier?: string;
+  /** Calendar days the supplier quoted — their factory does not observe our
+   *  weekends. A duration belonging to the work item, not a delivery date. */
+  lead_time_days?: number | null;
+  /** The work item this line belongs to. Null is the ordinary case. */
+  issue_id?: string | null;
+  issue_name?: string | null;
+  issue_sequence_id?: number | null;
+  /** True = this line IS that item's cost, so the item is not costed as our time
+   *  anywhere: no person-days in the budget, no capacity booked against its
+   *  owner. False on a line that sits BESIDE our labour — parts for a task we
+   *  also spend days on. */
+  replaces_labour?: boolean;
 };
 
 export type TMoney = { currency: string; amount: number };
@@ -534,6 +548,11 @@ export type TProjectBudget = {
     }[];
     totals: TMoney[];
     unrated_roles: string[];
+    /** Work items left out because a supplier delivers them: their cost is an
+     *  invoice in the ledger, not person-days here. A stated omission — a panel
+     *  that just showed a smaller number would read as an estimate that shrank.
+     *  Absent on an older server. */
+    supplied_items?: number;
   };
   /** Entered by a person, and usually the only figure with a receipt behind it. */
   expenses: {
@@ -541,7 +560,41 @@ export type TProjectBudget = {
     planned: TMoney[];
     actual: TMoney[];
     count: number;
+    /** The subset that stands in for our time, so the page can show the two
+     *  kinds apart. Adding them into one bar hides the only lever a manager has:
+     *  you can move people, you cannot move a supplier's quote. */
+    supplied?: { planned: TMoney[]; actual: TMoney[]; items: number };
   };
+};
+
+/**
+ * A work item that is bought rather than done: a price, a supplier, a wait.
+ *
+ * The money is a line in the ordinary expense ledger — there is no second notion
+ * of spend — and `replaces_labour` is what takes the item out of the labour
+ * estimate and out of everybody's capacity.
+ */
+export type TIssueFixedCost = {
+  /** Null when nothing has been recorded against this item. */
+  expense_id: string | null;
+  amount: number | null;
+  quantity: number;
+  total: number | null;
+  currency: string;
+  category: TExpenseCategory;
+  /** true = committed, not yet paid. */
+  planned: boolean;
+  supplier: string;
+  lead_time_days: number | null;
+  replaces_labour: boolean;
+  /** Where the quoted wait lands, from the item's start. Offered, never applied
+   *  — and null once the item already has a target somebody decided. */
+  suggested_target: string | null;
+  /** Other lines on the sheet against this same item, which this panel does not
+   *  edit. Only present on a read. */
+  other_lines?: number;
+  /** Whether this reader may change it. The sheet is the lead's. */
+  can_edit?: boolean;
 };
 
 /** Somebody asking to spend the project's money. Inert until the lead approves. */

@@ -417,6 +417,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 
   const labour = budget?.labour;
   const spend = budget?.expenses;
+  // The slice of the ledger that stands in for our time. Absent on an older
+  // server, which is why nothing below reads it without a guard.
+  const supplied = spend?.supplied;
 
   const input =
     "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong";
@@ -691,6 +694,16 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           <p className="mt-0.5 text-11 text-tertiary">
             Estimated from the dated work items — it moves when the plan moves.
           </p>
+          {/* A stated omission, not a silent one. Without this the figure simply
+              looks smaller, which is indistinguishable from work somebody forgot
+              to plan — and the whole point of taking a supplier's six weeks out
+              of the labour estimate is that a reader can SEE it was taken out. */}
+          {(labour?.supplied_items ?? 0) > 0 && (
+            <p className="mt-1.5 text-11 text-tertiary">
+              {labour?.supplied_items} work item{labour?.supplied_items === 1 ? " is" : "s are"} supplied by a third
+              party — their cost is in the ledger below, not here.
+            </p>
+          )}
           {labour && labour.unrated_roles.length > 0 && (
             <p className="mt-1.5 text-11 text-warning-primary">
               No hourly rate for {labour.unrated_roles.join(", ")} — those days are counted but not costed.
@@ -784,6 +797,22 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             </p>
           ) : null}
           <p className="mt-0.5 text-11 text-tertiary">Hardware, field trips, shipping, subcontracting.</p>
+          {/* The two kinds, apart. A manager reading a budget can move people and
+              cannot move a supplier's quote, so "how much of this is somebody
+              else's invoice" is the first thing the number has to be able to say
+              — and it is the half that is NOT also counted as time next door. */}
+          {supplied && supplied.items > 0 && (
+            <p className="mt-1.5 text-11 text-secondary">
+              {[...supplied.actual, ...supplied.planned].length > 0 && (
+                <span className="font-medium">
+                  {recorded([...supplied.actual, ...supplied.planned])}
+                  {" of it "}
+                </span>
+              )}
+              pays for {supplied.items} work item{supplied.items === 1 ? "" : "s"} a supplier delivers — bought, not
+              built here, so none of it is counted as our time.
+            </p>
+          )}
         </div>
       </div>
 
@@ -1225,6 +1254,26 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                   {CATEGORY_LABEL[e.category]}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-13 text-primary">{e.label}</span>
+                {/* Which work item this money is for, when it is for one. A line
+                    that says "£4,000, hardware" and nothing else cannot be
+                    checked against the plan by anybody who was not in the room. */}
+                {e.issue_id && (
+                  <span className="flex-shrink-0 truncate text-11 text-tertiary" title={e.issue_name ?? undefined}>
+                    #{e.issue_sequence_id}
+                  </span>
+                )}
+                {/* The one badge that changes what a number MEANS: this line is
+                    the item's whole cost, so the item contributes no person-days
+                    to the estimate above. */}
+                {e.replaces_labour && (
+                  <span
+                    className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-10 text-secondary"
+                    title="This work item is bought, not built here — it is not costed as our time"
+                  >
+                    supplied
+                  </span>
+                )}
+                {e.supplier && <span className="flex-shrink-0 text-11 text-tertiary">{e.supplier}</span>}
                 {/* In the row, not behind an edit form: a part number exists to be
                     copied into somebody else's search box, and a field you have to
                     open a form to read is one nobody uses twice. */}

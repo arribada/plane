@@ -26,10 +26,12 @@ import type {
   TProjectDocs,
   TProcurementRequest,
   TProjectExpense,
+  TExpenseCategory,
   TCurrencySettings,
   TRolePreset,
   TRoleRate,
   TIssueEffort,
+  TIssueFixedCost,
   TProjectSchedule,
   TProjectStatus,
   TProjectStatusUpdate,
@@ -1097,6 +1099,51 @@ export class ArribadaService extends APIService {
   }
 
   /**
+   * What a supplier charges for this work item, and how long they said they
+   * would take.
+   *
+   * The figure is a line in the ordinary expense ledger, so it reaches the
+   * Finance page as committed spend rather than as a second, parallel notion of
+   * money. `replaces_labour` is what stops the item also being costed as our
+   * time — without it a six-week supplier run bills the project twice.
+   */
+  async getIssueFixedCost(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueFixedCost> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/fixed-cost/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Lead only. `{ remove: true }` deletes the ledger line the item carried. */
+  async setIssueFixedCost(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    data:
+      | { remove: true }
+      | {
+          amount: number;
+          quantity?: number;
+          currency: string;
+          category?: TExpenseCategory;
+          planned?: boolean;
+          supplier?: string;
+          lead_time_days?: number | null;
+          replaces_labour?: boolean;
+        }
+  ): Promise<TIssueFixedCost> {
+    return this.post(
+      `/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/fixed-cost/`,
+      data
+    )
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
    * The work items on this one's checklist.
    *
    * `done` arrives derived from each member's state group. It is not read back
@@ -1205,8 +1252,20 @@ export class ArribadaService extends APIService {
     /** Left for a person: the repo is claimed by nobody, or by several projects. */
     queued?: number;
     dismissed_skipped?: number;
+    /** Issues closed on GitHub since the last run, so their rows left the queue. */
+    closed_rows?: number;
+    /** Work items moved to their project's done state because the issue closed. */
+    closed_items?: number;
+    /** Of those, ones a person had filed by hand rather than the router. */
+    closed_items_manual?: number;
+    /** Guards that declined to close something: already_final, partial_link, … */
+    close_skipped?: Record<string, number>;
+    close_unconfirmed?: number;
+    close_deferred?: number;
     /** Repos nothing could place in a workspace — a mapping somebody must fix. */
     skipped_no_workspace?: string[];
+    /** Repos whose open list came back short, so nothing there was reconciled. */
+    skipped_partial_fetch?: string[];
     /** Only "no token" or "no repos mapped": the run did not happen. */
     skipped: string | null;
   }> {

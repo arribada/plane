@@ -1560,6 +1560,11 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
             target_date__gte=today,
         )
         .exclude(state__group__in=["completed", "cancelled"])
+        # Supplier-delivered items book nobody. A six-week hardware run is six
+        # weeks of a factory's time, not thirty days of the engineer who owns the
+        # item — and counting it filled their bar with work they are not doing,
+        # which is exactly the false crunch this view exists to find.
+        .exclude(id__in=_supplied_issue_ids(project_ids=visible))
         .values("id", "start_date", "target_date")
     )
     by_issue = {str(r["id"]): r for r in rows}
@@ -1802,15 +1807,26 @@ class AdoptIssuesEndpoint(BaseAPIView):
 
 
 def _github_queue(slug):
-    """The GitHub inbox: captured, filed nowhere, dismissed by nobody.
+    """The GitHub inbox: captured, still open, filed nowhere, dismissed by nobody.
 
     One definition, used by everything that shows the inbox, because the four
     surfaces that read it disagreeing about what is in it is how three of them
     came to show an empty list while 39 issues were waiting.
+
+    Closed rows are EXCLUDED rather than auto-dismissed, and the difference
+    matters. Dismissing is a person's decision and carries their name in
+    `dismissed_by`; writing it on their behalf would fabricate a decision nobody
+    made, put rows nobody set aside into the archive list, and offer a "restore"
+    button that puts them back into a queue that would only hide them again.
+    Excluding on `state` reads GitHub's own answer, which the sync refreshes on
+    every run — so an issue reopened upstream returns to the queue by itself,
+    which is right: nobody has decided anything about an unfiled row, so there is
+    no decision to overrule. Nothing is deleted either way; the row is what stops
+    the next sync resurrecting the issue as new work.
     """
     return GithubIssue.objects.filter(
         workspace__slug=slug, filed_issue__isnull=True, dismissed_at__isnull=True
-    )
+    ).exclude(state="closed")
 
 
 def _file_github_row(row, project, user, parent=None, checklist_owner=None, discipline=None, assignee_id=None):
@@ -4818,7 +4834,9 @@ class ProjectExpensesEndpoint(BaseAPIView):
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        rows = ProjectExpense.objects.filter(project_id=project_id)
+        # select_related, because every row now names its work item and a lazy
+        # `row.issue` would be one query per line on a sheet with fifty of them.
+        rows = ProjectExpense.objects.filter(project_id=project_id).select_related("issue")
         return Response({"expenses": [_serialize_expense(r) for r in rows]}, status=status.HTTP_200_OK)
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
@@ -4844,6 +4862,13 @@ class ProjectExpensesEndpoint(BaseAPIView):
         if denied:
             return denied
 
+        issue_id, denied = _expense_issue(request.data.get("issue_id"), project_id)
+        if denied:
+            return denied
+        lead_time, denied = _expense_lead_time(request.data.get("lead_time_days"))
+        if denied:
+            return denied
+
         row = ProjectExpense.objects.create(
             project=project,
             category=str(request.data.get("category") or ProjectExpense.OTHER)[:16],
@@ -4856,6 +4881,13 @@ class ProjectExpensesEndpoint(BaseAPIView):
             notes=str(request.data.get("notes") or "")[:2000],
             url=url,
             manufacturer_part_number=str(request.data.get("manufacturer_part_number") or "").strip()[:120],
+            issue_id=issue_id,
+            # Never true without a work item: a line attached to nothing has no
+            # labour to replace, and a stray flag would be an exclusion that
+            # excludes nothing while reading on the Finance page as if it did.
+            replaces_labour=bool(request.data.get("replaces_labour")) and bool(issue_id),
+            supplier=str(request.data.get("supplier") or "").strip()[:255],
+            lead_time_days=lead_time,
             created_by=request.user,
         )
         return Response(_serialize_expense(row), status=status.HTTP_201_CREATED)
@@ -4903,6 +4935,24 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
             row.url = url
         if "manufacturer_part_number" in request.data:
             row.manufacturer_part_number = str(request.data.get("manufacturer_part_number") or "").strip()[:120]
+        if "supplier" in request.data:
+            row.supplier = str(request.data.get("supplier") or "").strip()[:255]
+        if "lead_time_days" in request.data:
+            lead_time, denied = _expense_lead_time(request.data.get("lead_time_days"))
+            if denied:
+                return denied
+            row.lead_time_days = lead_time
+        if "issue_id" in request.data:
+            issue_id, denied = _expense_issue(request.data.get("issue_id"), project_id)
+            if denied:
+                return denied
+            row.issue_id = issue_id
+        if "replaces_labour" in request.data:
+            row.replaces_labour = bool(request.data.get("replaces_labour"))
+        # After both, so unlinking a line in the same request that leaves the flag
+        # set cannot leave an exclusion pointing at nothing.
+        if not row.issue_id:
+            row.replaces_labour = False
         row.save()
         return Response(_serialize_expense(row), status=status.HTTP_200_OK)
 
@@ -4918,6 +4968,10 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
 
 
 def _serialize_expense(row):
+    # `row.issue` costs a query unless the caller select_related it. Every list
+    # read here does; the write paths touch one row, where one extra query for
+    # the item's name is cheaper than a second round trip from the browser.
+    issue = row.issue if row.issue_id else None
     return {
         "id": str(row.id),
         "category": row.category,
@@ -4931,7 +4985,38 @@ def _serialize_expense(row):
         "notes": row.notes,
         "url": row.url,
         "manufacturer_part_number": row.manufacturer_part_number,
+        "supplier": row.supplier,
+        "lead_time_days": row.lead_time_days,
+        # The work item this line belongs to, named rather than only identified:
+        # a ledger row that says "→ 4f3a-…" is a row nobody reads.
+        "issue_id": str(row.issue_id) if row.issue_id else None,
+        "issue_name": issue.name if issue else None,
+        "issue_sequence_id": issue.sequence_id if issue else None,
+        # True = this line IS that item's cost, so the item is not costed as our
+        # time anywhere. The Finance page shows the two kinds apart on the
+        # strength of this flag.
+        "replaces_labour": row.replaces_labour,
     }
+
+
+def _supplied_issue_ids(project_ids=None, issue_ids=None):
+    """Work items whose cost is somebody's invoice rather than our time.
+
+    One place, because three readers need exactly the same answer and three
+    slightly different versions of it is how a budget and a capacity bar come to
+    disagree about the same task: the labour estimate must not charge person-days
+    for it, the capacity bar must not book anybody for it, and the workload
+    timeline must not call it a clash.
+
+    Returns a set of string ids. Filtered by project or by issue depending on
+    which the caller already has in hand — both narrow the same index.
+    """
+    rows = ProjectExpense.objects.filter(issue__isnull=False, replaces_labour=True)
+    if project_ids is not None:
+        rows = rows.filter(project_id__in=project_ids)
+    if issue_ids is not None:
+        rows = rows.filter(issue_id__in=issue_ids)
+    return {str(i) for i in rows.values_list("issue_id", flat=True)}
 
 
 def _expense_link(value):
@@ -4950,6 +5035,45 @@ def _expense_link(value):
             {"error": "That needs to be a http(s) link"}, status=status.HTTP_400_BAD_REQUEST
         )
     return url[:2000], None
+
+
+def _expense_issue(value, project_id):
+    """The work item id to store, or an error to return. `(None, None)` unlinks.
+
+    Scoped to the project, so a line can never be attached to an item in a
+    project the sheet does not belong to — that would take a work item out of one
+    project's labour estimate on the strength of a number in another's budget.
+    """
+    if not value:
+        return None, None
+    if not Issue.issue_objects.filter(id=value, project_id=project_id).exists():
+        return None, Response(
+            {"error": "That work item is not in this project"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return str(value), None
+
+
+def _expense_lead_time(value):
+    """Calendar days the supplier quoted, or an error. `(None, None)` clears it.
+
+    Capped at five years. Anything longer is a typo — and it feeds a suggested
+    target date, so a stray zero would offer to move a bar into the next decade.
+    """
+    if value in (None, ""):
+        return None, None
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        return None, Response(
+            {"error": "The lead time must be a whole number of days"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not 0 < days <= 1825:
+        return None, Response(
+            {"error": "The lead time must be between 1 and 1825 days"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return days, None
 
 
 def _budget_display(wanted, settings, allocated, allocation_currency, labour_totals, expenses):
@@ -5050,11 +5174,21 @@ class ProjectBudgetEndpoint(BaseAPIView):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        # Work items whose cost is somebody's invoice, not our time. Read first
+        # because everything derived from the plan below has to skip them.
+        #
+        # Without this, "hardware production — six weeks, £4,000 to the supplier"
+        # was costed as about thirty working days of an internal rate ON TOP of
+        # the £4,000 sitting in the ledger, and the project was billed twice for
+        # one thing. Its span is lead time; there are no person-days in it.
+        supplied = _supplied_issue_ids(project_ids=[project_id])
+
         # Labour from the work items that exist, not from a plan preview: this is
         # the cost of what the project actually holds.
         rows = list(
             Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
             .filter(start_date__isnull=False, target_date__isnull=False)
+            .exclude(id__in=supplied)
             .values("id", "start_date", "target_date")
         )
         roles = {
@@ -5096,10 +5230,20 @@ class ProjectBudgetEndpoint(BaseAPIView):
         labour = _labour_cost(tasks, rate_map)
         labour["from_effort"] = from_effort
         labour["from_span"] = len(tasks) - from_effort
+        # A stated omission rather than a silent one. A panel that simply showed a
+        # smaller number would look like the estimate had shrunk; this says which
+        # items are not in it and why, which is the only way a reader can tell
+        # "supplied" from "forgotten".
+        labour["supplied_items"] = len(supplied)
 
-        expenses = list(ProjectExpense.objects.filter(project_id=project_id))
+        expenses = list(ProjectExpense.objects.filter(project_id=project_id).select_related("issue"))
         by_category = {}
         spend_totals = {}
+        # The same totals, restricted to the lines that stand in for our time.
+        # Somebody looking at a budget needs to know what is our time and what is
+        # somebody's invoice — adding them into one bar hides the only lever a
+        # manager has, because you can move people and you cannot move a quote.
+        supplied_totals = {}
         for row in expenses:
             bucket = by_category.setdefault(
                 row.category, {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": row.currency}
@@ -5107,6 +5251,8 @@ class ProjectBudgetEndpoint(BaseAPIView):
             bucket["planned" if row.planned else "actual"] += float(row.total)
             key = (row.currency, row.planned)
             spend_totals[key] = spend_totals.get(key, 0.0) + float(row.total)
+            if row.replaces_labour:
+                supplied_totals[key] = supplied_totals.get(key, 0.0) + float(row.total)
 
         # --- rhythm -----------------------------------------------------------
         #
@@ -5268,6 +5414,24 @@ class ProjectBudgetEndpoint(BaseAPIView):
                         if not planned
                     ],
                     "count": len(expenses),
+                    # The subset that stands in for our time. Reported as its own
+                    # figure rather than folded in, because "£4,000 of this is a
+                    # supplier's quote" and "£4,000 of this is parts we bought"
+                    # lead to different conversations — one is a negotiation, the
+                    # other is a purchase order.
+                    "supplied": {
+                        "planned": [
+                            {"currency": c, "amount": round(v, 2)}
+                            for (c, planned), v in sorted(supplied_totals.items())
+                            if planned
+                        ],
+                        "actual": [
+                            {"currency": c, "amount": round(v, 2)}
+                            for (c, planned), v in sorted(supplied_totals.items())
+                            if not planned
+                        ],
+                        "items": len(supplied),
+                    },
                 },
             },
             status=status.HTTP_200_OK,
@@ -5432,6 +5596,16 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                             else "From a purchase request"
                         )
                         + (f" — {row.supplier}" if row.supplier else ""),
+                        # Both were on the request all along and approval dropped
+                        # them: the sheet then held a line that could not say who
+                        # was supplying it or what it was for.
+                        supplier=row.supplier,
+                        issue_id=row.issue_id,
+                        # NOT replaces_labour. A purchase request is for parts a
+                        # task is waiting on, not for the task itself, and
+                        # defaulting it true would silently take that task's
+                        # person-days out of the estimate on the strength of a
+                        # link that only ever meant "this delivery unblocks it".
                         created_by=request.user,
                     )
                     row.expense = expense
@@ -5825,6 +5999,13 @@ class WorkloadTimelineEndpoint(BaseAPIView):
             by_issue[issue_id].append(user_id)
             by_user[user_id].append(issue_id)
 
+        # Items a supplier delivers. Still drawn — the lead time is real and
+        # belongs on the board — but they occupy nobody, so they are kept out of
+        # the overlap sweep below. A six-week hardware run running "alongside" the
+        # owner's firmware work is not a double-booking; calling it one trains
+        # people to ignore the warning that matters.
+        supplied = _supplied_issue_ids(issue_ids=issue_ids)
+
         items = []
         item_by_id = {}
         unassigned_ids = []
@@ -5843,6 +6024,7 @@ class WorkloadTimelineEndpoint(BaseAPIView):
                 "project_identifier": row["project__identifier"],
                 "project_name": row["project__name"],
                 "assignee_ids": owners,
+                "supplied": issue_id in supplied,
             }
             items.append(item)
             item_by_id[issue_id] = item
@@ -5935,6 +6117,9 @@ class WorkloadTimelineEndpoint(BaseAPIView):
             for issue_id in owned:
                 item = item_by_id.get(issue_id)
                 if not item or not item["start_date"] or not item["target_date"]:
+                    continue
+                # Waiting on a supplier is not being busy. See `supplied` above.
+                if item["supplied"]:
                     continue
                 low, high = sorted((item["start_date"], item["target_date"]))
                 low, high = max(low, win_from), min(high, win_to)
@@ -6555,6 +6740,184 @@ def _add_working_days(start, count):
     return current
 
 
+class IssueFixedCostEndpoint(BaseAPIView):
+    """A work item that is bought rather than done: a price, a supplier, a wait.
+
+    "Hardware production — six weeks, £4,000 to the supplier" broke every figure
+    this fork derives from a plan. The budget costed the item's calendar window as
+    about thirty person-days of an internal rate, on top of the invoice somebody
+    had already recorded, so the project was billed twice for one thing. The
+    capacity bar booked its owner for those six weeks, and the workload timeline
+    called it a clash with the work they were actually doing.
+
+    None of that is a new kind of money, so this writes no new kind of money: the
+    figure is a row in the same ProjectExpense ledger the Finance page already
+    reads, with `issue` saying which item it belongs to. One number, one place.
+
+    `replaces_labour` is what makes the item stop being costed as our time. It is
+    a choice and not a consequence of the link, because both cases are real — a
+    subcontracted build IS its invoice, while £200 of parts for a task we also
+    spend three days on is a cost BESIDE three days of labour, and collapsing the
+    two would silently zero the second one.
+
+    Writing is the lead's, like every other line on the sheet: this commits budget.
+    Everyone else reads it and raises a purchase request instead.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id, issue_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        issue = Issue.issue_objects.filter(id=issue_id, project_id=project_id).values(
+            "name", "start_date", "target_date"
+        ).first()
+        if not issue:
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = list(ProjectExpense.objects.filter(issue_id=issue_id, project_id=project_id))
+        row = _primary_fixed_cost(rows)
+        return Response(
+            {
+                **_serialize_fixed_cost(row, issue),
+                # More than one line can be attached — a purchase request that was
+                # approved against this item leaves one too. The panel edits a
+                # single line, so it has to be able to say the sheet holds others
+                # rather than silently representing the whole as the part.
+                "other_lines": max(0, len(rows) - (1 if row else 0)),
+                # A read-only reader still sees the figure; only the lead may
+                # change it. Sent rather than inferred in the browser, because the
+                # rule ("either roster counts, and an admin only on a leaderless
+                # project") lives in one place on the server.
+                "can_edit": _is_project_lead(request.user, project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, issue_id):
+        project = _visible_projects(request, slug).filter(id=project_id).first()
+        if not project:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _lead_guard(request, project_id)
+        if denied:
+            return denied
+        issue = Issue.issue_objects.filter(id=issue_id, project_id=project_id).values(
+            "name", "start_date", "target_date"
+        ).first()
+        if not issue:
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = list(ProjectExpense.objects.filter(issue_id=issue_id, project_id=project_id))
+        row = _primary_fixed_cost(rows)
+
+        # Removing is explicit, never "the box came back empty". This deletes a
+        # recorded amount out of the ledger a grant is reconciled against, and a
+        # blur event is not consent — the same reason the sheet asks before it
+        # deletes a line.
+        if request.data.get("remove"):
+            if row:
+                row.delete()
+            return Response(_serialize_fixed_cost(None, issue), status=status.HTTP_200_OK)
+
+        try:
+            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
+            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "The price and the quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        lead_time, denied = _expense_lead_time(request.data.get("lead_time_days"))
+        if denied:
+            return denied
+
+        fields = {
+            "amount": amount,
+            "quantity": quantity,
+            "currency": str(request.data.get("currency") or "EUR").strip().upper()[:3],
+            "supplier": str(request.data.get("supplier") or "").strip()[:255],
+            "lead_time_days": lead_time,
+            "replaces_labour": bool(request.data.get("replaces_labour", True)),
+            "planned": bool(request.data.get("planned", True)),
+        }
+        if "category" in request.data:
+            fields["category"] = str(request.data.get("category") or ProjectExpense.HARDWARE)[:16]
+
+        if row:
+            for field, value in fields.items():
+                setattr(row, field, value)
+            row.save()
+        else:
+            row = ProjectExpense.objects.create(
+                project=project,
+                issue_id=issue_id,
+                # The item's own name, so the ledger reads as a sentence rather
+                # than as a row of unlabelled money. Copied once: the lead may
+                # rename the line afterwards and renaming the task must not
+                # overwrite what they wrote on the sheet.
+                label=(issue["name"] or "Supplier cost")[:255],
+                # Subcontracted manufacturing is the case this exists for; the
+                # lead can change it, and every other category stays available.
+                category=fields.pop("category", ProjectExpense.SERVICES),
+                created_by=request.user,
+                **fields,
+            )
+        return Response(_serialize_fixed_cost(row, issue), status=status.HTTP_200_OK)
+
+
+def _primary_fixed_cost(rows):
+    """The one line of several that the work item panel edits.
+
+    Prefers the line that stands in for labour, because that is the one whose
+    flag changes what the item costs everywhere else; then the largest, which on
+    a task with a build and its shipping is the build. Deterministic on purpose —
+    a panel that edited a different row depending on query ordering would look
+    like it lost somebody's number.
+    """
+    if not rows:
+        return None
+    return sorted(rows, key=lambda r: (not r.replaces_labour, -float(r.total), str(r.id)))[0]
+
+
+def _serialize_fixed_cost(row, issue):
+    """The panel's view of one ledger line, plus the date its lead time implies."""
+    lead = row.lead_time_days if row else None
+    return {
+        "expense_id": str(row.id) if row else None,
+        "amount": float(row.amount) if row else None,
+        "quantity": float(row.quantity) if row else 1.0,
+        "total": float(row.total) if row else None,
+        "currency": row.currency if row else "EUR",
+        "category": row.category if row else ProjectExpense.SERVICES,
+        "planned": row.planned if row else True,
+        "supplier": row.supplier if row else "",
+        "lead_time_days": lead,
+        "replaces_labour": row.replaces_labour if row else True,
+        # Offered, never applied — the server does not move dates. Same contract
+        # as the effort field: a number that silently redrew somebody's bar the
+        # moment they typed it is a number they stop typing.
+        "suggested_target": _target_from_lead_time(issue, lead),
+    }
+
+
+def _target_from_lead_time(issue, lead_time_days):
+    """Where a supplier's quoted wait lands, from the item's start.
+
+    CALENDAR days, because a factory does not observe our weekends — six weeks is
+    forty-two days whatever our calendar says. Only the landing date is nudged
+    off a weekend, since a plan that finishes on a Sunday is a plan nobody reads.
+
+    None once the item already has a target: it has been decided by a human, and
+    offering to replace it is noise.
+    """
+    if not lead_time_days or issue.get("target_date"):
+        return None
+    start = issue.get("start_date") or timezone.now().date()
+    landing = start + timedelta(days=int(lead_time_days))
+    while landing.weekday() >= 5:
+        landing += timedelta(days=1)
+    return str(landing)
+
+
 class GithubSyncNowEndpoint(BaseAPIView):
     """Pull GitHub issues now, instead of waiting for the nightly run.
 
@@ -6613,11 +6976,24 @@ class GithubSyncNowEndpoint(BaseAPIView):
                 "filed": result.get("filed", 0),
                 "queued": result.get("queued", 0),
                 "dismissed_skipped": result.get("dismissed_skipped", 0),
+                # What the run CLOSED. A state change on somebody's board is the
+                # outcome most worth being able to see, and summarising it away
+                # would leave a person wondering why an item moved to Done on its
+                # own. `close_skipped` is the guards that declined to move one.
+                "closed_rows": result.get("closed_rows", 0),
+                "closed_items": result.get("closed_items", 0),
+                "closed_items_manual": result.get("closed_items_manual", 0),
+                "close_skipped": result.get("close_skipped", {}),
+                "close_unconfirmed": result.get("close_unconfirmed", 0),
+                "close_deferred": result.get("close_deferred", 0),
                 # Repos whose issues could not be placed in any workspace. A list
                 # of names, not a count: this is a mapping somebody has to fix and
                 # they cannot fix what they cannot see. Kept out of `skipped` on
                 # purpose, which the caller treats as "nothing to do".
                 "skipped_no_workspace": result.get("skipped_no_workspace", []),
+                # Repos whose open list came back short, so nothing there could be
+                # reconciled. Also names, for the same reason.
+                "skipped_partial_fetch": result.get("skipped_partial_fetch", []),
                 "skipped": None,
             },
             status=status.HTTP_200_OK,
@@ -6643,6 +7019,11 @@ def _github_untriaged(project_ids):
         Issue.issue_objects.filter(project_id__in=list(project_ids), external_source="github")
         .filter(start_date__isnull=True, target_date__isnull=True, parent__isnull=True)
         .filter(~Exists(assigned))
+        # Finished work is not a gap. The sync now moves a work item to done when
+        # its GitHub issue closes, and without this the counter would answer
+        # "still untriaged" about the very items it had just closed — nagging
+        # somebody to date and assign work nobody is going to do.
+        .exclude(state__group__in=("completed", "cancelled"))
         .values("project_id")
         .annotate(n=Count("id", distinct=True))
     )
@@ -7285,11 +7666,11 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                 if key:
                     claims[key].append(str(doc.project_id))
 
-        rows = list(
-            GithubIssue.objects.filter(
-                workspace__slug=slug, filed_issue__isnull=True, dismissed_at__isnull=True
-            ).order_by("repo", "-github_created_at")[:300]
-        )
+        # `_github_queue`, not a copy of its filter. This was a second, identical
+        # definition of "what is in the inbox" — and a second definition is how the
+        # first one gaining a condition (closed rows leave the queue) silently
+        # leaves this page showing work that is already done.
+        rows = list(_github_queue(slug).order_by("repo", "-github_created_at")[:300])
 
         items = []
         for row in rows:

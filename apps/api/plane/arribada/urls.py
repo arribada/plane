@@ -12,6 +12,7 @@ from .views import (
     IssueChecklistEndpoint,
     ProjectChecklistSummaryEndpoint,
     IssueEffortEndpoint,
+    IssueFixedCostEndpoint,
     IssueRoleEndpoint,
     ProjectAssigneeGapEndpoint,
     ProjectDisciplineGapEndpoint,
@@ -408,6 +409,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/effort/",
         IssueEffortEndpoint.as_view(),
         name="arribada-issue-effort",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/fixed-cost/",
+        IssueFixedCostEndpoint.as_view(),
+        name="arribada-issue-fixed-cost",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/github-sync/",

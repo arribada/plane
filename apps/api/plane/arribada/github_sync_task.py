@@ -112,8 +112,6 @@ def _fetch_open_issues(pat, repo, max_pages=5):
     return out
 
 
-@shared_task
-
 def _parse_gh_time(value):
     """GitHub's ISO-8601 with a Z, which fromisoformat refuses before 3.11."""
     if not value:
@@ -266,6 +264,13 @@ def _enrich_filed_issue(issue, project, gh):
         pass
 
 
+# The decorator must sit DIRECTLY on this function. Twice today a helper was
+# inserted at this anchor and landed between the two, so @shared_task decorated
+# the helper instead — celery never registered the task, beat scheduled a name
+# that did not exist, and "Sync now" raised AttributeError. Nothing errored at
+# import, `manage.py check` stayed clean, and GitHub ingestion silently stopped.
+# Add helpers ABOVE the decorator, never between it and its def.
+@shared_task
 def github_plane_sync():
     from plane.db.models import Issue, IssueAssignee, Project, State, WorkspaceMember
 

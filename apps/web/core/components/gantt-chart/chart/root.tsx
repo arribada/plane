@@ -53,6 +53,9 @@ type ChartViewRootProps = {
   quickAdd?: React.ReactNode | undefined;
   showToday: boolean;
   isEpic?: boolean;
+  /** Passed straight through to the toolbar row — see GanttChartRoot. */
+  toolbarLeading?: React.ReactNode;
+  toolbarActions?: React.ReactNode;
 };
 
 const timelineViewHelpers = {
@@ -94,6 +97,8 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     showToday,
     updateBlockDates,
     isEpic = false,
+    toolbarLeading,
+    toolbarActions,
   } = props;
   // states
   const [itemsContainerWidth, setItemsContainerWidth] = useState(0);
@@ -298,6 +303,8 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
         handleFitToBlocks={handleFitToBlocks}
         loaderTitle={loaderTitle}
         showToday={showToday}
+        toolbarLeading={toolbarLeading}
+        toolbarActions={toolbarActions}
       />
       <GanttChartMainContent
         blockIds={blockIds}

@@ -39,6 +39,12 @@ type GanttChartRootProps = {
   showAllBlocks?: boolean;
   showToday?: boolean;
   isEpic?: boolean;
+  /** Chart-specific controls, rendered at the head of the toolbar row and inside
+   *  its last group. They are props rather than an overlay the caller positions
+   *  itself: an absolutely positioned control cannot take part in the toolbar's
+   *  layout, so it does not push the built-in controls aside — it covers them. */
+  toolbarLeading?: React.ReactNode;
+  toolbarActions?: React.ReactNode;
 };
 
 export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChartRootProps) {
@@ -66,6 +72,8 @@ export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChart
     quickAdd,
     updateBlockDates,
     isEpic = false,
+    toolbarLeading,
+    toolbarActions,
   } = props;
 
   const { setBlockIds } = useTimeLineChartStore();
@@ -100,6 +108,8 @@ export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChart
       showToday={showToday}
       updateBlockDates={updateBlockDates}
       isEpic={isEpic}
+      toolbarLeading={toolbarLeading}
+      toolbarActions={toolbarActions}
     />
   );
 });

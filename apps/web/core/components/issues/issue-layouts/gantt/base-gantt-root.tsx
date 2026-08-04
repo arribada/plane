@@ -17,6 +17,7 @@ import { renderFormattedPayloadDate } from "@plane/utils";
 // components
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
+import { GanttToolbarDivider } from "@/components/gantt-chart/chart/header";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
 import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
 import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
@@ -501,16 +502,34 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
           <div className="relative min-h-0 flex-1">
             <GanttLinkPreview />
             <GanttGroupContext.Provider value={groupContext}>
-              <div className="absolute top-1.5 left-3 z-20 flex items-center gap-2">
-                <GanttColorBy />
-                <GanttGroupBy />
-                <GanttLockButton lock={planLock} />
-                <BaselinePicker />
-                <GanttExportButton collect={collectForExport} />
-                <GanttUndoButton onUndo={handleGanttUndo} />
-              </div>
               <GanttChartRoot
                 border={false}
+                // These used to be an absolutely positioned strip floating over the
+                // chart's toolbar. An overlay takes part in no layout: it did not
+                // push the toolbar's own controls aside, it painted on top of them,
+                // and Export landed squarely on the "62 Work items" count. In the
+                // row they are ordinary flex children, so the whole toolbar wraps
+                // as one and nothing can overlap at any width.
+                toolbarLeading={
+                  <>
+                    {/* What is shown */}
+                    <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
+                      <GanttColorBy />
+                      <GanttGroupBy />
+                    </div>
+                    <GanttToolbarDivider />
+                    {/* The plan itself: who may change it, what it was promised to
+                        be, and a way back from the last change. */}
+                    <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
+                      <GanttLockButton lock={planLock} />
+                      <BaselinePicker />
+                      <GanttUndoButton onUndo={handleGanttUndo} />
+                    </div>
+                  </>
+                }
+                // Beside Saved order and Display rather than with the plan controls:
+                // it is about getting this chart out of here, like they are.
+                toolbarActions={<GanttExportButton collect={collectForExport} />}
                 title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
                 loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
                 blockIds={rowIds}

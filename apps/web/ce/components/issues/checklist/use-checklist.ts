@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import type { IState } from "@plane/types";
+import { useIssuesStore } from "@/hooks/use-issue-layout-store";
 import { IssueService } from "@/services/issue";
 import { ProjectStateService } from "@/services/project";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -110,6 +111,11 @@ const projectStates = (workspaceSlug: string, projectId: string) => {
   return pending;
 };
 
+/** How the member's new state actually gets written. Injected rather than chosen
+ *  here because the right writer is a store the caller is inside and this module
+ *  is not a component — see `useIssueChecklist` for which one and why. */
+export type TStateWriter = (memberProjectId: string, memberIssueId: string, stateId: string) => Promise<void>;
+
 /**
  * Tick or untick one line.
  *
@@ -124,7 +130,8 @@ export const setChecklistItemDone = async (
   ownerProjectId: string,
   ownerIssueId: string,
   item: TIssueChecklistItem,
-  done: boolean
+  done: boolean,
+  write: TStateWriter
 ) => {
   const states = await projectStates(workspaceSlug, item.project_id);
   const open = states.filter((state) => state.group !== "completed" && state.group !== "cancelled");
@@ -133,7 +140,7 @@ export const setChecklistItemDone = async (
     : (open.find((state) => state.default) ?? open[0]);
   if (!target) throw new Error(done ? "No completed state in that project" : "No open state in that project");
 
-  await issueService.patchIssue(workspaceSlug, item.project_id, item.issue_id, { state_id: target.id });
+  await write(item.project_id, item.issue_id, target.id);
 
   // Patched in place rather than refetched: the write already told us the only
   // thing that changed, and a round trip here would make the box lag the click.
@@ -234,6 +241,34 @@ export const useIssueChecklist = (
   const key = projectId && issueId ? keyOf(projectId, issueId) : "";
   useCacheKey(key);
 
+  // The store behind whatever view this checklist is being read from — project,
+  // cycle, module, view. Ticking a box IS moving the work item to done, and the
+  // state chip, the group header and the kanban column that show its state all
+  // read the store, not the server. Writing through the raw service updated the
+  // row and left all three showing the old state until a reload.
+  const { issues: issueStore, issueMap } = useIssuesStore();
+
+  const write = useCallback<TStateWriter>(
+    async (memberProjectId, memberIssueId, stateId) => {
+      if (!workspaceSlug) return;
+      // A checklist member may live in a project this view never loaded — that
+      // is the case the raw service was chosen for. The store is not wrong there,
+      // it is empty: `updateIssue` finds no local row, skips the optimistic
+      // update and still patches the server. So ask the map first and call the
+      // service directly when the item is unknown, which is both correct and one
+      // less pass through a store that has nothing on screen to move.
+      //
+      // A few of the stores in the union have no `updateIssue` at all (the draft
+      // and profile ones), and they fall down the same path for the same reason.
+      if (issueMap?.[memberIssueId] && issueStore.updateIssue) {
+        await issueStore.updateIssue(workspaceSlug, memberProjectId, memberIssueId, { state_id: stateId });
+      } else {
+        await issueService.patchIssue(workspaceSlug, memberProjectId, memberIssueId, { state_id: stateId });
+      }
+    },
+    [workspaceSlug, issueStore, issueMap]
+  );
+
   useEffect(() => {
     if (autoLoad && workspaceSlug && projectId && issueId) void load(workspaceSlug, projectId, issueId);
   }, [autoLoad, workspaceSlug, projectId, issueId]);
@@ -276,9 +311,9 @@ export const useIssueChecklist = (
   const toggle = useCallback(
     async (item: TIssueChecklistItem, done: boolean) => {
       if (!workspaceSlug || !projectId || !issueId) return;
-      await setChecklistItemDone(workspaceSlug, projectId, issueId, item, done);
+      await setChecklistItemDone(workspaceSlug, projectId, issueId, item, done, write);
     },
-    [workspaceSlug, projectId, issueId]
+    [workspaceSlug, projectId, issueId, write]
   );
 
   return {

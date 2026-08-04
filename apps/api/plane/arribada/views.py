@@ -7003,9 +7003,12 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
     that claim the repo, the discipline its labels imply, the person its GitHub
     assignee resolves to. Filled in, not applied — the POST is what writes.
 
-    Filing accepts a `parent_issue_id`, because several GitHub issues routinely
-    belong to one piece of work. Three reports of the same regression are one
-    task, and forcing them to become three is how a board fills with noise.
+    Filing accepts a `checklist_owner_id`, because several GitHub issues
+    routinely belong to one piece of work. Three reports of the same regression
+    are one task, and forcing them to become three is how a board fills with
+    noise. Grouping is checklist membership, never a parent link: a parent
+    propagates into every list, board and timeline, and a report grouped for
+    convenience must not rearrange the boards of everybody who never asked.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
@@ -7080,9 +7083,14 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
     def post(self, request, slug):
         """File a batch.
 
-        Each entry names a GitHub issue and where it goes. `parent_issue_id`
-        nests it under an existing work item instead of standing alone, which is
-        how several issues come to share one task.
+        Each entry names a GitHub issue and where it goes. `checklist_owner_id`
+        additionally puts the new work item on an existing one's checklist, which
+        is how several issues come to share one task without any of them becoming
+        a sub-issue of it.
+
+        The owner may live in another project — checklist membership crosses
+        projects by design, unlike a parent — so it is checked against
+        everything the caller can see rather than against the target project.
         """
         from .github_enrich import discipline_from_labels, member_from_github_assignees
 
@@ -7107,14 +7115,18 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                 continue
             project = visible.filter(id=project_id).first()
 
-            parent = None
-            parent_id = entry.get("parent_issue_id")
-            if parent_id:
-                # Plane only allows same-project parents, so a parent from
-                # elsewhere is refused rather than silently ignored — the caller
-                # asked for a grouping that cannot exist.
-                parent = Issue.issue_objects.filter(project_id=project_id, id=parent_id).first()
-                if not parent:
+            checklist_owner = None
+            # `parent_issue_id` is the name this field had while grouping was
+            # still (wrongly) a parent link. Still read so an open tab filing a
+            # batch across the deploy groups instead of silently flattening.
+            owner_id = entry.get("checklist_owner_id") or entry.get("parent_issue_id")
+            if owner_id:
+                # Scoped to what the caller can see rather than to the target
+                # project: a checklist may legitimately gather work from several
+                # projects. Refused rather than ignored — filing a grouped issue
+                # as a loose one loses the only thing the caller decided.
+                checklist_owner = Issue.issue_objects.filter(project__in=visible, id=owner_id).first()
+                if not checklist_owner:
                     skipped += 1
                     continue
 
@@ -7130,9 +7142,22 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
                 external_source="github",
                 external_id=f"{row.repo}#{row.number}",
                 state=state,
-                parent=parent,
                 created_by=request.user,
             )
+
+            if checklist_owner:
+                last = (
+                    IssueChecklistItem.objects.filter(owner_id=checklist_owner.id)
+                    .order_by("-sort_order")
+                    .values_list("sort_order", flat=True)
+                    .first()
+                )
+                IssueChecklistItem.objects.create(
+                    owner_id=checklist_owner.id,
+                    member_id=issue.id,
+                    sort_order=(last or 0) + 1000,
+                    created_by=request.user,
+                )
 
             discipline = entry.get("discipline") or discipline_from_labels(
                 row.labels or [], _project_role_options(project_id)

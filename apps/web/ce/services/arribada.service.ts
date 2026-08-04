@@ -1339,10 +1339,12 @@ export class ArribadaService extends APIService {
       });
   }
 
-  /** File a batch. `parent_issue_id` nests several issues under one work item. */
+  /** File a batch. `checklist_owner_id` puts the new work items on an existing
+   *  one's checklist — grouping without making any of them a sub-issue, which
+   *  would propagate into every list, board and timeline. */
   async fileGithubTriage(
     workspaceSlug: string,
-    items: { id: string; project_id: string; discipline?: string; assignee_id?: string; parent_issue_id?: string }[]
+    items: { id: string; project_id: string; discipline?: string; assignee_id?: string; checklist_owner_id?: string }[]
   ): Promise<{ filed: number; skipped: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-triage-queue/`, { items })
       .then((r) => r?.data)

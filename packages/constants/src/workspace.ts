@@ -280,7 +280,11 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS: Record<string, IWorkspac
   },
   github_triage: {
     key: "github_triage",
-    labelTranslationKey: "github_triage",
+    // The catalogue has no entry for this, and `t()` returns the KEY when it
+    // misses — which is why "portfolio" and "workload" read correctly by luck
+    // and "github_triage" would have read as itself. The key IS the label until
+    // somebody translates it.
+    labelTranslationKey: "GitHub triage",
     href: `/github-triage/`,
     // Members and admins only: filing an issue into a project creates work
     // there, which a guest cannot do anywhere else either.
@@ -303,6 +307,13 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS_LINKS: IWorkspaceSidebarN
 export const WORKSPACE_SIDEBAR_STATIC_PINNED_NAVIGATION_ITEMS_LINKS: IWorkspaceSidebarNavigationItem[] = [
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["projects"],
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["portfolio"],
+  // Under Portfolio, where the user asked for it. This array is the one the
+  // sidebar actually maps over — declaring the entry in the ITEMS record and
+  // allow-listing its key in sidebar-item.tsx is necessary and does nothing on
+  // its own, because nothing ever hands the component an item it does not
+  // iterate. That is why the page shipped, was reachable by URL, and was
+  // invisible in the panel.
+  WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["github_triage"],
   WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS["workload"],
 ];
 

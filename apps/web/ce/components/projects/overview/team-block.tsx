@@ -55,6 +55,11 @@ type TDraftRow = {
 // A Plane project member who could be put on the roster in one click.
 type TPlaneCandidate = { id: string; name: string; email: string; avatar?: string; assignable: boolean };
 
+// Somebody this workspace already knows: entered on any project's roster, or
+// holding a Plane account. Not the same as TPlaneCandidate — most of the team
+// has no account, and those are exactly the people worth suggesting.
+type TDirectoryPerson = { name: string; email: string; roles: string[]; member_id: string | null };
+
 // What the PUT carries: the whole roster, as people rather than as memberships.
 type TPayloadRow = {
   id?: string;
@@ -115,6 +120,9 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   const [vocabulary, setVocabulary] = useState<TRole[]>([]);
   const [vocabLoading, setVocabLoading] = useState(false);
   const [staleRoster, setStaleRoster] = useState(false);
+  // Everyone this workspace already knows, and which row's name field is open.
+  const [directory, setDirectory] = useState<TDirectoryPerson[]>([]);
+  const [suggestFor, setSuggestFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // The saved roster outranks the overview payload until the parent refetch
   // lands, so the block never shows what the user just replaced.
@@ -169,6 +177,26 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
     };
   }, [editing, slug, projectId, service]);
 
+  // The workspace directory, fetched once per editing session and filtered in
+  // the browser. It is twenty rows; a request per keystroke would be slower and
+  // would flicker.
+  useEffect(() => {
+    let cancelled = false;
+    if (editing && slug) {
+      service
+        .getWorkspaceDirectory(slug)
+        .then((r) => {
+          if (!cancelled) setDirectory(r.people ?? []);
+          return undefined;
+        })
+        // A directory that will not load must not stop somebody typing a name.
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, slug, service]);
+
   const openEditor = () => {
     touched.current = false;
     setRoleDrafts({});
@@ -201,6 +229,43 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   });
 
   const addPlaneMember = (member: TPlaneCandidate) => mutate((rows) => [...rows, planeMemberToDraft(member)]);
+
+  /** Directory entries matching what has been typed, minus anyone already on this
+   *  roster — suggesting somebody who is three rows above is noise. */
+  const matchesFor = (typed: string) => {
+    const needle = typed.trim().toLowerCase();
+    if (!needle) return [];
+    const already = new Set(
+      draft.flatMap((r) => [r.email.trim().toLowerCase(), r.name.trim().toLowerCase()]).filter(Boolean)
+    );
+    return directory
+      .filter((p) => p.name.toLowerCase().includes(needle) || p.email.toLowerCase().includes(needle))
+      .filter((p) => !already.has(p.email.trim().toLowerCase()) || !p.email)
+      .filter((p) => p.name.trim().toLowerCase() !== needle || p.email)
+      .slice(0, 6);
+  };
+
+  /** Fills the row from the directory. Their disciplines come across as a
+   *  starting point, not a verdict: what somebody does on one project is often
+   *  not what they do on this one, and every field stays editable. */
+  const applyDirectoryPerson = (key: string, person: TDirectoryPerson) => {
+    setSuggestFor(null);
+    mutate((rows) =>
+      rows.map((r) =>
+        r.key === key
+          ? {
+              ...r,
+              name: person.name,
+              email: person.email || r.email,
+              member_id: person.member_id ?? r.member_id,
+              in_plane: r.in_plane || !!person.member_id,
+              assignable: r.assignable || !!person.member_id,
+              roles: r.roles.length > 0 ? r.roles : person.roles,
+            }
+          : r
+      )
+    );
+  };
 
   // From the read view: the people are already on the row, the editor only has
   // to say what each of them does.
@@ -453,15 +518,54 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
                   <span className="flex-shrink-0">
                     <Avatar name={row.name || "?"} src={avatarFor(row.member_id)} size="base" showTooltip={false} />
                   </span>
-                  <input
-                    value={row.name}
-                    onChange={(e) =>
-                      mutate((rows) => rows.map((r) => (r.key === row.key ? { ...r, name: e.target.value } : r)))
-                    }
-                    placeholder="Name"
-                    aria-label="Name"
-                    className={cn(INPUT, "min-w-32 flex-1")}
-                  />
+                  {/* The name field, with the workspace directory under it.
+                      Most of the team has no Plane account, so the existing
+                      "add a project member" picker cannot offer them — and
+                      retyping somebody's email and trades on every project is
+                      how two spellings of one person end up on two rosters. */}
+                  <div className="relative min-w-32 flex-1">
+                    <input
+                      value={row.name}
+                      onChange={(e) => {
+                        setSuggestFor(row.key);
+                        mutate((rows) => rows.map((r) => (r.key === row.key ? { ...r, name: e.target.value } : r)));
+                      }}
+                      onFocus={() => setSuggestFor(row.key)}
+                      // A click on a suggestion has to land before the list
+                      // closes, and blur fires first.
+                      onBlur={() => window.setTimeout(() => setSuggestFor((k) => (k === row.key ? null : k)), 150)}
+                      placeholder="Name"
+                      aria-label="Name"
+                      className={cn(INPUT, "w-full")}
+                    />
+                    {suggestFor === row.key && row.name.trim().length > 0 && (
+                      <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-72 rounded border border-subtle bg-layer-1 py-1">
+                        {matchesFor(row.name).length === 0 ? (
+                          // Said plainly rather than silently: an empty dropdown
+                          // reads as "still loading", and this is an answer.
+                          <p className="px-2 py-1 text-11 text-tertiary">External — not recognised.</p>
+                        ) : (
+                          matchesFor(row.name).map((person) => (
+                            <button
+                              type="button"
+                              key={person.email || person.name}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                applyDirectoryPerson(row.key, person);
+                              }}
+                              className="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-layer-2"
+                            >
+                              <span className="text-12 text-primary">{person.name}</span>
+                              <span className="text-10 text-tertiary">
+                                {person.email || "no email"}
+                                {person.roles.length > 0 ? ` · ${person.roles.join(", ")}` : " · no discipline yet"}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <input
                     value={row.email}
                     onChange={(e) =>

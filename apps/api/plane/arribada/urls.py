@@ -15,6 +15,7 @@ from .views import (
     ProjectDisciplineGapEndpoint,
     ProjectDisciplinesEndpoint,
     ProjectUndatedGapEndpoint,
+    WorkspaceDirectoryEndpoint,
     WorkspaceGithubInboxGapEndpoint,
     ProjectAiSprintTasksEndpoint,
     ProjectPublicTimelineEndpoint,
@@ -188,6 +189,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/disciplines/",
         ProjectDisciplinesEndpoint.as_view(),
         name="arribada-project-disciplines",
+    ),
+    path(
+        "workspaces/<str:slug>/directory/",
+        WorkspaceDirectoryEndpoint.as_view(),
+        name="arribada-workspace-directory",
     ),
     path(
         "workspaces/<str:slug>/github-inbox-gap/",

@@ -1160,6 +1160,19 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Everyone this workspace knows about, for the roster's name field. Built from
+   *  the rosters themselves, not from Plane accounts — there are twenty people and
+   *  a handful of accounts. */
+  async getWorkspaceDirectory(
+    workspaceSlug: string
+  ): Promise<{ people: { name: string; email: string; roles: string[]; member_id: string | null }[]; total: number }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/directory/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Add a discipline this project needs. Deliberately does not require a holder:
    *  the reason to add one is usually that nobody covers it yet. */
   async createProjectDiscipline(

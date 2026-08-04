@@ -6682,6 +6682,87 @@ def _assignable_members(project_id):
 
 
 
+
+class WorkspaceDirectoryEndpoint(BaseAPIView):
+    """Everyone the workspace knows about, for the roster's name field.
+
+    Not ProjectMember: the instance has a handful of Plane accounts and the real
+    team is twenty people, so a directory keyed on accounts would suggest almost
+    nobody. The roster rows themselves are the directory — somebody entered on
+    one project is a person this workspace knows, and typing their name on
+    another project should not mean typing their email and their trades again.
+
+    Merged by email where there is one, by lowercased name otherwise: the same
+    person entered twice with different capitalisation is one suggestion, and
+    two genuinely different people without emails stay two.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        query = str(request.GET.get("q") or "").strip().lower()
+
+        people = {}
+        # Name -> the key its entry lives under, so a row carrying no email can
+        # still join the person it belongs to. Without this, somebody entered
+        # once with an address and once without came back as two suggestions —
+        # which is the duplicate this field exists to prevent.
+        by_name = {}
+
+        def merge(key, name, email, roles, member_id):
+            key = by_name.get(name.strip().lower(), key) if not email else key
+            entry = people.setdefault(
+                key, {"name": name, "email": email or "", "roles": [], "member_id": member_id}
+            )
+            by_name.setdefault(name.strip().lower(), key)
+            # First non-empty wins for the scalars; a later blank must not erase
+            # an address somebody already recorded.
+            if not entry["email"] and email:
+                entry["email"] = email
+            if not entry["member_id"] and member_id:
+                entry["member_id"] = str(member_id)
+            seen = {r.lower() for r in entry["roles"]}
+            for role in roles or []:
+                value = str(role).strip()
+                if value and value.lower() not in seen:
+                    seen.add(value.lower())
+                    entry["roles"].append(value)
+
+        roster = [
+            row
+            for row in ProjectTeamMember.objects.filter(project__workspace__slug=slug).values_list(
+                "name", "email", "roles", "member_id"
+            )
+            if (row[0] or "").strip()
+        ]
+        # Addressed rows first: they are the ones that can anchor a person, and a
+        # nameless-key entry created before them would never be joined.
+        roster.sort(key=lambda row: 0 if (row[1] or "").strip() else 1)
+        for name, email, roles, member_id in roster:
+            key = (email or "").strip().lower() or f"name:{name.strip().lower()}"
+            merge(key, name.strip(), (email or "").strip(), roles, member_id)
+
+        # Plane accounts too, so somebody who has signed in but was never put on
+        # a roster is still offered.
+        for member_id, display, email in WorkspaceMember.objects.filter(
+            workspace__slug=slug, is_active=True
+        ).exclude(member__email__startswith="bot_user_").values_list(
+            "member_id", "member__display_name", "member__email"
+        ):
+            name = (display or email or "").strip()
+            if not name:
+                continue
+            key = (email or "").strip().lower() or f"name:{name.lower()}"
+            merge(key, name, (email or "").strip(), [], member_id)
+
+        rows = sorted(people.values(), key=lambda r: r["name"].lower())
+        if query:
+            rows = [
+                r for r in rows if query in r["name"].lower() or query in (r["email"] or "").lower()
+            ]
+        # Capped: this feeds a type-ahead, and a list nobody can scan is the same
+        # as no list.
+        return Response({"people": rows[:20], "total": len(people)}, status=status.HTTP_200_OK)
+
 class ProjectDisciplinesEndpoint(BaseAPIView):
     """The disciplines this project needs, and adding one.
 

@@ -34,6 +34,7 @@ type Props = {
   loadMoreBlocks?: () => void;
   ganttContainerRef: RefObject<HTMLDivElement>;
   enableReorder: boolean | ((blockId: string) => boolean);
+  onReorderStart?: () => Promise<void> | void;
   enableSelection: boolean | ((blockId: string) => boolean);
   sidebarToRender: (props: any) => React.ReactNode;
   title: string;
@@ -48,6 +49,7 @@ export const GanttChartSidebar = observer(function GanttChartSidebar(props: Prop
     blockIds,
     blockUpdateHandler,
     enableReorder,
+    onReorderStart,
     enableSelection,
     sidebarToRender,
     loadMoreBlocks,
@@ -205,6 +207,7 @@ export const GanttChartSidebar = observer(function GanttChartSidebar(props: Prop
             blockUpdateHandler,
             blockIds,
             enableReorder,
+            onReorderStart,
             enableSelection,
             canLoadMoreBlocks,
             ganttContainerRef,

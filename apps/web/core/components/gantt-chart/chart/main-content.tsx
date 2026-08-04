@@ -51,6 +51,7 @@ type Props = {
   enableBlockMove: boolean | ((blockId: string) => boolean);
   enableBlockRightResize: boolean | ((blockId: string) => boolean);
   enableReorder: boolean | ((blockId: string) => boolean);
+  onReorderStart?: () => Promise<void> | void;
   enableSelection: boolean | ((blockId: string) => boolean);
   enableAddBlock: boolean | ((blockId: string) => boolean);
   enableDependency: boolean | ((blockId: string) => boolean);
@@ -78,6 +79,7 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
     enableBlockMove,
     enableBlockRightResize,
     enableReorder,
+    onReorderStart,
     enableAddBlock,
     enableSelection,
     enableDependency,
@@ -201,6 +203,7 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
                 ganttContainerRef={ganttContainerRef}
                 blockUpdateHandler={blockUpdateHandler}
                 enableReorder={enableReorder}
+                onReorderStart={onReorderStart}
                 enableSelection={enableSelection}
                 sidebarToRender={sidebarToRender}
                 title={title}

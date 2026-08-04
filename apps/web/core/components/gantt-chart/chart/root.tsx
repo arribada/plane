@@ -41,6 +41,7 @@ type ChartViewRootProps = {
   enableBlockRightResize: boolean | ((blockId: string) => boolean);
   enableBlockMove: boolean | ((blockId: string) => boolean);
   enableReorder: boolean | ((blockId: string) => boolean);
+  onReorderStart?: () => Promise<void> | void;
   enableAddBlock: boolean | ((blockId: string) => boolean);
   enableSelection: boolean | ((blockId: string) => boolean);
   enableDependency: boolean | ((blockId: string) => boolean);
@@ -83,6 +84,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     enableBlockRightResize,
     enableBlockMove,
     enableReorder,
+    onReorderStart,
     enableAddBlock,
     enableSelection,
     enableDependency,
@@ -308,6 +310,7 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
         enableBlockMove={enableBlockMove}
         enableBlockRightResize={enableBlockRightResize}
         enableReorder={enableReorder}
+        onReorderStart={onReorderStart}
         enableSelection={enableSelection}
         enableAddBlock={enableAddBlock}
         enableDependency={enableDependency}

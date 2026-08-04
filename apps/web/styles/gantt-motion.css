@@ -1,0 +1,83 @@
+/*
+ * Copyright (c) 2026-present Arribada Initiative and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ *
+ * Movement in the timeline's row list.
+ *
+ * A reorder and a sort change both rewrite the whole list in one frame, and a
+ * list that teleports gives a reader no way to follow their own row: they have
+ * to find it again by name. These make the change legible — the row that moved
+ * is the one that lights up, and everything else settles rather than jumping.
+ *
+ * Deliberately not `transition: transform` on anything the chart positions
+ * itself. Bars are placed with inline transforms recomputed every frame while
+ * dragging and zooming, and animating that property makes them lag behind the
+ * pointer and drift on zoom. This animates opacity, background and a keyframed
+ * translate that ends at zero — none of which the chart writes.
+ */
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The whole list after a sort change: a short, staggered settle. Applied by
+     re-keying the container, so it plays once per change rather than on every
+     render. */
+  .gantt-rows-settling > * {
+    animation: gantt-row-settle 260ms cubic-bezier(0.2, 0, 0, 1) both;
+  }
+
+  /* Cheap stagger without a per-row style: six steps is enough to read as a
+     cascade, and beyond that the delay would outlast the animation. */
+  .gantt-rows-settling > *:nth-child(6n + 2) {
+    animation-delay: 20ms;
+  }
+  .gantt-rows-settling > *:nth-child(6n + 3) {
+    animation-delay: 40ms;
+  }
+  .gantt-rows-settling > *:nth-child(6n + 4) {
+    animation-delay: 60ms;
+  }
+  .gantt-rows-settling > *:nth-child(6n + 5) {
+    animation-delay: 80ms;
+  }
+  .gantt-rows-settling > *:nth-child(6n) {
+    animation-delay: 100ms;
+  }
+
+  @keyframes gantt-row-settle {
+    from {
+      opacity: 0;
+      translate: 0 -6px;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+
+  /* The row that was just dropped or just landed from a restore. Long enough to
+     find with your eyes, short enough not to become part of the furniture. */
+  .gantt-row-landed {
+    animation: gantt-row-land 900ms ease-out both;
+  }
+
+  @keyframes gantt-row-land {
+    0% {
+      background-color: rgb(var(--color-accent-primary) / 0.28);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  /* While a row is being carried. The lift is a shadow and a slight fade, not a
+     scale: a scaled row no longer lines up with its own bar in the other pane.
+     Keyed off the attribute the drag HOC already sets, so nothing has to thread
+     a class down. */
+  [data-lifted="true"] {
+    opacity: 0.75;
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.28);
+    transition:
+      opacity 120ms ease-out,
+      box-shadow 120ms ease-out;
+  }
+}

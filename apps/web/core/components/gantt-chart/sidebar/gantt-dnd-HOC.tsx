@@ -111,6 +111,9 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
   return (
     <div
       id={`draggable-${id}`}
+      // A shadow and a slight fade, not a scale: a scaled row stops lining up
+      // with its own bar in the chart pane.
+      data-lifted={isDragging ? "true" : undefined}
       className={"relative"}
       ref={blockRef}
       onDragStart={() => {

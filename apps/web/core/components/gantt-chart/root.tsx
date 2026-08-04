@@ -28,6 +28,10 @@ type GanttChartRootProps = {
   enableBlockRightResize?: boolean | ((blockId: string) => boolean);
   enableBlockMove?: boolean | ((blockId: string) => boolean);
   enableReorder?: boolean | ((blockId: string) => boolean);
+  /** Fires before a reorder is applied. The gantt uses it to turn the view's
+   *  current sequence INTO the manual order when the view is sorted by
+   *  something else, so the drag lands on the list in front of the reader. */
+  onReorderStart?: () => Promise<void> | void;
   enableAddBlock?: boolean | ((blockId: string) => boolean);
   enableSelection?: boolean | ((blockId: string) => boolean);
   enableDependency?: boolean | ((blockId: string) => boolean);
@@ -52,6 +56,7 @@ export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChart
     enableBlockRightResize = false,
     enableBlockMove = false,
     enableReorder = false,
+    onReorderStart,
     enableAddBlock = false,
     enableSelection = false,
     enableDependency = false,
@@ -68,7 +73,7 @@ export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChart
   // update the timeline store with updated blockIds
   useEffect(() => {
     setBlockIds(blockIds);
-  }, [blockIds]);
+  }, [blockIds, setBlockIds]);
 
   return (
     <ChartViewRoot
@@ -85,6 +90,7 @@ export const GanttChartRoot = observer(function GanttChartRoot(props: GanttChart
       enableBlockRightResize={enableBlockRightResize}
       enableBlockMove={enableBlockMove}
       enableReorder={enableReorder}
+      onReorderStart={onReorderStart}
       enableAddBlock={enableAddBlock}
       enableSelection={enableSelection}
       enableDependency={enableDependency}

@@ -5,7 +5,7 @@
  */
 
 import type { RefObject } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 // ui
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
@@ -36,6 +36,9 @@ type Props = {
   enableReorder: boolean;
   enableSelection: boolean;
   showAllBlocks?: boolean;
+  /** Runs before the move is applied, so a view sorted by something else can
+   *  become the manual order first. */
+  onReorderStart?: () => Promise<void> | void;
   selectionHelpers?: TSelectionHelper;
   isEpic?: boolean;
 };
@@ -50,6 +53,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     canLoadMoreBlocks,
     ganttContainerRef,
     showAllBlocks = false,
+    onReorderStart,
     selectionHelpers,
     isEpic = false,
   } = props;
@@ -62,6 +66,17 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
   } = useIssuesStore();
 
   const [intersectionElement, setIntersectionElement] = useState<HTMLDivElement | null>(null);
+  // The row that just moved, so it can be found again after the list redraws.
+  // Cleared on a timer rather than on animation end: the row may be scrolled
+  // out of view and virtualised away before the animation ever fires.
+  const [landedId, setLandedId] = useState<string | null>(null);
+  const landedTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (landedTimer.current) window.clearTimeout(landedTimer.current);
+    },
+    []
+  );
 
   const isPaginating = !!getIssueLoader();
 
@@ -72,18 +87,35 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     "100% 0% 100% 0%"
   );
 
-  const handleOnDrop = (
+  const handleOnDrop = async (
     draggingBlockId: string | undefined,
     droppedBlockId: string | undefined,
     dropAtEndOfList: boolean
   ) => {
+    // Awaited first: when the view is sorted by something other than the manual
+    // order, this writes the sequence on screen down AS the manual order and
+    // switches to it. Applying the move before that would compute neighbours
+    // from a sort_order nobody is looking at, and the row would land somewhere
+    // else entirely.
+    await onReorderStart?.();
     handleOrderChange(draggingBlockId, droppedBlockId, dropAtEndOfList, blockIds, getBlockById, blockUpdateHandler);
+    if (draggingBlockId) {
+      setLandedId(draggingBlockId);
+      if (landedTimer.current) window.clearTimeout(landedTimer.current);
+      landedTimer.current = window.setTimeout(() => setLandedId(null), 1000);
+    }
   };
+
+  // A signature of the sequence, not of its contents: the list should settle when
+  // the ORDER changes, not when somebody edits a title. Re-keying the container
+  // restarts the animation once, which is the only reliable way to replay a CSS
+  // animation without measuring anything.
+  const orderSignature = (blockIds ?? []).join("|");
 
   return (
     <div>
       {blockIds ? (
-        <>
+        <div key={orderSignature} className="gantt-rows-settling contents">
           {blockIds.map((blockId, index) => {
             // Group headers are answered first: they have no block behind them, so
             // the "no dates" guard below would drop them and leave the chart pane
@@ -118,6 +150,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
             return (
               <RenderIfVisible
                 key={block.id}
+                classNames={block.id === landedId ? "gantt-row-landed" : undefined}
                 root={ganttContainerRef}
                 horizontalOffset={100}
                 verticalOffset={200}
@@ -132,7 +165,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                   // a band header and join it.
                   isDragEnabled={enableReorder || !!groups.assign}
                   isReorderTarget={enableReorder}
-                  onDrop={handleOnDrop}
+                  onDrop={(a, b, c) => void handleOnDrop(a, b, c)}
                 >
                   {(isDragging: boolean) => (
                     <IssuesSidebarBlock
@@ -152,7 +185,7 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
               <div className="flex h-10 w-full animate-pulse items-center justify-between gap-1.5 rounded-sm bg-layer-1 px-4 py-1.5 md:h-8 md:px-1" />
             </div>
           )}
-        </>
+        </div>
       ) : (
         <Loader className="space-y-3 pr-2">
           <Loader.Item height="34px" />

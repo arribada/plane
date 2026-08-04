@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
-import { ALL_ISSUES, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
+import { ALL_ISSUES, EIssueFilterType, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { EIssuesStoreType, IBlockUpdateData, TIssue } from "@plane/types";
@@ -29,6 +29,7 @@ import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/compone
 import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
 import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
+import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { useProject } from "@/hooks/store/use-project";
 import { GanttUndoButton } from "@/plane-web/components/gantt-chart/undo-button";
 import { GanttLinkPreview } from "@/plane-web/components/gantt-chart/link-preview";
@@ -74,6 +75,8 @@ export type GanttStoreType =
 /** Stable identity: `?? []` would mint a new array on every render and defeat every
  *  memo downstream of it. */
 const NO_IDS: string[] = [];
+
+const arribadaService = new ArribadaService();
 
 export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRoot) {
   const { viewId, isCompletedCycle = false, isEpic = false } = props;
@@ -300,6 +303,40 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     [getIssueById, workspaceSlug, groupBy, groups, addCycleToIssue, removeIssueFromCycle, changeModulesInIssue]
   );
 
+  /**
+   * Runs before a reorder lands. If the view is sorted by anything but the
+   * manual order, the sequence on screen is written down AS the manual order and
+   * the view switched to it — because dragging IS how somebody says "I want this
+   * order", and making them find the sort menu first is a rule nobody discovers.
+   *
+   * The freeze has to come first. Switching to sort_order alone would redraw the
+   * list in whatever that column happens to hold, so the drop would appear to
+   * scramble the board rather than move one row.
+   */
+  const handleReorderStart = useCallback(async () => {
+    if (appliedDisplayFilters?.order_by === "sort_order") return;
+    const slug = workspaceSlug?.toString();
+    const pid = projectId?.toString();
+    if (!slug || !pid) return;
+    const visible = orderedIds.filter((id) => !isGroupRowId(id));
+    if (visible.length === 0) return;
+    try {
+      await arribadaService.freezeIssueOrder(slug, pid, visible);
+      // The fifth argument is the view id: a saved view carries its own
+      // display filters, and omitting it would write the switch onto the
+      // project's filters while the reader is looking at a view.
+      await issuesFilter.updateFilters(
+        slug,
+        pid,
+        EIssueFilterType.DISPLAY_FILTERS,
+        { order_by: "sort_order" },
+        viewId ?? ""
+      );
+    } catch {
+      // Leave the sort alone rather than half-switching it.
+    }
+  }, [appliedDisplayFilters?.order_by, workspaceSlug, projectId, orderedIds, issuesFilter, viewId]);
+
   const groupContext = useMemo(
     () => ({
       byKey: new Map(groups.map((g) => [g.key, g])),
@@ -489,7 +526,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
                 // side. With bands on screen those neighbours can be headers, or sit in
                 // another group entirely, so the drag would mean something the user did
                 // not ask for. Grouping and manual order are exclusive.
-                enableReorder={appliedDisplayFilters?.order_by === "sort_order" && isAllowed && groupBy === "none"}
+                // Draggable whatever the sort: the switch to manual happens
+                // in handleReorderStart, on the first drop.
+                enableReorder={isAllowed && groupBy === "none"}
+                onReorderStart={handleReorderStart}
                 enableAddBlock={canAddItems}
                 enableSelection={isBulkOperationsEnabled && isAllowed}
                 quickAdd={quickAdd}

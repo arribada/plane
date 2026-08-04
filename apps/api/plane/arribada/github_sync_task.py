@@ -173,6 +173,91 @@ def _record_github_issue(workspace, repo, gh):
         pass
 
 
+
+def _link_github_issue(workspace, repo, gh, issue, auto):
+    """Record which work item this GitHub issue ended up in.
+
+    `auto` distinguishes the router's decision from a person's, so an automatic
+    one can be found again and undone. Several issues may share one work item —
+    filed_issue is a plain FK — so this never assumes a one-to-one.
+    """
+    from plane.arribada.models import GithubIssue
+    from django.utils import timezone as _tz
+
+    number = gh.get("number")
+    if number is None:
+        return
+    try:
+        GithubIssue.objects.filter(workspace=workspace, repo=repo, number=int(number)).update(
+            filed_issue=issue, filed_at=_tz.now(), filed_by_rule="auto" if auto else ""
+        )
+    except Exception:
+        pass
+
+
+def _enrich_filed_issue(issue, project, gh):
+    """Fill in what GitHub already knew: discipline, person, sprint, priority, date.
+
+    Every one of these is silent when unsure — see github_enrich. A wrong
+    discipline is worse than a missing one, because the missing one shows up on
+    the Overview as a gap and the wrong one just quietly costs the wrong rate.
+    """
+    from plane.db.models import CycleIssue, IssueAssignee, ProjectMember
+    from plane.arribada.github_enrich import (
+        cycle_from_milestone,
+        discipline_from_labels,
+        member_from_github_assignees,
+        priority_from_labels,
+    )
+    from plane.arribada.models import IssueRole
+    from plane.arribada.views import _project_role_options
+
+    try:
+        labels = [
+            (label.get("name") or "") if isinstance(label, dict) else str(label)
+            for label in (gh.get("labels") or [])
+        ]
+
+        discipline = discipline_from_labels(labels, _project_role_options(project.id))
+        if discipline:
+            IssueRole.objects.update_or_create(issue_id=issue.id, defaults={"role": discipline})
+
+        candidates = list(
+            ProjectMember.objects.filter(project=project, is_active=True)
+            .exclude(member__email__startswith="bot_user_")
+            .values_list("member_id", "member__email", "member__display_name")
+        )
+        member_id = member_from_github_assignees(gh.get("assignees"), candidates)
+        if member_id:
+            IssueAssignee.objects.get_or_create(
+                issue_id=issue.id, assignee_id=member_id, defaults={"project_id": project.id}
+            )
+
+        milestone = gh.get("milestone")
+        name = milestone.get("title") if isinstance(milestone, dict) else None
+        if name:
+            from plane.db.models import Cycle
+
+            cycle_id = cycle_from_milestone(
+                name, list(Cycle.objects.filter(project=project).values_list("id", "name"))
+            )
+            if cycle_id:
+                CycleIssue.objects.get_or_create(
+                    issue_id=issue.id,
+                    cycle_id=cycle_id,
+                    defaults={"project_id": project.id, "workspace_id": project.workspace_id},
+                )
+
+        priority = priority_from_labels(labels)
+        if priority and issue.priority != priority:
+            issue.priority = priority
+            issue.save(update_fields=["priority"])
+    except Exception:
+        # Enrichment is a bonus on top of an issue that already arrived. Losing
+        # it must never cost the import.
+        pass
+
+
 def github_plane_sync():
     from plane.db.models import Issue, IssueAssignee, Project, State, WorkspaceMember
 
@@ -285,7 +370,7 @@ def github_plane_sync():
                         existing.save(update_fields=fields)
                         updated += 1
                 else:
-                    Issue.objects.create(
+                    made = Issue.objects.create(
                         workspace=target.workspace,
                         project=target,
                         name=title,
@@ -296,5 +381,12 @@ def github_plane_sync():
                         created_by_id=author_id,
                     )
                     created += 1
+                    # Only on creation, and only when a real project claimed the
+                    # repo. Enriching an inbox row would put a discipline and an
+                    # assignee on work nobody has accepted yet, and enriching an
+                    # existing row would overwrite decisions somebody made.
+                    if target.id != ghin.id:
+                        _enrich_filed_issue(made, target, gh)
+                    _link_github_issue(ghin.workspace, repo, gh, made, target.id != ghin.id)
 
     return {"repos": len(repos), "fetched": total_fetched, "created": created, "updated": updated, "at": str(timezone.now())}

@@ -35,6 +35,7 @@ import { usePlatformOS } from "@/hooks/use-platform-os";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 // local components
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
+import { WorkItemMilestoneMarker } from "@/plane-web/components/issues/milestone/marker";
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { IssueProperties } from "../properties/all-properties";
 import { WithDisplayPropertiesHOC } from "../properties/with-display-properties-HOC";
@@ -79,6 +80,9 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
   const menuActionRef = useRef<HTMLDivElement | null>(null);
   // states
   const [isMenuActive, setIsMenuActive] = useState(false);
+  // router
+  const { workspaceSlug: routerWorkspaceSlug } = useParams();
+  const workspaceSlug = routerWorkspaceSlug?.toString();
   // hooks
   const { isMobile } = usePlatformOS();
 
@@ -136,8 +140,15 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
       </div>
 
       <Tooltip tooltipContent={issue.name} isMobile={isMobile} renderByDefault={false}>
-        <div className="line-clamp-1 w-full text-body-sm-medium text-primary">
-          <span>{issue.name}</span>
+        {/* A flex row rather than the clamped block this used to be: the clamp
+            is `-webkit-box` with a vertical orient, which would drop the
+            diamond onto its own line above the name. The clamp moves to the
+            name itself, so a card with no milestone renders exactly as before. */}
+        <div className="flex w-full items-center gap-1 text-body-sm-medium text-primary">
+          {/* Arribada: a milestone is a quality of the item, so it sits with the
+              name. Cards that are not one render nothing at all. */}
+          <WorkItemMilestoneMarker workspaceSlug={workspaceSlug} projectId={issue.project_id} issueId={issue.id} />
+          <span className="line-clamp-1 min-w-0">{issue.name}</span>
         </div>
       </Tooltip>
 

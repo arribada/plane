@@ -16,10 +16,9 @@
  * decoration.
  *
  * Written to drop beside any name — it takes a slug, a project and an id and
- * nothing else. The list row is the only caller so far: the kanban card, the
- * spreadsheet row and the calendar block each carry pre-existing lint warnings
- * that block a commit touching them at all, so wiring those is a separate piece
- * of work with a separate risk.
+ * nothing else. Called from the list row, the kanban card, the spreadsheet row
+ * and the calendar block, so the mark reads the same whichever layout you are
+ * looking at.
  */
 import { Diamond } from "lucide-react";
 import { cn } from "@plane/utils";

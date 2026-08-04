@@ -24,6 +24,7 @@ import useIssuePeekOverviewRedirection from "@/hooks/use-issue-peek-overview-red
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
+import { WorkItemMilestoneMarker } from "@/plane-web/components/issues/milestone/marker";
 // local components
 import { WorkItemPreviewCard } from "../../preview-card";
 import type { TRenderQuickActions } from "../list/list-view-types";
@@ -142,6 +143,14 @@ export const CalendarIssueBlock = observer(
                         displayProperties={issuesFilter?.issueFilters?.displayProperties}
                       />
                     )}
+                    {/* Arribada: a milestone is a quality of the item, so it
+                        sits with the name. Blocks that are not one render
+                        nothing at all. */}
+                    <WorkItemMilestoneMarker
+                      workspaceSlug={workspaceSlug?.toString()}
+                      projectId={issue.project_id}
+                      issueId={issue.id}
+                    />
                     <div className="truncate text-13 font-medium md:text-11 md:font-regular">{issue.name}</div>
                   </div>
                   <div

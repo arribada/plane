@@ -33,6 +33,7 @@ import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
+import { WorkItemMilestoneMarker } from "@/plane-web/components/issues/milestone/marker";
 // local components
 import type { TRenderQuickActions } from "../list/list-view-types";
 import { isIssueNew } from "../utils";
@@ -370,6 +371,17 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
                         className="h-full w-full cursor-pointer truncate pr-4 text-left text-13 text-primary focus:outline-none"
                         tabIndex={-1}
                       >
+                        {/* Arribada: a milestone is a quality of the item, so it
+                            sits with the name. Rows that are not one render
+                            nothing at all. Inline rather than a flex sibling so
+                            the row's existing truncation still measures the
+                            whole line. */}
+                        <WorkItemMilestoneMarker
+                          workspaceSlug={workspaceSlug?.toString()}
+                          projectId={issueDetail.project_id}
+                          issueId={issueDetail.id}
+                          className="mr-1 align-middle"
+                        />
                         {issueDetail.name}
                       </div>
                     </Tooltip>

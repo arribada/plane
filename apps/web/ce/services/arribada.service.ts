@@ -1160,6 +1160,71 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Named arrangements of a project's work items. Plane keeps one manual order
+   *  and dragging rewrites it in place; these are snapshots of it. */
+  async getIssueOrders(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{ orders: { id: string; name: string; count: number; updated_at: string | null }[] }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Saves the sequence the client is showing, because what is on screen is what
+   *  somebody means by "this order". Same name overwrites. */
+  async saveIssueOrder(
+    workspaceSlug: string,
+    projectId: string,
+    name: string,
+    issueIds: string[]
+  ): Promise<{ id: string; name: string; count: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/`, {
+      name,
+      issue_ids: issueIds,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Restores a saved arrangement by rewriting sort_order to match it. */
+  async applyIssueOrder(
+    workspaceSlug: string,
+    projectId: string,
+    orderId: string
+  ): Promise<{ applied: number; saved: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/${orderId}/`, {})
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  async deleteIssueOrder(workspaceSlug: string, projectId: string, orderId: string): Promise<unknown> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/${orderId}/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Freezes an exact sequence as the manual order — used when somebody drags a
+   *  row while the view is sorted by something else, so the move lands on the
+   *  list they were looking at instead of reshuffling it. */
+  async freezeIssueOrder(workspaceSlug: string, projectId: string, issueIds: string[]): Promise<{ applied: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/apply/`, {
+      issue_ids: issueIds,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** The GitHub inbox items no project claims, and where they could be filed.
    *  Behind the daily digest notification, which carries no work item and so
    *  could never show what it was counting. */

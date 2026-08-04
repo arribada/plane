@@ -14,6 +14,7 @@ import { Row } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { VIEWS_LIST } from "@/components/gantt-chart/data";
 import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
+import { SavedOrderMenu } from "@/plane-web/components/gantt-chart/saved-order";
 // helpers
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
@@ -126,6 +127,11 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
           <Plus className="size-3.5" />
         </button>
       </div>
+
+      {/* Beside Fit rather than inside the Display menu: it is about the rows,
+          like the zoom controls next to it, and it is only useful with the list
+          in front of you. */}
+      <SavedOrderMenu visibleIssueIds={(blockIds ?? []).filter((id) => !isGroupRowId(id))} />
 
       {handleFitToBlocks && (
         <button

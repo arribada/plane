@@ -120,6 +120,7 @@ export const UndatedGapModal = observer(function UndatedGapModal(props: Props) {
       saving={saving}
       onSave={() => void save()}
       saveLabel="Date"
+      filledNoun="ready to save"
       footerExtra={
         <>
           <button

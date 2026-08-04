@@ -1152,3 +1152,47 @@ class ProjectDiscipline(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ProjectIssueOrder(models.Model):
+    """A named arrangement of a project's work items.
+
+    Plane already has ONE manual order — `Issue.sort_order` — which dragging
+    rewrites in place. That is enough until somebody arranges a board for a
+    review, sorts by due date to answer a question, and then wants their
+    arrangement back: the old one is gone, because there was only ever one.
+
+    So the order is snapshotted as a list of ids under a name. Restoring rewrites
+    sort_order to match, which means a restored arrangement is the live manual
+    order again rather than a separate mode the rest of the product knows nothing
+    about.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_issue_orders"
+    )
+    name = models.CharField(max_length=80)
+    # Ids in order. Items deleted since the snapshot are skipped on restore, and
+    # items created since keep their current position — a saved order is a
+    # statement about the items it named, not about every item forever.
+    issue_ids = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        db_table = "arribada_project_issue_order"
+        ordering = ("name",)
+        verbose_name = "Saved work item order"
+        verbose_name_plural = "Saved work item orders"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"), "project", name="arribada_unique_order_name_per_project"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({len(self.issue_ids or [])})"

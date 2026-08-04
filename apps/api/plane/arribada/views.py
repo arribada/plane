@@ -38,6 +38,7 @@ from .models import (
     IssueRole,
     ProjectDiscipline,
     ProjectFolder,
+    ProjectIssueOrder,
     ProjectFolderItem,
     ProjectPublicTimeline,
     ProjectBaseline,
@@ -6735,6 +6736,152 @@ class WorkspaceGithubUnclassifiedEndpoint(BaseAPIView):
             for p in visible.exclude(identifier="GHIN").values("id", "name").order_by("name")
         ]
         return Response({"items": items, "projects": projects}, status=status.HTTP_200_OK)
+
+
+# Gaps of 1000, matching what dragging produces: a later drop between two
+# neighbours takes their midpoint, and a gap of one would run out of room.
+ORDER_STEP = 1000
+
+
+def _apply_issue_order(project_id, issue_ids):
+    """Rewrite sort_order so the project's items sit in exactly this sequence.
+
+    Ids that are not this project's are ignored rather than rejected: a saved
+    order outlives the items it named, and refusing the whole restore because one
+    work item was deleted would make old arrangements unusable exactly when they
+    are most wanted.
+
+    Items the list does not mention keep their current sort_order, which puts
+    them wherever they already were relative to the rest.
+    """
+    known = {
+        str(i): i
+        for i in Issue.issue_objects.filter(project_id=project_id).values_list("id", flat=True)
+    }
+    applied = 0
+    for index, issue_id in enumerate(issue_ids or []):
+        real = known.get(str(issue_id))
+        if not real:
+            continue
+        Issue.objects.filter(id=real).update(sort_order=(index + 1) * ORDER_STEP)
+        applied += 1
+    return applied
+
+
+class ProjectIssueOrdersEndpoint(BaseAPIView):
+    """The arrangements saved for this project, and saving the current one.
+
+    Plane has one manual order and dragging rewrites it in place, so arranging a
+    board for a review and then sorting by due date loses the arrangement. A save
+    is a snapshot of the sequence under a name; restoring rewrites sort_order back
+    to it, which means a restored arrangement IS the live manual order rather than
+    a fourth sort mode the rest of the product knows nothing about.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        rows = ProjectIssueOrder.objects.filter(project_id=project_id).values(
+            "id", "name", "issue_ids", "updated_at"
+        )
+        return Response(
+            {
+                "orders": [
+                    {
+                        "id": str(r["id"]),
+                        "name": r["name"],
+                        "count": len(r["issue_ids"] or []),
+                        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+                    }
+                    for r in rows
+                ]
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        name = str(request.data.get("name") or "").strip()[:80]
+        if not name:
+            return Response({"error": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # The client sends what it is showing, because what is on screen is what
+        # somebody means by "this order" — a server-side read of sort_order would
+        # save a different sequence whenever the view is sorted by anything else.
+        sent = _uuid_keys({str(i): 1 for i in (request.data.get("issue_ids") or [])})
+        ordered = [str(i) for i in sent]
+        if not ordered:
+            ordered = [
+                str(i)
+                for i in Issue.issue_objects.filter(project_id=project_id)
+                .order_by("sort_order")
+                .values_list("id", flat=True)
+            ]
+
+        row = ProjectIssueOrder.objects.filter(project_id=project_id, name__iexact=name).first()
+        overwrote = bool(row)
+        if row:
+            row.name = name
+            row.issue_ids = ordered
+            row.save(update_fields=["name", "issue_ids", "updated_at"])
+        else:
+            row = ProjectIssueOrder.objects.create(
+                project_id=project_id, name=name, issue_ids=ordered, created_by=request.user
+            )
+        # 201 only when something was created. Saving over "Review board" with a
+        # new sequence is an update, and reporting it as a creation would be a
+        # small lie that a client is entitled to believe.
+        return Response(
+            {"id": str(row.id), "name": row.name, "count": len(ordered), "overwrote": overwrote},
+            status=status.HTTP_200_OK if overwrote else status.HTTP_201_CREATED,
+        )
+
+
+class ProjectIssueOrderDetailEndpoint(BaseAPIView):
+    """Restore a saved arrangement (POST), or forget it (DELETE)."""
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id, order_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        row = ProjectIssueOrder.objects.filter(project_id=project_id, id=order_id).first()
+        if not row:
+            return Response({"error": "Saved order not found"}, status=status.HTTP_404_NOT_FOUND)
+        applied = _apply_issue_order(project_id, row.issue_ids)
+        return Response(
+            {"applied": applied, "saved": len(row.issue_ids or [])}, status=status.HTTP_200_OK
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def delete(self, request, slug, project_id, order_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        deleted, _ = ProjectIssueOrder.objects.filter(project_id=project_id, id=order_id).delete()
+        return Response({"deleted": bool(deleted)}, status=status.HTTP_200_OK)
+
+
+class ProjectIssueOrderApplyEndpoint(BaseAPIView):
+    """Freeze an exact sequence as the project's manual order.
+
+    Used when somebody drags a row while the view is sorted by something else.
+    Switching to manual order alone would reshuffle the list to whatever
+    sort_order happens to hold, so the sequence they were looking at is written
+    down first and the move applies on top of it. Otherwise the drag would appear
+    to scramble the board.
+    """
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        ids = request.data.get("issue_ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"error": "issue_ids required"}, status=status.HTTP_400_BAD_REQUEST)
+        applied = _apply_issue_order(project_id, [str(i) for i in ids][:2000])
+        return Response({"applied": applied}, status=status.HTTP_200_OK)
 
 class WorkspaceDirectoryEndpoint(BaseAPIView):
     """Everyone the workspace knows about, for the roster's name field.

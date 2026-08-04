@@ -29,6 +29,9 @@ type Props = {
   saving: boolean;
   onSave: () => void;
   saveLabel?: string;
+  /** What "set" means here. "0 of 2 set" sitting beside a row that shows dates
+   *  reads as a statement about the dates; naming the thing removes the doubt. */
+  filledNoun?: string;
   children: ReactNode;
   /** Sits on the footer's left, before the count — used for "add a discipline". */
   footerExtra?: ReactNode;
@@ -46,6 +49,7 @@ export function GapModalShell(props: Props) {
     saving,
     onSave,
     saveLabel = "Save",
+    filledNoun = "set",
     children,
     footerExtra,
   } = props;
@@ -83,7 +87,7 @@ export function GapModalShell(props: Props) {
           <footer className="flex items-center gap-2 border-t border-subtle px-4 py-3">
             {footerExtra}
             <span className="ml-auto text-11 text-tertiary">
-              {filled} of {count} set
+              {filled} of {count} {filledNoun}
             </span>
             <button type="button" onClick={onClose} className="rounded border border-subtle px-3 py-1.5 text-12">
               Cancel

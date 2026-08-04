@@ -135,6 +135,7 @@ export const DisciplineGapModal = observer(function DisciplineGapModal({ isOpen,
       filled={filled}
       saving={saving}
       onSave={() => void save()}
+      filledNoun="given a discipline"
       footerExtra={
         adding ? (
           <div className="flex items-center gap-1.5">
@@ -188,7 +189,7 @@ export const DisciplineGapModal = observer(function DisciplineGapModal({ isOpen,
               aria-label={`Discipline for ${item.name}`}
               className="w-44 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
             >
-              <option value="">Leave unset</option>
+              <option value="">No discipline</option>
               {options.map((option) => (
                 <option key={option} value={option}>
                   {option}

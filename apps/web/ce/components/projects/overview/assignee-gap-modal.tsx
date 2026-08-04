@@ -98,6 +98,7 @@ export const AssigneeGapModal = observer(function AssigneeGapModal({ isOpen, onC
       saving={saving}
       onSave={() => void save()}
       saveLabel="Assign"
+      filledNoun="given somebody"
     >
       <ul className="space-y-1.5">
         {(items ?? []).map((item) => (

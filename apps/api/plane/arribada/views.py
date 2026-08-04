@@ -2101,8 +2101,24 @@ class ProjectFoldersEndpoint(BaseAPIView):
         return Response({"id": str(folder.id), "name": folder.name}, status=status.HTTP_201_CREATED)
 
 
+def _folder_reaches(start_id, target_id, parent_of, max_hops=64):
+    """Whether walking up from `start_id` meets `target_id`.
+
+    Used to refuse a move that would make a folder its own ancestor. The hop cap
+    is a backstop: if the data is already cyclic — which nothing should be able to
+    produce now, but a direct DB edit could — this returns instead of spinning.
+    """
+    cursor, hops = start_id, 0
+    while cursor is not None and hops < max_hops:
+        if cursor == target_id:
+            return True
+        cursor = parent_of.get(cursor)
+        hops += 1
+    return False
+
+
 class ProjectFolderDetailEndpoint(BaseAPIView):
-    """Rename/move (PATCH) or delete (DELETE) a shared folder."""
+    """Rename, re-parent (PATCH) or delete (DELETE) a shared folder."""
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def patch(self, request, slug, folder_id):
@@ -2113,13 +2129,51 @@ class ProjectFolderDetailEndpoint(BaseAPIView):
             folder.name = (request.data.get("name") or "").strip() or folder.name
         if "sort_order" in request.data:
             folder.sort_order = request.data["sort_order"]
+        if "parent_id" in request.data:
+            parent_id = request.data.get("parent_id") or None
+            if parent_id:
+                parent = ProjectFolder.objects.filter(workspace__slug=slug, id=parent_id).first()
+                if not parent:
+                    return Response(
+                        {"error": "parent folder not found"}, status=status.HTTP_404_NOT_FOUND
+                    )
+                # A folder that is its own ancestor disappears from the tree and
+                # hangs any renderer that walks it, so the cycle is refused here
+                # rather than left for the sidebar to trip over. One query for the
+                # whole workspace beats walking `cursor.parent` a row at a time.
+                parent_of = dict(
+                    ProjectFolder.objects.filter(workspace__slug=slug).values_list("id", "parent_id")
+                )
+                if _folder_reaches(parent.id, folder.id, parent_of):
+                    return Response(
+                        {"error": "A folder cannot be moved inside itself."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            folder.parent_id = parent_id
         folder.save()
-        return Response({"id": str(folder.id), "name": folder.name}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "id": str(folder.id),
+                "name": folder.name,
+                "parent_id": str(folder.parent_id) if folder.parent_id else None,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def delete(self, request, slug, folder_id):
-        deleted, _ = ProjectFolder.objects.filter(workspace__slug=slug, id=folder_id).delete()
-        return Response({"deleted": bool(deleted)}, status=status.HTTP_200_OK)
+        folder = ProjectFolder.objects.filter(workspace__slug=slug, id=folder_id).first()
+        if not folder:
+            return Response({"deleted": False}, status=status.HTTP_200_OK)
+        # The FK cascades, so deleting a parent would take its subfolders with it
+        # — a filing tool that destroys filing nobody asked it to destroy. The
+        # children move up one level instead; deleting a folder removes only the
+        # folder, exactly as it already promises for the projects inside.
+        promoted = ProjectFolder.objects.filter(parent_id=folder.id).update(
+            parent_id=folder.parent_id
+        )
+        folder.delete()
+        return Response({"deleted": True, "promoted": promoted}, status=status.HTTP_200_OK)
 
 
 class ProjectFolderAssignEndpoint(BaseAPIView):

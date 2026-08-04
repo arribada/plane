@@ -496,8 +496,27 @@ export class ArribadaService extends APIService {
       });
   }
 
-  async createFolder(workspaceSlug: string, name: string): Promise<{ id: string; name: string }> {
-    return this.post(`/api/arribada/workspaces/${workspaceSlug}/project-folders/`, { name })
+  async createFolder(
+    workspaceSlug: string,
+    name: string,
+    parentId?: string | null
+  ): Promise<{ id: string; name: string }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/project-folders/`, {
+      name,
+      parent_id: parentId ?? null,
+    })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  /** Re-parent a folder; null puts it back at the top level. The server refuses a
+   *  cycle, so a rejected move is a message, not a broken tree. */
+  async moveFolder(workspaceSlug: string, folderId: string, parentId: string | null): Promise<unknown> {
+    return this.patch(`/api/arribada/workspaces/${workspaceSlug}/project-folders/${folderId}/`, {
+      parent_id: parentId,
+    })
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

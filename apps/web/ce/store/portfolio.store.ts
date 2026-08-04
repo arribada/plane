@@ -803,8 +803,15 @@ export class PortfolioStore implements IPortfolioStore {
   // Focus the portfolio on a single folder (show only its projects), or clear (null).
   setFocusFolder = (folderId: string | null): void => {
     this.focusFolderId = folderId;
-    // in single-folder view the swimlane grouping is redundant
-    if (folderId) this.groupByFolder = false;
+    // Grouping ON, not off. It was switched off because a single folder's
+    // projects were one flat list and a lone swimlane header said nothing. Now
+    // that folders nest, the focus brings the whole subtree — so the bands ARE
+    // the structure, and each one folds. Opening a folder and losing the shape
+    // it was opened for is the wrong trade.
+    //
+    // Still a switch: anybody who wants the flat list turns it off in Display,
+    // and that choice survives until the next focus.
+    if (folderId) this.groupByFolder = true;
   };
 
   togglePriorityFilter = (priority: string): void => {

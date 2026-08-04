@@ -254,9 +254,38 @@ export class PortfolioStore implements IPortfolioStore {
     // timeline listing every project in the workspace, most of them empty, is noise.
     if (this.focusUserId) return this.userProjectIds;
     if (!this.focusFolderId) return this.displayedProjectIds;
-    const folder = this.folders.find((f) => f.id === this.focusFolderId);
-    if (!folder) return this.displayedProjectIds;
-    return folder.project_ids.filter((id) => !!this.projectMap[id]);
+    if (!this.folders.some((f) => f.id === this.focusFolderId)) return this.displayedProjectIds;
+    // The whole subtree, not just the folder's own projects. Folders nest, and
+    // the sidebar already counts a parent as holding everything underneath it —
+    // so focusing "Tracker" and getting three of its five projects, with the two
+    // in its subfolder silently missing, disagreed with the count the user had
+    // just read two inches away.
+    const wanted = this.folderSubtreeIds(this.focusFolderId);
+    const ids = new Set(this.folders.filter((f) => wanted.has(f.id)).flatMap((f) => f.project_ids));
+    return [...ids].filter((id) => !!this.projectMap[id]);
+  }
+
+  /** A folder and every folder beneath it. The hop cap is a backstop against a
+   *  cycle the server refuses to create but a direct DB edit could. */
+  folderSubtreeIds(rootId: string): Set<string> {
+    const children = new Map<string, string[]>();
+    for (const f of this.folders) {
+      if (!f.parent_id) continue;
+      children.set(f.parent_id, [...(children.get(f.parent_id) ?? []), f.id]);
+    }
+    const out = new Set<string>([rootId]);
+    const queue = [rootId];
+    let hops = 0;
+    while (queue.length > 0 && hops < 256) {
+      const next = queue.shift() as string;
+      for (const child of children.get(next) ?? []) {
+        if (out.has(child)) continue;
+        out.add(child);
+        queue.push(child);
+      }
+      hops += 1;
+    }
+    return out;
   }
 
   get focusFolderName(): string | null {

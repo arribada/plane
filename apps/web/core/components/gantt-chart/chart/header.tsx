@@ -34,7 +34,7 @@ type Props = {
 };
 
 const toolButton =
-  "flex items-center gap-1 rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover";
+  "flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover";
 
 export const GanttChartHeader = observer(function GanttChartHeader(props: Props) {
   const { t } = useTranslation();
@@ -54,22 +54,31 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
 
   return (
     <Row
-      className="relative flex w-full flex-shrink-0 flex-wrap items-center gap-2 bg-surface-1 py-2 whitespace-nowrap"
+      // gap-y as well as gap-x, and no blanket `whitespace-nowrap`: the row wraps,
+      // and a row of items that all refuse to shrink cannot wrap cleanly — it
+      // overflows, and the overflow lands on top of its neighbours. Each control
+      // group below keeps `whitespace-nowrap` for itself, so groups wrap as units
+      // while the row is free to reflow.
+      className="relative flex w-full flex-shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 bg-surface-1 py-2"
       // minHeight, not height: this row is flex-wrap, so below roughly 600px the
       // controls wrap onto a second line — and a fixed height meant that line
       // rendered OUTSIDE the box, painting over the chart. Growing is the correct
       // behaviour for a container whose children are allowed to wrap.
       style={{ minHeight: `${GANTT_BREADCRUMBS_HEIGHT}px` }}
     >
-      <div className="ml-auto">
-        <div className="ml-auto text-11 font-medium text-tertiary">
-          {/* Group headers occupy a row but are not work items: counting them turned
-              "37 work items" into 43 the moment grouping was switched on. */}
-          {blockIds ? `${blockIds.filter((id) => !isGroupRowId(id)).length} ${loaderTitle}` : t("common.loading")}
-        </div>
+      {/* Shrinkable and truncating, and the ONLY item allowed to give ground.
+          It used to be the first child with `ml-auto`, which made it absorb every
+          spare pixel and then be crushed against its neighbours once there were
+          none — the count ended up underneath Export on one side and Week on the
+          other. It now takes the space that is left over and cuts itself short
+          rather than pushing into anybody. */}
+      <div className="ml-auto min-w-0 shrink truncate text-11 font-medium text-tertiary">
+        {/* Group headers occupy a row but are not work items: counting them turned
+            "37 work items" into 43 the moment grouping was switched on. */}
+        {blockIds ? `${blockIds.filter((id) => !isGroupRowId(id)).length} ${loaderTitle}` : t("common.loading")}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-shrink-0 flex-wrap items-center gap-1 whitespace-nowrap">
         {/* Buttons, not clickable divs: this is how the chart's scale is steered, and
             it was unreachable without a mouse. aria-pressed says which one is on. */}
         {VIEWS_LIST.map((chartView: any) => (
@@ -99,7 +108,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
       {/* Granularity between the three fixed scales. 60, 20 and 5 pixels a day are
           big steps — a fortnight and a quarter both land badly between two of them —
           so this stretches whichever scale is on. */}
-      <div className="flex items-center rounded-md bg-layer-transparent">
+      <div className="flex flex-shrink-0 items-center rounded-md bg-layer-transparent">
         <button
           type="button"
           className="rounded-l-md p-1 px-1.5 hover:bg-layer-transparent-hover"
@@ -147,7 +156,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
 
       {/* Display switches. A <details> rather than a popover library: it closes on
           Escape and on an outside click for free, and it is one element to style. */}
-      <details className="group relative">
+      <details className="group relative flex-shrink-0">
         <summary className={cn(toolButton, "cursor-pointer list-none [&::-webkit-details-marker]:hidden")}>
           <Settings2 className="size-3.5" />
           Display

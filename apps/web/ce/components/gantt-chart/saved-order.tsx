@@ -122,11 +122,11 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
 
   return (
     <details
-      className="group relative"
+      className="group relative flex-shrink-0"
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover">
+      <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md bg-layer-transparent p-1 px-2 text-11 whitespace-nowrap hover:bg-layer-transparent-hover">
         <Bookmark className="size-3.5" />
         Saved order
       </summary>

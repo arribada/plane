@@ -14,7 +14,7 @@
  * The suggested span is OFFERED, never applied. A field that moved somebody's
  * dates the moment they recorded an estimate is a field people stop filling in.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { Gauge, Loader2 } from "lucide-react";
 import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
@@ -59,6 +59,34 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
       live = false;
     };
   }, [workspaceSlug, projectId, issueId]);
+
+  /**
+   * The last thing typed, and the last thing saved.
+   *
+   * The field only committed on blur, and closing the work item panel unmounts
+   * it without one — so typing an effort and closing the window threw the value
+   * away. On reopening, the box was empty and its PLACEHOLDER showed the span
+   * derived from the dates, which reads exactly like "the effort reset itself to
+   * the duration". Nothing had reset; nothing had ever been saved.
+   */
+  const latest = useRef<{ draft: string; saved: number | null }>({ draft: "", saved: null });
+  useEffect(() => {
+    latest.current = { draft, saved: state?.days ?? null };
+  });
+
+  useEffect(
+    () => () => {
+      const { draft: pending, saved } = latest.current;
+      const trimmed = pending.trim();
+      const parsed = trimmed === "" ? null : Number(trimmed);
+      if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) return;
+      if (parsed === saved) return;
+      // Fire and forget: the panel is already going away, so there is nobody left
+      // to show a toast to. Losing the number silently is the worse of the two.
+      void service.setIssueEffort(workspaceSlug, projectId, issueId, parsed).catch(() => undefined);
+    },
+    [workspaceSlug, projectId, issueId]
+  );
 
   const commit = async (explicit?: string) => {
     if (explicit !== undefined) setDraft(explicit);

@@ -11,7 +11,10 @@ from .views import (
     GithubTriageEndpoint,
     IssueEffortEndpoint,
     IssueRoleEndpoint,
+    ProjectAssigneeGapEndpoint,
     ProjectDisciplineGapEndpoint,
+    ProjectDisciplinesEndpoint,
+    ProjectUndatedGapEndpoint,
     WorkspaceGithubInboxGapEndpoint,
     ProjectAiSprintTasksEndpoint,
     ProjectPublicTimelineEndpoint,
@@ -170,6 +173,21 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/discipline-gap/",
         ProjectDisciplineGapEndpoint.as_view(),
         name="arribada-project-discipline-gap",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/assignee-gap/",
+        ProjectAssigneeGapEndpoint.as_view(),
+        name="arribada-project-assignee-gap",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/undated-gap/",
+        ProjectUndatedGapEndpoint.as_view(),
+        name="arribada-project-undated-gap",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/disciplines/",
+        ProjectDisciplinesEndpoint.as_view(),
+        name="arribada-project-disciplines",
     ),
     path(
         "workspaces/<str:slug>/github-inbox-gap/",

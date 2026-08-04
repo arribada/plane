@@ -33,8 +33,10 @@ from .models import (
     IssueBaseline,
     BaselineEntry,
     IssueArtifact,
+    IssueEffort,
     IssueMilestone,
     IssueRole,
+    ProjectDiscipline,
     ProjectFolder,
     ProjectFolderItem,
     ProjectPublicTimeline,
@@ -2611,7 +2613,19 @@ class ProjectOverviewEndpoint(BaseAPIView):
         if counts.get("overdue"):
             warn("overdue_items", f"{counts['overdue']} open work item(s) are past their due date.", "error")
         if unassigned:
-            warn("unassigned_items", f"{unassigned} open work item(s) have no assignee.", "info")
+            warn("unassigned_items", f"{unassigned} open work item(s) have no assignee.")
+        # A discipline the project says it needs and nobody covers. Not derivable
+        # from the roster — that only knows who is here, and the gap is about who
+        # is not. A person can hold several, so this is a set difference and not a
+        # head count: five disciplines and five people can still leave two open.
+        unheld = _unheld_disciplines(project_id)
+        if unheld:
+            warn(
+                "unheld_disciplines",
+                f"Nobody on this project covers: {', '.join(unheld[:4])}"
+                + (f" (+{len(unheld) - 4} more)" if len(unheld) > 4 else "")
+                + ".",
+            )
         if roles_pending:
             warn(
                 "roles_pending",
@@ -6533,7 +6547,14 @@ class IssueRoleEndpoint(BaseAPIView):
 
 
 def _project_role_options(project_id):
-    """The roster's disciplines first, then the standard vocabulary."""
+    """The roster's disciplines first, then this project's own, then the standard
+    vocabulary.
+
+    The project's own come second rather than last because a discipline somebody
+    deliberately added to this project is a better guess than a generic one, and
+    it has to appear at all: before this, a discipline nobody held yet could be
+    created and then not be offered anywhere.
+    """
     seen, options = set(), []
     for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list("roles", flat=True):
         for role in roles or []:
@@ -6541,6 +6562,11 @@ def _project_role_options(project_id):
             if key and key not in seen:
                 seen.add(key)
                 options.append(str(role).strip())
+    for name in ProjectDiscipline.objects.filter(project_id=project_id).values_list("name", flat=True):
+        key = str(name).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            options.append(str(name).strip())
     for value, _label in PROJECT_ROLES:
         if value not in seen:
             seen.add(value)
@@ -6597,6 +6623,271 @@ def _effort_from_dates(issue_id, issue):
         IssueAssignee.objects.filter(issue_id=issue_id, deleted_at__isnull=True).count(),
     )
     return round(span * people, 1)
+
+
+
+
+def _uuid_keys(mapping, limit=500):
+    """The well-formed UUIDs among a payload's keys.
+
+    Django raises on a malformed UUID inside `id__in`, and BaseAPIView turns that
+    into a flat 400 — so one bad key from a browser failed the whole batch
+    instead of being skipped, and the caller was told nothing useful. Filtering
+    first means a junk key is ignored exactly like an id that is not ours.
+    """
+    out = []
+    for key in list(mapping)[:limit]:
+        try:
+            out.append(uuid.UUID(str(key)))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return out
+
+
+def _unheld_disciplines(project_id):
+    """Disciplines the project has recorded that nobody on the roster covers.
+
+    A person can hold several, so this is a set difference and not a count
+    comparison: five disciplines and five people can still leave two uncovered.
+    """
+    held = set()
+    for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list("roles", flat=True):
+        for role in roles or []:
+            key = str(role).strip().lower()
+            if key:
+                held.add(key)
+    return [
+        name
+        for name in ProjectDiscipline.objects.filter(project_id=project_id).values_list("name", flat=True)
+        if str(name).strip().lower() not in held
+    ]
+
+
+def _assignable_members(project_id):
+    """People on this project who have a Plane account to be assigned with."""
+    rows = (
+        ProjectMember.objects.filter(project_id=project_id, is_active=True)
+        .exclude(member__email__startswith="bot_user_")
+        .select_related("member")
+        .values("member_id", "member__display_name", "member__email")
+    )
+    return [
+        {
+            "id": str(r["member_id"]),
+            "name": r["member__display_name"] or r["member__email"],
+            "email": r["member__email"],
+        }
+        for r in rows
+    ]
+
+
+
+class ProjectDisciplinesEndpoint(BaseAPIView):
+    """The disciplines this project needs, and adding one.
+
+    Creating a discipline is deliberately separate from giving it to somebody.
+    The reason a project manager opens this is usually that the work needs a
+    trade nobody here covers - forcing them to pick a holder first would mean
+    inventing one, and the gap is the thing worth recording.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {
+                "options": _project_role_options(project_id),
+                "unheld": _unheld_disciplines(project_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        name = str(request.data.get("name") or "").strip()[:80]
+        if not name:
+            return Response({"error": "name required"}, status=status.HTTP_400_BAD_REQUEST)
+        # Case-insensitive, matching the constraint: adding "Firmware" when
+        # "firmware" is already there is a no-op, not an error.
+        existing = ProjectDiscipline.objects.filter(project_id=project_id, name__iexact=name).first()
+        if not existing:
+            ProjectDiscipline.objects.create(project_id=project_id, name=name, created_by=request.user)
+        return Response(
+            {"name": name, "options": _project_role_options(project_id)},
+            status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
+        )
+
+
+class ProjectAssigneeGapEndpoint(BaseAPIView):
+    """Open work items with nobody on them, and one call to staff them.
+
+    Suggests the holder of the item's discipline when exactly one person on the
+    roster covers it - the same rule the discipline field uses, read the other
+    way round.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        assigned = IssueAssignee.objects.filter(issue_id=OuterRef("id"), deleted_at__isnull=True)
+        rows = list(
+            Issue.issue_objects.filter(project_id=project_id)
+            .exclude(state__group__in=["completed", "cancelled"])
+            .annotate(has_assignee=Exists(assigned))
+            .filter(has_assignee=False)
+            .values("id", "name", "sequence_id", "start_date", "target_date")
+            .order_by("start_date", "sequence_id")
+        )
+
+        roles = dict(IssueRole.objects.filter(issue__project_id=project_id).values_list("issue_id", "role"))
+        # One query for the roster rather than one per row.
+        holders = defaultdict(list)
+        for member_id, member_roles in ProjectTeamMember.objects.filter(
+            project_id=project_id, member_id__isnull=False
+        ).values_list("member_id", "roles"):
+            for role in member_roles or []:
+                holders[str(role).strip().lower()].append(str(member_id))
+
+        items = []
+        for r in rows:
+            role = roles.get(r["id"])
+            people = holders.get(str(role).strip().lower()) if role else None
+            items.append(
+                {
+                    "id": str(r["id"]),
+                    "name": r["name"],
+                    "sequence_id": r["sequence_id"],
+                    "start_date": str(r["start_date"]) if r["start_date"] else None,
+                    "target_date": str(r["target_date"]) if r["target_date"] else None,
+                    "role": role,
+                    # Only when there is no choice to make. Two holders is a
+                    # decision, and pre-filling it would be making it for them.
+                    "suggested": people[0] if people and len(people) == 1 else None,
+                }
+            )
+
+        return Response({"items": items, "members": _assignable_members(project_id)}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        assignments = request.data.get("assignments") or {}
+        if not isinstance(assignments, dict):
+            return Response({"error": "assignments must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed = set(
+            str(i)
+            for i in Issue.issue_objects.filter(
+                project_id=project_id, id__in=_uuid_keys(assignments)
+            ).values_list("id", flat=True)
+        )
+        # Only people who are actually on this project: an id arriving from a
+        # browser is not permission to put somebody on work they cannot see.
+        members = set(
+            str(m)
+            for m in ProjectMember.objects.filter(project_id=project_id, is_active=True).values_list(
+                "member_id", flat=True
+            )
+        )
+
+        written = 0
+        for issue_id, user_id in assignments.items():
+            if str(issue_id) not in allowed or str(user_id) not in members:
+                continue
+            _, created = IssueAssignee.objects.update_or_create(
+                issue_id=issue_id,
+                assignee_id=user_id,
+                defaults={"deleted_at": None, "project_id": project_id},
+            )
+            if created:
+                written += 1
+        return Response({"written": written}, status=status.HTTP_200_OK)
+
+
+class ProjectUndatedGapEndpoint(BaseAPIView):
+    """Work items missing a start or an end, and one call to date them.
+
+    "Open timeline" was the only offer, which is a place to go rather than a fix
+    - and the items are undated precisely because they are not on the timeline,
+    so it opens on a chart that does not show them.
+
+    Suggests a span from the recorded effort where there is one, so a row is
+    usually a confirmation rather than a decision.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        rows = list(
+            Issue.issue_objects.filter(project_id=project_id)
+            .exclude(state__group__in=["completed", "cancelled"])
+            .filter(Q(start_date__isnull=True) | Q(target_date__isnull=True))
+            .values("id", "name", "sequence_id", "start_date", "target_date")
+            .order_by("sequence_id")
+        )
+        effort = dict(IssueEffort.objects.filter(issue__project_id=project_id).values_list("issue_id", "days"))
+        schedule = ProjectSchedule.objects.filter(project_id=project_id).first()
+        default_start = (schedule.start_date if schedule else None) or timezone.now().date()
+
+        items = []
+        for r in rows:
+            start = r["start_date"] or default_start
+            days = effort.get(r["id"])
+            # ceil, not round: half a day of effort still needs a whole day on a
+            # calendar, and banker's rounding would send 2.5 down to 2.
+            length = max(int(math.ceil(float(days))) - 1, 0) if days else 0
+            items.append(
+                {
+                    "id": str(r["id"]),
+                    "name": r["name"],
+                    "sequence_id": r["sequence_id"],
+                    "start_date": str(r["start_date"]) if r["start_date"] else None,
+                    "target_date": str(r["target_date"]) if r["target_date"] else None,
+                    "suggested_start": str(start),
+                    "suggested_target": str(r["target_date"] or _add_working_days(start, length)),
+                    "effort_days": float(days) if days is not None else None,
+                }
+            )
+        return Response({"items": items}, status=status.HTTP_200_OK)
+
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    def post(self, request, slug, project_id):
+        if not _visible_projects(request, slug).filter(id=project_id).exists():
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        dates = request.data.get("dates") or {}
+        if not isinstance(dates, dict):
+            return Response({"error": "dates must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed = set(
+            str(i)
+            for i in Issue.issue_objects.filter(
+                project_id=project_id, id__in=_uuid_keys(dates)
+            ).values_list("id", flat=True)
+        )
+        written, rejected = 0, 0
+        for issue_id, span in dates.items():
+            if str(issue_id) not in allowed or not isinstance(span, dict):
+                continue
+            start = _parse_date(span.get("start_date"))
+            target = _parse_date(span.get("target_date"))
+            if not start or not target:
+                continue
+            # An end before its start is not a span. Silently swapping them would
+            # be guessing; refusing says which row needs a second look.
+            if target < start:
+                rejected += 1
+                continue
+            Issue.objects.filter(id=issue_id).update(start_date=start, target_date=target)
+            written += 1
+        return Response({"written": written, "rejected": rejected}, status=status.HTTP_200_OK)
 
 
 class ProjectDisciplineGapEndpoint(BaseAPIView):
@@ -6659,7 +6950,7 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
         allowed = set(
             str(i)
             for i in Issue.issue_objects.filter(
-                project_id=project_id, id__in=list(assignments)[:500]
+                project_id=project_id, id__in=_uuid_keys(assignments)
             ).values_list("id", flat=True)
         )
 

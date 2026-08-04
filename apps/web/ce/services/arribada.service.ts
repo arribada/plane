@@ -1160,6 +1160,95 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** Add a discipline this project needs. Deliberately does not require a holder:
+   *  the reason to add one is usually that nobody covers it yet. */
+  async createProjectDiscipline(
+    workspaceSlug: string,
+    projectId: string,
+    name: string
+  ): Promise<{ name: string; options: string[] }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/disciplines/`, { name })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Open work items with nobody on them, and who could take them. */
+  async getAssigneeGap(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{
+    items: {
+      id: string;
+      name: string;
+      sequence_id: number;
+      start_date: string | null;
+      target_date: string | null;
+      role: string | null;
+      suggested: string | null;
+    }[];
+    members: { id: string; name: string; email: string }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/assignee-gap/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** {issue id: user id}. */
+  async setAssigneeGap(
+    workspaceSlug: string,
+    projectId: string,
+    assignments: Record<string, string>
+  ): Promise<{ written: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/assignee-gap/`, {
+      assignments,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Work items missing a start or an end, with a span suggested from effort. */
+  async getUndatedGap(
+    workspaceSlug: string,
+    projectId: string
+  ): Promise<{
+    items: {
+      id: string;
+      name: string;
+      sequence_id: number;
+      start_date: string | null;
+      target_date: string | null;
+      suggested_start: string;
+      suggested_target: string;
+      effort_days: number | null;
+    }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/undated-gap/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** {issue id: {start_date, target_date}}. `rejected` counts spans that ended
+   *  before they began — refused rather than silently swapped. */
+  async setUndatedGap(
+    workspaceSlug: string,
+    projectId: string,
+    dates: Record<string, { start_date: string; target_date: string }>
+  ): Promise<{ written: number; rejected: number }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/undated-gap/`, { dates })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Why the GitHub inbox is still full, split by what you can actually do. */
   async getGithubInboxGap(workspaceSlug: string): Promise<{
     unclaimed: { repo: string; count: number; synced: boolean }[];

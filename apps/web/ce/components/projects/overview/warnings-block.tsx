@@ -21,6 +21,8 @@ type Props = {
   /** Opens the bulk editor. A warning that names a number should hand back the
    *  rows behind it, not a route to go looking for them. */
   onFixDisciplines: () => void;
+  onFixAssignees: () => void;
+  onFixDates: () => void;
 };
 
 const MISSING_LINK_CODES = new Set(["no_github", "no_wiki", "no_chat"]);
@@ -41,6 +43,8 @@ export const OverviewWarnings = observer(function OverviewWarnings({
   warnings,
   onConfigureLinks,
   onFixDisciplines,
+  onFixAssignees,
+  onFixDates,
 }: Props) {
   const { workspaceSlug, projectId } = useParams();
   const router = useAppRouter();
@@ -49,8 +53,10 @@ export const OverviewWarnings = observer(function OverviewWarnings({
 
   const actionFor = (w: Warning): { label: string; onClick: () => void } | null => {
     if (MISSING_LINK_CODES.has(w.code)) return { label: "Configure links", onClick: onConfigureLinks };
-    if (w.code === "undated_items")
-      return { label: "Open timeline", onClick: () => router.push(`/${workspaceSlug}/portfolio`) };
+    // Dates first, timeline second — and the timeline is offered from inside the
+    // modal. Sending somebody to a chart to fix the items that are missing from
+    // that chart is the wrong way round.
+    if (w.code === "undated_items") return { label: "Set dates", onClick: onFixDates };
     if (w.code === "overdue_items")
       return {
         label: "Open work items",
@@ -59,7 +65,15 @@ export const OverviewWarnings = observer(function OverviewWarnings({
     // Opens the bulk editor rather than the work item list: seven missing
     // disciplines used to mean opening seven panels, which is a navigation
     // dressed as a correction.
-    if (w.code === "no_discipline") return { label: "Set disciplines", onClick: onFixDisciplines };
+    if (w.code === "no_discipline") return { label: "Set discipline", onClick: onFixDisciplines };
+    if (w.code === "unassigned_items") return { label: "Assign", onClick: onFixAssignees };
+    // A discipline nobody covers is fixed on the roster, not on the work items:
+    // the answer is a person, and that is where the people are.
+    if (w.code === "unheld_disciplines" || w.code === "roles_pending")
+      return {
+        label: "Open the team",
+        onClick: () => router.push(`/${workspaceSlug}/projects/${projectId}/settings/team/`),
+      };
     return null;
   };
 

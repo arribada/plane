@@ -12,15 +12,21 @@
  * Rows arrive pre-filled with what their assignee already implies, so the common
  * case is a glance and a save rather than seven decisions. Pre-filled, not
  * pre-saved: nothing is written until the button is pressed.
+ *
+ * A discipline can also be created here. The moment you need one is the moment
+ * you find a task that has no honest answer in the list, and sending somebody to
+ * the team settings to invent a person before they can name a trade is how a
+ * field ends up permanently blank. Creating one does not give it to anybody —
+ * the Overview then says nobody covers it, which is the true state.
  */
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { Loader2, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
-import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { GapModalShell } from "./gap-modal-shell";
 
 const service = new ArribadaService();
 
@@ -41,11 +47,15 @@ export const DisciplineGapModal = observer(function DisciplineGapModal({ isOpen,
   const [options, setOptions] = useState<string[]>([]);
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
 
   useEffect(() => {
     if (!isOpen || !workspaceSlug || !projectId) return;
     let live = true;
     setItems(null);
+    setAdding(false);
+    setNewName("");
     const load = async () => {
       try {
         const data = await service.getDisciplineGap(workspaceSlug.toString(), projectId.toString());
@@ -65,9 +75,29 @@ export const DisciplineGapModal = observer(function DisciplineGapModal({ isOpen,
     };
   }, [isOpen, workspaceSlug, projectId]);
 
-  if (!isOpen) return null;
-
   const filled = Object.values(choice).filter(Boolean).length;
+
+  const addDiscipline = async () => {
+    const name = newName.trim();
+    if (!workspaceSlug || !projectId || !name) return;
+    try {
+      const result = await service.createProjectDiscipline(workspaceSlug.toString(), projectId.toString(), name);
+      setOptions(result.options);
+      setNewName("");
+      setAdding(false);
+      setToast({
+        type: TOAST_TYPE.SUCCESS,
+        title: `"${result.name}" added`,
+        message: "Nobody covers it yet — the Overview will say so until somebody does.",
+      });
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't add it",
+        message: (error as { error?: string })?.error ?? "The discipline was not created.",
+      });
+    }
+  };
 
   const save = async () => {
     if (!workspaceSlug || !projectId || filled === 0) return;
@@ -95,79 +125,79 @@ export const DisciplineGapModal = observer(function DisciplineGapModal({ isOpen,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="shadow-lg relative z-10 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-subtle bg-layer-1">
-        <header className="flex items-center gap-2 border-b border-subtle px-4 py-3">
-          <h2 className="flex-1 text-14 font-medium text-primary">Set the missing disciplines</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-tertiary hover:text-primary">
-            <X className="size-4" />
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {items === null ? (
-            <p className="text-13 text-tertiary">Loading…</p>
-          ) : items.length === 0 ? (
-            <p className="text-13 text-tertiary">Every dated item already has a discipline.</p>
-          ) : (
-            <>
-              <p className="mb-3 text-12 text-tertiary">
-                A rate belongs to a trade, so an item with no discipline has no cost however many days it spans. Rows
-                already showing a value took it from their assignee — nothing is saved until you press the button.
-              </p>
-              <ul className="space-y-1.5">
-                {items.map((item) => (
-                  <li key={item.id} className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-13 text-primary" title={item.name}>
-                      {item.name}
-                    </span>
-                    <span className="flex-shrink-0 text-11 text-tertiary">
-                      {renderFormattedDate(item.start_date)} → {renderFormattedDate(item.target_date)}
-                    </span>
-                    <select
-                      value={choice[item.id] ?? ""}
-                      onChange={(e) => setChoice((c) => ({ ...c, [item.id]: e.target.value }))}
-                      aria-label={`Discipline for ${item.name}`}
-                      className="w-44 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
-                    >
-                      <option value="">Leave unset</option>
-                      {options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-
-        {items && items.length > 0 && (
-          <footer className="flex items-center justify-end gap-2 border-t border-subtle px-4 py-3">
-            <span className="mr-auto text-11 text-tertiary">
-              {filled} of {items.length} set
-            </span>
-            <button type="button" onClick={onClose} className="rounded border border-subtle px-3 py-1.5 text-12">
-              Cancel
-            </button>
+    <GapModalShell
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Set the missing discipline"
+      blurb="A rate belongs to a trade, so an item with no discipline has no cost however many days it spans. Rows already showing a value took it from their assignee — nothing is saved until you press the button."
+      count={items?.length ?? null}
+      emptyMessage="Every dated item already has a discipline."
+      filled={filled}
+      saving={saving}
+      onSave={() => void save()}
+      footerExtra={
+        adding ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void addDiscipline();
+                }
+                if (e.key === "Escape") setAdding(false);
+              }}
+              placeholder="e.g. Optics"
+              aria-label="Name of the new discipline"
+              className="w-40 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+            />
             <button
               type="button"
-              onClick={() => void save()}
-              disabled={saving || filled === 0}
-              className={cn(
-                "flex items-center gap-1.5 rounded bg-accent-primary px-3 py-1.5 text-12 text-on-color",
-                saving || filled === 0 ? "opacity-50" : "hover:opacity-90"
-              )}
+              onClick={() => void addDiscipline()}
+              disabled={!newName.trim()}
+              className="rounded border border-subtle px-2 py-1 text-12 disabled:opacity-50"
             >
-              {saving && <Loader2 className="size-3.5 animate-spin" />}
-              Save {filled}
+              Add
             </button>
-          </footer>
-        )}
-      </div>
-    </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1 rounded border border-subtle px-2 py-1.5 text-12 text-secondary hover:text-primary"
+          >
+            <Plus className="size-3.5" />
+            New discipline
+          </button>
+        )
+      }
+    >
+      <ul className="space-y-1.5">
+        {(items ?? []).map((item) => (
+          <li key={item.id} className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-13 text-primary" title={item.name}>
+              {item.name}
+            </span>
+            <span className="flex-shrink-0 text-11 text-tertiary">
+              {renderFormattedDate(item.start_date)} → {renderFormattedDate(item.target_date)}
+            </span>
+            <select
+              value={choice[item.id] ?? ""}
+              onChange={(e) => setChoice((c) => ({ ...c, [item.id]: e.target.value }))}
+              aria-label={`Discipline for ${item.name}`}
+              className="w-44 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+            >
+              <option value="">Leave unset</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </li>
+        ))}
+      </ul>
+    </GapModalShell>
   );
 });

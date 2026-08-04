@@ -5,6 +5,7 @@
 import uuid
 
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class ProjectSchedule(models.Model):
@@ -1109,3 +1110,45 @@ class IssueEffort(models.Model):
 
     def __str__(self):
         return f"{self.issue_id} {self.days}d"
+
+
+class ProjectDiscipline(models.Model):
+    """A discipline this project needs, whether or not anybody covers it yet.
+
+    Until now the vocabulary was inferred from the roster: a discipline existed
+    because somebody on ProjectTeamMember listed it. That makes the one state
+    worth warning about unrepresentable — "this project needs a mechanical
+    engineer and has none" cannot be said by a table whose only rows are people
+    who are already here.
+
+    So the need is recorded separately from who fills it. A row with no holder is
+    not an error; it is the gap the Overview is supposed to point at.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="arribada_disciplines"
+    )
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        db_table = "arribada_project_discipline"
+        ordering = ("name",)
+        verbose_name = "Project discipline"
+        verbose_name_plural = "Project disciplines"
+        constraints = [
+            # Case-insensitive: "Firmware" and "firmware" are one discipline, and
+            # two rows for it would show up twice in every picker.
+            models.UniqueConstraint(
+                Lower("name"),
+                "project",
+                name="arribada_unique_discipline_per_project",
+            )
+        ]
+
+    def __str__(self):
+        return self.name

@@ -74,8 +74,12 @@ def github_classification_warnings():
                 unclassified.append(task)
                 continue
             # known repo -> warn the target project's lead to classify
+            # project=ghin, not the target: `entity_identifier` is a GHIN issue,
+            # and a notification whose project and entity disagree sends the pane
+            # looking for the item in a project it does not live in. The target is
+            # named in the message, which is where that belongs.
             created += _notify_once(
-                target.project_lead_id, task.id, "in_app:github_triage", target.workspace, target,
+                target.project_lead_id, task.id, "in_app:github_triage", target.workspace, ghin,
                 f"Classify: {task.name}",
                 f"<p>GitHub task <b>{task.name}</b> (repo {key}) belongs to <b>{target.name}</b> — adopt/classify it.</p>",
                 {"repo": key, "target_project": str(target.id)},
@@ -83,7 +87,7 @@ def github_classification_warnings():
             # known user -> warn the assignee(s) too
             for uid in IssueAssignee.objects.filter(issue=task).values_list("assignee_id", flat=True):
                 created += _notify_once(
-                    uid, task.id, "in_app:github_triage", target.workspace, target,
+                    uid, task.id, "in_app:github_triage", target.workspace, ghin,
                     f"Classify your task: {task.name}",
                     f"<p>Your GitHub task <b>{task.name}</b> (repo {key}) should be classified into <b>{target.name}</b>.</p>",
                     {"repo": key, "target_project": str(target.id)},

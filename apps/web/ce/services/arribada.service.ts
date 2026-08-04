@@ -1160,6 +1160,20 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /** The GitHub inbox items no project claims, and where they could be filed.
+   *  Behind the daily digest notification, which carries no work item and so
+   *  could never show what it was counting. */
+  async getGithubUnclassified(workspaceSlug: string): Promise<{
+    items: { id: string; name: string; sequence_id: number; repo: string | null }[];
+    projects: { id: string; name: string }[];
+  }> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-unclassified/`)
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** Everyone this workspace knows about, for the roster's name field. Built from
    *  the rosters themselves, not from Plane accounts — there are twenty people and
    *  a handful of accounts. */

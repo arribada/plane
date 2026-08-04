@@ -6683,6 +6683,59 @@ def _assignable_members(project_id):
 
 
 
+
+class WorkspaceGithubUnclassifiedEndpoint(BaseAPIView):
+    """The GitHub inbox items no project claims, and where they could go.
+
+    The daily digest notification says "18 unclassified GitHub tasks" and, until
+    now, opened onto nothing: it carries no work item, so the notification pane
+    had nothing to peek at. A count nobody can act on is worse than no
+    notification — this is the list behind the number, with the projects it could
+    be filed into, so the digest becomes a place to do the work.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    def get(self, request, slug):
+        # Imported here rather than at module scope: the task modules import
+        # from this one, and a top-level import would close the circle.
+        from .github_classification_task import _repo_key
+        from .github_sync_task import _repo_owners
+
+        visible = _visible_projects(request, slug).filter(archived_at__isnull=True)
+        # owner/repo -> the project that linked it. A repo two projects claim
+        # is absent from this map, so its issues stay in the list — which is
+        # right: nobody but a person can settle that one.
+        claimed = _repo_owners()
+
+        items = []
+        for ghin in visible.filter(identifier="GHIN"):
+            rows = (
+                Issue.issue_objects.filter(project=ghin)
+                .exclude(state__group__in=["completed", "cancelled"])
+                .values("id", "name", "sequence_id", "description_html")
+                .order_by("-created_at")
+            )
+            for row in rows:
+                repo = _repo_key(row["description_html"] or "")
+                # Claimed repos file themselves on the next sync; showing them
+                # here would invite somebody to do by hand what already happens.
+                if repo and repo in claimed:
+                    continue
+                items.append(
+                    {
+                        "id": str(row["id"]),
+                        "name": row["name"],
+                        "sequence_id": row["sequence_id"],
+                        "repo": repo or None,
+                    }
+                )
+
+        projects = [
+            {"id": str(p["id"]), "name": p["name"]}
+            for p in visible.exclude(identifier="GHIN").values("id", "name").order_by("name")
+        ]
+        return Response({"items": items, "projects": projects}, status=status.HTTP_200_OK)
+
 class WorkspaceDirectoryEndpoint(BaseAPIView):
     """Everyone the workspace knows about, for the roster's name field.
 

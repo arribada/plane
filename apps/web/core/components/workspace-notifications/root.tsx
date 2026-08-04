@@ -21,6 +21,7 @@ import { useWorkspaceIssueProperties } from "@/hooks/use-workspace-issue-propert
 // plane web imports
 import { useNotificationPreview } from "@/plane-web/hooks/use-notification-preview";
 // local imports
+import { ArribadaNotificationDetail } from "@/plane-web/components/workspace-notifications/arribada-detail";
 import { InboxContentRoot } from "../inbox/content";
 
 type NotificationsRootProps = {
@@ -36,12 +37,14 @@ export const NotificationsRoot = observer(function NotificationsRoot({ workspace
     notificationLiteByNotificationId,
     notificationIdsByWorkspaceId,
     getNotifications,
+    notifications,
   } = useWorkspaceNotifications();
   const { fetchUserProjectInfo } = useUserPermissions();
   const { isWorkItem, PeekOverviewComponent, setPeekWorkItem } = useNotificationPreview();
   // derived values
   const { workspace_slug, project_id, issue_id, is_inbox_issue } =
     notificationLiteByNotificationId(currentSelectedNotificationId);
+  const selected = currentSelectedNotificationId ? notifications[currentSelectedNotificationId] : undefined;
 
   // fetching workspace work item properties
   useWorkspaceIssueProperties(workspaceSlug);
@@ -91,7 +94,20 @@ export const NotificationsRoot = observer(function NotificationsRoot({ workspace
         </div>
       ) : (
         <>
-          {is_inbox_issue === true && workspace_slug && project_id && issue_id ? (
+          {/* Plane resolves the pane's work item from `data.issue.id`, which our
+              own notifications do not carry — so every one this fork raises
+              opened onto a blank panel. When there is no work item to peek,
+              show what the notification actually holds instead. */}
+          {!issue_id && selected ? (
+            <ArribadaNotificationDetail
+              workspaceSlug={workspace_slug ?? workspaceSlug ?? ""}
+              title={selected.title ?? "Notification"}
+              messageHtml={selected.message_html}
+              sender={selected.sender}
+              entityId={selected.entity_identifier}
+              projectId={selected.project}
+            />
+          ) : is_inbox_issue === true && workspace_slug && project_id && issue_id ? (
             <>
               {projectMemberInfoLoader ? (
                 <div className="flex h-full w-full items-center justify-center">

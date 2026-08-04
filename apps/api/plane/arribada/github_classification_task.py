@@ -118,9 +118,15 @@ def github_classification_warnings():
     # What is actually sitting in the queue, per workspace.
     contested = defaultdict(lambda: defaultdict(int))  # workspace -> repo -> count
     unclaimed = defaultdict(int)  # workspace -> count
+    # Closed upstream is excluded here for the same reason the triage page
+    # excludes it: nobody should be nagged, once a day, to decide where work that
+    # is already finished belongs. The count in the digest is the count in the
+    # queue or it is worse than no digest. This cannot use views._github_queue —
+    # that one is scoped to a workspace slug and this task is workspace-wide —
+    # so the condition is repeated, and it has to be kept in step with it.
     rows = GithubIssue.objects.filter(
         filed_issue__isnull=True, dismissed_at__isnull=True
-    ).values_list("workspace_id", "repo")
+    ).exclude(state="closed").values_list("workspace_id", "repo")
     for workspace_id, repo in rows:
         owners = _owners(workspace_id, repo)
         if len(owners) == 1:

@@ -217,6 +217,11 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
   const customActionButton = (
     <div
       ref={menuActionRef}
+      // Presentational: CustomMenu renders this as the content of its own
+      // <button>, so the real interactive element and the keyboard affordance
+      // are the button around it. Giving this div a role of its own would nest
+      // a second control inside that button.
+      role="presentation"
       className={`flex h-full w-full cursor-pointer items-center rounded-sm p-1 text-placeholder hover:bg-layer-1 ${
         isMenuActive ? "bg-layer-1 text-primary" : "text-secondary"
       }`}
@@ -371,6 +376,10 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
                   </div>
                 </div>
                 <div
+                  // Presentational: it exists to stop clicks on the quick-action
+                  // menu from reaching the row's link, and has no behaviour of
+                  // its own for a keyboard to reach.
+                  role="presentation"
                   className={`opacity-0 transition-opacity group-hover:opacity-100 ${isMenuActive ? "!opacity-100" : ""}`}
                   onClick={(e) => e.stopPropagation()}
                 >

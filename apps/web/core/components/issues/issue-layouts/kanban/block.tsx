@@ -66,6 +66,13 @@ interface IssueDetailsBlockProps {
   isEpic?: boolean;
 }
 
+// Module scope because it captures nothing from the card: keeping it inside the
+// component only allocated a fresh closure on every render of every card.
+const handleEventPropagation = (e: React.MouseEvent) => {
+  e.stopPropagation();
+  e.preventDefault();
+};
+
 const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props: IssueDetailsBlockProps) {
   const { cardRef, issue, updateIssue, quickActions, isReadOnly, displayProperties, isEpic = false } = props;
   // refs
@@ -78,6 +85,11 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
   const customActionButton = (
     <div
       ref={menuActionRef}
+      // Presentational: CustomMenu renders this as the content of its own
+      // <button>, so the real interactive element and the keyboard affordance
+      // are the button around it. Giving this div a role of its own would nest
+      // a second control inside that button.
+      role="presentation"
       className={`flex h-full w-full cursor-pointer items-center rounded-sm p-1 text-placeholder hover:bg-layer-1 ${
         isMenuActive ? "bg-layer-1 text-primary" : "text-secondary"
       }`}
@@ -89,11 +101,6 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
 
   // derived values
   const subIssueCount = issue?.sub_issues_count ?? 0;
-
-  const handleEventPropagation = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-  };
 
   useOutsideClickDetector(menuActionRef, () => setIsMenuActive(false));
 
@@ -110,6 +117,10 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
           />
         )}
         <div
+          // Presentational: it exists to stop clicks on the quick-action menu
+          // from reaching the card's link, and has no behaviour of its own for
+          // a keyboard to reach.
+          role="presentation"
           className={cn("absolute -top-1 right-0", {
             "hidden group-hover/kanban-block:block": !isMobile,
             "!block": isMenuActive,
@@ -246,7 +257,26 @@ export const KanbanIssueBlock = observer(function KanbanIssueBlock(props: IssueB
         },
       })
     );
-  }, [cardRef?.current, issue?.id, isDragAllowed, canDropOverIssue, setIsCurrentBlockDragging, setIsDraggingOverBlock]);
+    // `setIsKanbanDragging` is added because the effect calls it; it is the
+    // `action.bound` method of the singleton kanban-view store, so its identity
+    // never changes and the effect re-subscribes exactly as often as before.
+    //
+    // `cardRef?.current` is deliberately kept even though the rule calls it
+    // unnecessary. It is what re-runs this effect when the <a> node behind the
+    // ref appears or is replaced (the card renders null while `issue` is
+    // missing, and ControlLink swaps between a linked and an unlinked <a>).
+    // Dropping it would silently leave a card undraggable on those paths, so
+    // the honest move here is a suppression rather than a "fix".
+  }, [
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- load-bearing: re-subscribes when the ref's node appears or is replaced
+    cardRef?.current,
+    issue?.id,
+    isDragAllowed,
+    canDropOverIssue,
+    setIsCurrentBlockDragging,
+    setIsDraggingOverBlock,
+    setIsKanbanDragging,
+  ]);
 
   if (!issue) return null;
 

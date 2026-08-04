@@ -58,13 +58,21 @@ export const CalendarIssueBlock = observer(
     const projectIdentifier = getProjectIdentifierById(issue?.project_id);
 
     // handlers
-    const handleIssuePeekOverview = (issue: TIssue) => handleRedirection(workspaceSlug.toString(), issue, isMobile);
+    // Named `workItem` rather than `issue` so it does not shadow the block's own
+    // `issue` prop — same value at the only call site, different name only.
+    const handleIssuePeekOverview = (workItem: TIssue) =>
+      handleRedirection(workspaceSlug.toString(), workItem, isMobile);
 
     useOutsideClickDetector(menuActionRef, () => setIsMenuActive(false));
 
     const customActionButton = (
       <div
         ref={menuActionRef}
+        // Presentational: CustomMenu renders this as the content of its own
+        // <button>, so the real interactive element and the keyboard affordance
+        // are the button around it. Giving this div a role of its own would nest
+        // a second control inside that button.
+        role="presentation"
         className={`w-full cursor-pointer rounded-sm p-1 text-placeholder hover:bg-layer-1 ${
           isMenuActive ? "bg-layer-1-active text-primary" : "text-secondary"
         }`}
@@ -137,6 +145,10 @@ export const CalendarIssueBlock = observer(
                     <div className="truncate text-13 font-medium md:text-11 md:font-regular">{issue.name}</div>
                   </div>
                   <div
+                    // Presentational: it exists to stop clicks on the
+                    // quick-action menu from reaching the block's link, and has
+                    // no behaviour of its own for a keyboard to reach.
+                    role="presentation"
                     className={cn("size-5 flex-shrink-0", {
                       "hidden group-hover/calendar-block:block": !isMobile,
                       block: isMenuActive,

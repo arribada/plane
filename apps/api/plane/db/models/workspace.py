@@ -383,6 +383,7 @@ class WorkspaceHomePreference(BaseModel):
         # Arribada's own. `key` is a free CharField and this enum is only used to
         # seed a user's preference rows, so adding to it needs no migration.
         DELIVERABLES = "arribada_deliverables", "Upcoming deliverables"
+        GITHUB_INBOX = "arribada_github_inbox", "GitHub inbox"
         WORKLOAD_CONFLICTS = "arribada_conflicts", "Workload conflicts"
         MY_APPROVALS = "arribada_approvals", "Purchases awaiting me"
         DRIFTING_PROJECTS = "arribada_drift", "Projects drifting"

@@ -563,6 +563,16 @@ class ProjectExpense(models.Model):
     planned = models.BooleanField(default=True)
     incurred_on = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
+    # Where this was bought, and what to ask the supplier for.
+    #
+    # A label is what somebody called it once; a manufacturer part number is what
+    # the next person types into a distributor's search box eighteen months later
+    # when the first batch is gone and nobody remembers whether "GPS module" meant
+    # the u-blox or the Quectel. It is short, exact, and the single most reusable
+    # thing on an expense line, so it belongs in the row rather than behind an
+    # edit form.
+    url = models.URLField(max_length=2000, blank=True, default="")
+    manufacturer_part_number = models.CharField(max_length=120, blank=True, default="")
     created_by = models.ForeignKey(
         "db.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )

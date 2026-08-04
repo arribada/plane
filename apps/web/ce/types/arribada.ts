@@ -447,6 +447,10 @@ export type TProjectExpense = {
   planned: boolean;
   incurred_on: string | null;
   notes: string;
+  /** Where it was bought. http(s) only — the server refuses anything else. */
+  url: string;
+  /** What a distributor's search box wants when this has to be reordered. */
+  manufacturer_part_number: string;
 };
 
 export type TMoney = { currency: string; amount: number };

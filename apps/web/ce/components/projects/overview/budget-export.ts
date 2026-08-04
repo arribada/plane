@@ -34,6 +34,11 @@ const CSV_HEADER = [
   "Requested by",
   "Decided by",
   "Decided at",
+  // The two columns a reorder is actually placed from. A purchase request has
+  // neither yet — it is a question, not a thing anybody has sourced — so those
+  // rows leave them empty.
+  "Part number",
+  "Link",
   "Notes",
 ].join(",");
 
@@ -84,6 +89,8 @@ export const buildBudgetCsv = (
         cell(""),
         cell(""),
         cell(""),
+        cell(expense.manufacturer_part_number ?? ""),
+        cell(expense.url ?? ""),
         cell(expense.notes ?? ""),
       ].join(",")
     );
@@ -105,6 +112,8 @@ export const buildBudgetCsv = (
         cell(request.requested_by_name ?? ""),
         cell(request.decided_by_name ?? ""),
         cell(request.decided_at ?? ""),
+        cell(""),
+        cell(""),
         cell(request.decision_note ?? request.justification ?? ""),
       ].join(",")
     );

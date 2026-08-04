@@ -19,7 +19,9 @@ import {
   CalendarOff,
   Check,
   Coins,
+  Copy,
   Download,
+  Link as LinkIcon,
   Pencil,
   Plus,
   ShoppingCart,
@@ -88,6 +90,12 @@ const EMPTY_DRAFT = {
   quantity: "1",
   currency: "EUR",
   planned: true,
+  // A label is what somebody called it once. A part number is what the next
+  // person types into a distributor's search eighteen months later, and the link
+  // is where it came from — the two fields that make a line reorderable rather
+  // than merely countable.
+  url: "",
+  manufacturerPartNumber: "",
   // Stored, serialised and typed since the feature shipped, and read or written
   // by nothing. They are the audit trail: a grant review asks who wanted this,
   // from whom, why, and by when.
@@ -230,6 +238,18 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     const label = draft.label.trim();
     const amount = Number(draft.amount);
     if (!label || !Number.isFinite(amount) || amount <= 0) return;
+    const url = draft.url.trim();
+    // Caught here as well as on the server so the answer arrives while the form
+    // is still open with the text in it, rather than as a toast over a form that
+    // has already been cleared.
+    if (url && !/^https?:\/\//i.test(url)) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "That link needs to start with http:// or https://",
+        message: "A link nobody can follow looks like evidence that exists. Nothing was saved.",
+      });
+      return;
+    }
     setSaving(true);
     try {
       await service.addExpense(slug, pid, {
@@ -239,6 +259,8 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         quantity: Number(draft.quantity) || 1,
         currency: draft.currency.trim().toUpperCase() || "EUR",
         planned: draft.planned,
+        url,
+        manufacturer_part_number: draft.manufacturerPartNumber.trim(),
       });
       setDraft(EMPTY_DRAFT);
       setAdding(false);
@@ -1135,6 +1157,26 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 className={cn(input, "w-14 uppercase")}
               />
             </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-10 text-tertiary uppercase">Part number</span>
+              <input
+                value={draft.manufacturerPartNumber}
+                onChange={(e) => setDraft({ ...draft, manufacturerPartNumber: e.target.value })}
+                placeholder="MAX-M10S-00B"
+                maxLength={120}
+                className={cn(input, "font-mono w-40")}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-10 text-tertiary uppercase">Link</span>
+              <input
+                type="url"
+                value={draft.url}
+                onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                placeholder="https://…"
+                className={cn(input, "w-56")}
+              />
+            </label>
             <label className="flex items-center gap-1.5 pb-1.5">
               <input
                 type="checkbox"
@@ -1183,6 +1225,24 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                   {CATEGORY_LABEL[e.category]}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-13 text-primary">{e.label}</span>
+                {/* In the row, not behind an edit form: a part number exists to be
+                    copied into somebody else's search box, and a field you have to
+                    open a form to read is one nobody uses twice. */}
+                {e.manufacturer_part_number && <CopyablePart value={e.manufacturer_part_number} />}
+                {e.url && (
+                  <a
+                    href={e.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    // -m-2 p-2 keeps the icon where it is and takes the tap target
+                    // to roughly 44px, which is what a finger needs.
+                    className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-accent-primary"
+                    title={`Where this came from — ${e.url}`}
+                    aria-label={`Open the link for ${e.label}`}
+                  >
+                    <LinkIcon className="size-3.5" />
+                  </a>
+                )}
                 {e.quantity !== 1 && (
                   <span className="flex-shrink-0 text-11 text-tertiary">
                     {e.quantity} × {money(e.amount, e.currency)}
@@ -1232,6 +1292,52 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     </div>
   );
 });
+
+/**
+ * A manufacturer part number, and one click to take it away.
+ *
+ * Shown in monospace because that is the only way "MAX-M10S-00B" and
+ * "MAXM10S00B" look different, and getting one character wrong is an order for
+ * the wrong part. Selecting it by hand out of a dense row is fiddly and easy to
+ * clip, so the whole chip is the copy button.
+ */
+function CopyablePart({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      // Long enough to be seen, short enough that the row is back to normal
+      // before the next glance — the chip is not a status, it is a receipt.
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // A denied clipboard permission is not worth a toast: the number is right
+      // there in selectable text, which is what it falls back to.
+      setToast({
+        type: TOAST_TYPE.INFO,
+        title: "Couldn't reach the clipboard",
+        message: `Select it by hand: ${value}`,
+      });
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      title={copied ? "Copied" : `Copy the part number — ${value}`}
+      aria-label={`Copy the part number ${value}`}
+      className={cn(
+        "font-mono flex max-w-[14rem] flex-shrink-0 items-center gap-1 rounded border border-subtle px-1.5 py-0.5 text-10 hover:bg-layer-2",
+        copied ? "text-success-primary" : "text-secondary"
+      )}
+    >
+      <span className="truncate">{value}</span>
+      {copied ? <Check className="size-3 flex-shrink-0" /> : <Copy className="size-3 flex-shrink-0 text-tertiary" />}
+    </button>
+  );
+}
 
 /**
  * Rates are stored lowercased and the vocabulary is not ("QA / test",

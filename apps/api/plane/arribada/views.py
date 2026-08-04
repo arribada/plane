@@ -4716,6 +4716,10 @@ class ProjectExpensesEndpoint(BaseAPIView):
         except (TypeError, ValueError):
             return Response({"error": "Amount and quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
 
+        url, denied = _expense_link(request.data.get("url"))
+        if denied:
+            return denied
+
         row = ProjectExpense.objects.create(
             project=project,
             category=str(request.data.get("category") or ProjectExpense.OTHER)[:16],
@@ -4726,6 +4730,8 @@ class ProjectExpensesEndpoint(BaseAPIView):
             planned=bool(request.data.get("planned", True)),
             incurred_on=_parse_date(request.data.get("incurred_on")),
             notes=str(request.data.get("notes") or "")[:2000],
+            url=url,
+            manufacturer_part_number=str(request.data.get("manufacturer_part_number") or "").strip()[:120],
             created_by=request.user,
         )
         return Response(_serialize_expense(row), status=status.HTTP_201_CREATED)
@@ -4764,6 +4770,15 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
             row.incurred_on = _parse_date(request.data.get("incurred_on"))
         if "notes" in request.data:
             row.notes = str(request.data.get("notes") or "")[:2000]
+        if "url" in request.data:
+            url, denied = _expense_link(request.data.get("url"))
+            if denied:
+                # Before `row.save()`, so a rejected link leaves the whole line as
+                # it was rather than half-applying the edits above it.
+                return denied
+            row.url = url
+        if "manufacturer_part_number" in request.data:
+            row.manufacturer_part_number = str(request.data.get("manufacturer_part_number") or "").strip()[:120]
         row.save()
         return Response(_serialize_expense(row), status=status.HTTP_200_OK)
 
@@ -4790,7 +4805,27 @@ def _serialize_expense(row):
         "planned": row.planned,
         "incurred_on": row.incurred_on.isoformat() if row.incurred_on else None,
         "notes": row.notes,
+        "url": row.url,
+        "manufacturer_part_number": row.manufacturer_part_number,
     }
+
+
+def _expense_link(value):
+    """A stored link, or an error to return. `("", None)` clears it.
+
+    The same rule IssueArtifactsEndpoint applies, for the same reason: a link
+    nobody can follow is worse than no link, because it looks like the thing at
+    the other end exists. An empty string is not a bad link — it is somebody
+    removing one, which has to stay possible.
+    """
+    url = str(value or "").strip()
+    if not url:
+        return "", None
+    if not url.startswith(("http://", "https://")):
+        return None, Response(
+            {"error": "That needs to be a http(s) link"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    return url[:2000], None
 
 
 def _budget_display(wanted, settings, allocated, allocation_currency, labour_totals, expenses):

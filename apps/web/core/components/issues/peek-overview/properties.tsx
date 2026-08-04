@@ -37,6 +37,8 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
+import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
+import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-details/parent-select-root";
 import { DateAlert } from "@/plane-web/components/issues/issue-details/sidebar/date-alert";
 import { TransferHopInfo } from "@/plane-web/components/issues/issue-details/sidebar/transfer-hop-info";
@@ -97,6 +99,19 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           />
         </SidebarPropertyListItem>
 
+        {/* Effort under State, Discipline under Assignees — the same two fields
+            and the same order as the full work item page. They were only ever
+            added there, and this panel is what opens from a list or the
+            timeline, which is where most people meet a work item: the fields
+            existed and were unreachable for anyone who never opened the full
+            page. */}
+        <IssueEffortField
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          isEditable={!disabled}
+        />
+
         <SidebarPropertyListItem icon={MembersPropertyIcon} label={t("common.assignees")}>
           <MemberDropdown
             value={issue?.assignee_ids ?? undefined}
@@ -114,6 +129,8 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
             dropdownArrowClassName="h-3.5 w-3.5 hidden group-hover:inline"
           />
         </SidebarPropertyListItem>
+
+        <IssueRoleField workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} isEditable={!disabled} />
 
         <SidebarPropertyListItem icon={PriorityPropertyIcon} label={t("common.priority")}>
           <PriorityDropdown

@@ -8,7 +8,7 @@ import { orderBy, set } from "lodash-es";
 import { observable, action, makeObservable, runInAction } from "mobx";
 import { computedFn } from "mobx-utils";
 import { STICKIES_PER_PAGE } from "@plane/constants";
-import type { InstructionType, TLoader, TPaginationInfo, TSticky } from "@plane/types";
+import type { InstructionType, TLoader, TPaginationInfo, TSticky, TStickyLayout } from "@plane/types";
 import { StickyService } from "@/services/sticky.service";
 
 export interface IStickyStore {
@@ -39,6 +39,8 @@ export interface IStickyStore {
     destinationId: string,
     edge: InstructionType
   ) => Promise<void>;
+  updateStickyLayout: (workspaceSlug: string, stickyId: string, layout: TStickyLayout) => Promise<void>;
+  resetStickyLayouts: (workspaceSlug: string) => Promise<void>;
 }
 
 export class StickyStore implements IStickyStore {
@@ -77,6 +79,8 @@ export class StickyStore implements IStickyStore {
       toggleShowNewSticky: action,
       fetchRecentSticky: action,
       updateStickyPosition: action,
+      updateStickyLayout: action,
+      resetStickyLayouts: action,
     });
     this.stickyService = new StickyService();
   }
@@ -205,7 +209,9 @@ export class StickyStore implements IStickyStore {
     } catch (error) {
       console.error("Error in updating sticky:", error);
       this.stickies[id] = sticky;
-      throw new Error();
+      // Rethrown with the original attached: callers only show a toast, but a
+      // bare `new Error()` threw away the only description of what failed.
+      throw new Error("Failed to update sticky", { cause: error });
     }
   };
 
@@ -270,6 +276,81 @@ export class StickyStore implements IStickyStore {
       console.error("Failed to move sticky");
       runInAction(() => {
         this.stickies[stickyId].sort_order = previousSortOrder;
+      });
+      throw error;
+    }
+  };
+
+  /**
+   * Commits where a sticky was dragged to and how big it was made.
+   *
+   * Deliberately not routed through `updateSticky`: that one writes
+   * `updates[key] || undefined` into the local copy, and a sticky dragged
+   * against the left or top edge has a coordinate of exactly 0, which is
+   * falsy. It would reach the server correctly and then read back locally as
+   * "never placed", so the note would jump home until the next refetch.
+   */
+  updateStickyLayout = async (workspaceSlug: string, stickyId: string, layout: TStickyLayout) => {
+    const sticky = this.stickies[stickyId];
+    if (!sticky) return;
+    const previous = {
+      position_x: sticky.position_x,
+      position_y: sticky.position_y,
+      width: sticky.width,
+      height: sticky.height,
+    };
+    try {
+      runInAction(() => {
+        Object.assign(this.stickies[stickyId], layout);
+      });
+      await this.stickyService.updateSticky(workspaceSlug, stickyId, layout);
+    } catch (error) {
+      console.error("Error in updating sticky layout:", error);
+      runInAction(() => {
+        Object.assign(this.stickies[stickyId], previous);
+      });
+      throw error;
+    }
+  };
+
+  /**
+   * Tidy up: every placed sticky forgets where it was put, and the automatic
+   * layout takes over again. `sort_order` is untouched on purpose — it is what
+   * the masonry orders by, so tidying up returns you to the arrangement you
+   * had before you started dragging rather than to an arbitrary one.
+   *
+   * Rolls back every sticky if any write fails, because a half-tidied board is
+   * a state the user cannot reason about: some notes home, some not, and no
+   * way to tell which.
+   */
+  resetStickyLayouts = async (workspaceSlug: string) => {
+    const placedIds = (this.workspaceStickies[workspaceSlug] || []).filter(
+      (id) => this.stickies[id]?.position_x != null
+    );
+    if (placedIds.length === 0) return;
+    const previous = new Map(
+      placedIds.map((id) => [
+        id,
+        {
+          position_x: this.stickies[id].position_x,
+          position_y: this.stickies[id].position_y,
+          width: this.stickies[id].width,
+          height: this.stickies[id].height,
+        },
+      ])
+    );
+    const cleared = { position_x: null, position_y: null, width: null, height: null };
+    try {
+      runInAction(() => {
+        placedIds.forEach((id) => Object.assign(this.stickies[id], cleared));
+      });
+      await Promise.all(placedIds.map((id) => this.stickyService.updateSticky(workspaceSlug, id, cleared)));
+    } catch (error) {
+      console.error("Error in resetting sticky layouts:", error);
+      runInAction(() => {
+        previous.forEach((layout, id) => {
+          if (this.stickies[id]) Object.assign(this.stickies[id], layout);
+        });
       });
       throw error;
     }

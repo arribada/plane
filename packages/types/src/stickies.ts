@@ -19,4 +19,24 @@ export type TSticky = {
   updated_at?: string | undefined;
   updated_by?: string | undefined;
   workspace: string | undefined;
+  /**
+   * Where the owner dragged this note, and how big they made it.
+   *
+   * null / undefined means "never touched — lay this one out automatically",
+   * which is what keeps the packed masonry the default and makes "tidy up" a
+   * write of nulls rather than a second layout-mode flag to keep in sync.
+   * All four move together: a sticky is either placed or it is not.
+   */
+  position_x?: number | null;
+  position_y?: number | null;
+  width?: number | null;
+  height?: number | null;
+};
+
+/** The four coordinates as one value, since they are only ever set together. */
+export type TStickyLayout = {
+  position_x: number;
+  position_y: number;
+  width: number;
+  height: number;
 };

@@ -1,0 +1,46 @@
+/*
+ * Copyright (c) 2026-present Arribada Initiative and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ *
+ * Movement on the free-placement stickies board.
+ *
+ * Same rule as gantt-motion.css, for the same reason: nothing here animates a
+ * property the board writes itself. Each note's position is an inline
+ * `translate` recomputed on every pointer frame, so a transition on it would
+ * make the note lag the pointer and drift — this animates opacity, box-shadow
+ * and background, none of which the drag code touches.
+ *
+ * All of it sits inside a prefers-reduced-motion guard. A board where notes
+ * move is exactly the kind of surface that makes motion-sensitive readers ill,
+ * and the feature still works with every rule below switched off.
+ */
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The note under the pointer. A shadow and a slight fade, not a scale: a
+     scaled note no longer lines up with the box it is about to be dropped in,
+     and the grip corner would stop sitting under the pointer. */
+  .stickies-free-canvas [data-lifted="true"] {
+    opacity: 0.85;
+    box-shadow: 0 10px 24px rgb(0 0 0 / 0.28);
+    transition:
+      opacity 120ms ease-out,
+      box-shadow 120ms ease-out;
+  }
+
+  /* The note that just landed. On a board of thirty near-identical squares the
+     one you released is otherwise impossible to pick out again — especially
+     after an arrow-key nudge, where nothing else on screen changed. */
+  .stickies-free-canvas .sticky-landed {
+    animation: sticky-land 900ms ease-out both;
+  }
+
+  @keyframes sticky-land {
+    0% {
+      box-shadow: 0 0 0 3px rgb(var(--color-accent-primary) / 0.55);
+    }
+    100% {
+      box-shadow: 0 0 0 3px rgb(var(--color-accent-primary) / 0);
+    }
+  }
+}

@@ -90,7 +90,7 @@ export const StickyDNDWrapper = observer(function StickyDNDWrapper(props: Props)
         dropTargetForElements({
           element,
           canDrop: ({ source }) => source.data?.type === "sticky",
-          getData: ({ input, element }) => {
+          getData: ({ input, element: dropElement }) => {
             const blockedStates: InstructionType[] = ["make-child"];
             if (!isLastChild) {
               blockedStates.push("reorder-below");
@@ -98,7 +98,7 @@ export const StickyDNDWrapper = observer(function StickyDNDWrapper(props: Props)
 
             return attachInstruction(initialData, {
               input,
-              element,
+              element: dropElement,
               currentLevel: 1,
               indentPerLevel: 0,
               mode: isLastChild ? "last-in-group" : "standard",
@@ -122,6 +122,10 @@ export const StickyDNDWrapper = observer(function StickyDNDWrapper(props: Props)
 
   return (
     <div
+      // Read by "Arrange freely" to seed each note's first free-board position
+      // from where the masonry had already put it, so the switch is seamless
+      // rather than a reshuffle the user then has to undo by hand.
+      data-sticky-id={stickyId}
       className="box-border flex flex-col p-[8px]"
       style={{
         width: itemWidth,

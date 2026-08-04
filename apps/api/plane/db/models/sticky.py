@@ -29,6 +29,25 @@ class Sticky(BaseModel):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stickies")
     sort_order = models.FloatField(default=65535)
 
+    # Where the owner dragged this note, and how big they made it.
+    #
+    # NULL is load-bearing and means "never touched — lay this one out
+    # automatically". That single convention buys both halves of the feature:
+    # the packed masonry stays the default for every sticky that exists today
+    # and every one created tomorrow, and "tidy up" is these four set back to
+    # NULL. No layout-mode flag to keep in sync with the coordinates, and no
+    # second row per user to go stale — a sticky is already private to its
+    # owner (see the owner FK and the viewset's owner_id filter), so these
+    # coordinates are per-user by construction.
+    #
+    # Floats, not integers: the browser hands back fractional pixels on a
+    # scaled display, and rounding on write would make notes creep by a pixel
+    # each time they were nudged.
+    position_x = models.FloatField(null=True, blank=True)
+    position_y = models.FloatField(null=True, blank=True)
+    width = models.FloatField(null=True, blank=True)
+    height = models.FloatField(null=True, blank=True)
+
     class Meta:
         verbose_name = "Sticky"
         verbose_name_plural = "Stickies"

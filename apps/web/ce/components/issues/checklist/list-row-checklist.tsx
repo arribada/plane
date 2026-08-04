@@ -16,6 +16,10 @@
  *
  * Rows that own nothing render nothing at all — not a greyed-out badge. An
  * affordance on every row would be the pollution the design rule forbids.
+ *
+ * The count comes from one call for the whole project; the lines behind it are
+ * fetched only when the dropdown is opened. A row costs nothing until it is
+ * asked a question, and a list of two hundred rows still costs one request.
  */
 import type { MouseEvent } from "react";
 import { useState } from "react";
@@ -24,7 +28,7 @@ import { CheckSquare, Loader2, Square } from "lucide-react";
 import { Popover } from "@plane/propel/popover";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn, generateWorkItemLink } from "@plane/utils";
-import { useIssueChecklist } from "./use-checklist";
+import { useChecklistCount, useIssueChecklist } from "./use-checklist";
 
 // The row itself is a link to the work item, so every click in here has to be
 // stopped before the row's navigation handler ever sees it.
@@ -41,13 +45,16 @@ type Props = {
 
 export const ListRowChecklist = observer(function ListRowChecklist(props: Props) {
   const { workspaceSlug, projectId, issueId } = props;
-  const checklist = useIssueChecklist(workspaceSlug, projectId, issueId);
+  const [open, setOpen] = useState(false);
   const [busyLine, setBusyLine] = useState<string | null>(null);
+  const count = useChecklistCount(workspaceSlug, projectId, issueId);
+  // The lines are what the dropdown shows, so they are fetched when it opens and
+  // not before.
+  const checklist = useIssueChecklist(workspaceSlug, projectId, issueId, open);
 
-  const total = checklist.items.length;
-  if (!workspaceSlug || !projectId || total === 0) return null;
+  if (!workspaceSlug || !projectId || !count || count.total === 0) return null;
 
-  const done = checklist.items.filter((row) => row.done).length;
+  const { done, total } = count;
 
   const toggle = async (event: MouseEvent, lineId: string) => {
     swallow(event);
@@ -68,7 +75,7 @@ export const ListRowChecklist = observer(function ListRowChecklist(props: Props)
   };
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <Popover.Button
         onClick={swallow}
         aria-label={`Checklist, ${done} of ${total} done`}
@@ -87,6 +94,15 @@ export const ListRowChecklist = observer(function ListRowChecklist(props: Props)
         className="shadow-lg z-[15] max-h-72 w-80 overflow-y-auto rounded-lg border border-subtle bg-surface-1 p-2"
       >
         <p className="mb-1 px-1 text-10 tracking-wide text-tertiary uppercase">Checklist</p>
+        {!checklist.loaded && (
+          // One placeholder per known line: the count is already right, so the
+          // dropdown opens at the height it will keep instead of growing.
+          <ul className="flex flex-col gap-0.5" aria-hidden>
+            {Array.from({ length: total }, (_, index) => (
+              <li key={index} className="my-0.5 h-4 animate-pulse rounded bg-layer-1" />
+            ))}
+          </ul>
+        )}
         <ul className="flex flex-col gap-0.5">
           {checklist.items.map((item) => (
             <li key={item.id} className="flex items-center gap-2 rounded-sm px-1 py-0.5 hover:bg-layer-1">

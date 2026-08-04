@@ -10,74 +10,91 @@
  * true in the other two straight away. Component state cannot do that, so the
  * cache lives out here, keyed by work item, and every reader subscribes to it.
  *
- * Loads are queued four at a time. The list asks for one checklist per visible
- * row, and twenty parallel GETs would compete with the requests the rows need
- * to render themselves.
+ * Two caches, because there are two questions. The lines of ONE checklist are
+ * fetched per work item, and only for a list somebody actually opened. How full
+ * every checklist in a project is comes from a single per-project call — the
+ * badges have to be right on every row, and asking per row was an N+1.
  */
 import { useCallback, useEffect, useState } from "react";
 import type { IState } from "@plane/types";
 import { IssueService } from "@/services/issue";
 import { ProjectStateService } from "@/services/project";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TIssueChecklistItem } from "@/plane-web/services/arribada.service";
+import type { TIssueChecklistItem, TIssueChecklistSummary } from "@/plane-web/services/arribada.service";
 
 const arribada = new ArribadaService();
 const issueService = new IssueService();
 const stateService = new ProjectStateService();
 
 type TEntry = { items: TIssueChecklistItem[] | null; loading: boolean };
+type TSummaryEntry = { counts: Record<string, TIssueChecklistSummary> | null; loading: boolean };
 
 const entries = new Map<string, TEntry>();
+const summaries = new Map<string, TSummaryEntry>();
 const listeners = new Map<string, Set<() => void>>();
 
 const keyOf = (projectId: string, issueId: string) => `${projectId}:${issueId}`;
+// Namespaced so a project's summary and one of its checklists can never share a
+// subscriber set.
+const summaryKeyOf = (projectId: string) => `summary:${projectId}`;
 
 const emit = (key: string) => {
   const subscribers = listeners.get(key);
   if (subscribers) for (const notify of subscribers) notify();
 };
 
-const MAX_IN_FLIGHT = 4;
-let inFlight = 0;
-const queue: (() => Promise<void>)[] = [];
-
-const pump = () => {
-  while (inFlight < MAX_IN_FLIGHT && queue.length > 0) {
-    // Newest first. Rows enqueue as they scroll into view, so the last thing
-    // asked for is the thing on screen; serving in arrival order would spend
-    // the whole queue on rows the reader has already scrolled past.
-    const job = queue.pop();
-    if (!job) return;
-    inFlight += 1;
-    void job().finally(() => {
-      inFlight -= 1;
-      pump();
-    });
-  }
-};
-
 /** Fetch once per work item. `force` is for after a write, when the cached list
  *  is known to be stale but is still the best thing to show meanwhile. */
-const load = (workspaceSlug: string, projectId: string, issueId: string, force = false) => {
+const load = async (workspaceSlug: string, projectId: string, issueId: string, force = false) => {
   const key = keyOf(projectId, issueId);
   const entry = entries.get(key);
   if (entry?.loading) return;
   if (entry?.items && !force) return;
   entries.set(key, { items: entry?.items ?? null, loading: true });
   emit(key);
-  queue.push(async () => {
-    try {
-      const items = await arribada.getIssueChecklist(workspaceSlug, projectId, issueId);
-      entries.set(key, { items, loading: false });
-    } catch {
-      // A checklist that would not load is shown as no checklist. It decorates
-      // a row that still has to render, and an error banner per row would say
-      // nothing useful twenty times over.
-      entries.set(key, { items: [], loading: false });
-    }
-    emit(key);
-  });
-  pump();
+  try {
+    const items = await arribada.getIssueChecklist(workspaceSlug, projectId, issueId);
+    entries.set(key, { items, loading: false });
+  } catch {
+    // A checklist that would not load is shown as no checklist. It decorates
+    // something that still has to render, and an error banner would say nothing
+    // the reader can act on.
+    entries.set(key, { items: [], loading: false });
+  }
+  emit(key);
+};
+
+/** Every badge in a project, in one call. Cached for the session. */
+const loadSummary = async (workspaceSlug: string, projectId: string, force = false) => {
+  const key = summaryKeyOf(projectId);
+  const entry = summaries.get(projectId);
+  if (entry?.loading) return;
+  if (entry?.counts && !force) return;
+  summaries.set(projectId, { counts: entry?.counts ?? null, loading: true });
+  emit(key);
+  try {
+    const counts = await arribada.getChecklistSummary(workspaceSlug, projectId);
+    summaries.set(projectId, { counts, loading: false });
+  } catch {
+    // Same reasoning as a checklist that would not load: no badges beats an
+    // error on a row the reader came here to read.
+    summaries.set(projectId, { counts: {}, loading: false });
+  }
+  emit(key);
+};
+
+/**
+ * A write changed how full one of this project's checklists is, so the counts
+ * held here are now wrong.
+ *
+ * Refetched while somebody is watching them, dropped otherwise — a tick made on
+ * the work item page must not spend a whole-project call for a list view nobody
+ * has open.
+ */
+const invalidateSummary = (workspaceSlug: string, projectId: string) => {
+  if (!summaries.has(projectId)) return;
+  if (listeners.get(summaryKeyOf(projectId))?.size) void loadSummary(workspaceSlug, projectId, true);
+  else summaries.delete(projectId);
 };
 
 // A member can live in another project, whose states the store has no reason to
@@ -129,6 +146,7 @@ export const setChecklistItemDone = async (
     entries.set(key, { loading: entry.loading, items });
     emit(key);
   }
+  invalidateSummary(workspaceSlug, ownerProjectId);
 };
 
 /** Puts an existing work item on another one's checklist — the write behind
@@ -142,7 +160,8 @@ export const addExistingToChecklist = async (
   const result = await arribada.addToIssueChecklist(workspaceSlug, ownerProjectId, ownerIssueId, {
     member_issue_id: memberIssueId,
   });
-  load(workspaceSlug, ownerProjectId, ownerIssueId, true);
+  void load(workspaceSlug, ownerProjectId, ownerIssueId, true);
+  invalidateSummary(workspaceSlug, ownerProjectId);
   return result;
 };
 
@@ -158,19 +177,11 @@ export type TChecklistHandle = {
   toggle: (item: TIssueChecklistItem, done: boolean) => Promise<void>;
 };
 
-/**
- * `autoLoad` off is for readers that must not cost a request until asked —
- * nothing in the list view should fetch anything the reader never looks at.
- */
-export const useIssueChecklist = (
-  workspaceSlug: string | undefined,
-  projectId: string | undefined,
-  issueId: string | undefined,
-  autoLoad = true
-): TChecklistHandle => {
+/** Re-render this component whenever that cache key changes. An empty key
+ *  subscribes to nothing, so a caller missing an id still calls the same hooks
+ *  in the same order. */
+const useCacheKey = (key: string) => {
   const [, bump] = useState(0);
-  const key = projectId && issueId ? keyOf(projectId, issueId) : "";
-
   useEffect(() => {
     if (!key) return;
     const notify = () => bump((n) => n + 1);
@@ -181,9 +192,50 @@ export const useIssueChecklist = (
       subscribers.delete(notify);
     };
   }, [key]);
+};
+
+/**
+ * How full one work item's checklist is, without its lines — and null when it
+ * has no checklist at all, which is what tells a badge to render nothing rather
+ * than a zero.
+ *
+ * Costs one call per project, not one per row. The open list's own copy wins
+ * while it is loaded: ticking patches it in place, so the badge follows the
+ * click instead of waiting for the summary to be fetched again.
+ */
+export const useChecklistCount = (
+  workspaceSlug: string | undefined,
+  projectId: string | undefined,
+  issueId: string | undefined
+): TIssueChecklistSummary | null => {
+  useCacheKey(projectId ? summaryKeyOf(projectId) : "");
+  useCacheKey(projectId && issueId ? keyOf(projectId, issueId) : "");
 
   useEffect(() => {
-    if (autoLoad && workspaceSlug && projectId && issueId) load(workspaceSlug, projectId, issueId);
+    if (workspaceSlug && projectId) void loadSummary(workspaceSlug, projectId);
+  }, [workspaceSlug, projectId]);
+
+  if (!projectId || !issueId) return null;
+  const items = entries.get(keyOf(projectId, issueId))?.items;
+  if (items) return { done: items.filter((row) => row.done).length, total: items.length };
+  return summaries.get(projectId)?.counts?.[issueId] ?? null;
+};
+
+/**
+ * `autoLoad` off is for readers that must not cost a request until asked —
+ * nothing in the list view should fetch anything the reader never looks at.
+ */
+export const useIssueChecklist = (
+  workspaceSlug: string | undefined,
+  projectId: string | undefined,
+  issueId: string | undefined,
+  autoLoad = true
+): TChecklistHandle => {
+  const key = projectId && issueId ? keyOf(projectId, issueId) : "";
+  useCacheKey(key);
+
+  useEffect(() => {
+    if (autoLoad && workspaceSlug && projectId && issueId) void load(workspaceSlug, projectId, issueId);
   }, [autoLoad, workspaceSlug, projectId, issueId]);
 
   const entry = key ? entries.get(key) : undefined;
@@ -192,7 +244,8 @@ export const useIssueChecklist = (
     async (name: string) => {
       if (!workspaceSlug || !projectId || !issueId) return;
       await arribada.addToIssueChecklist(workspaceSlug, projectId, issueId, { name });
-      load(workspaceSlug, projectId, issueId, true);
+      void load(workspaceSlug, projectId, issueId, true);
+      invalidateSummary(workspaceSlug, projectId);
     },
     [workspaceSlug, projectId, issueId]
   );
@@ -215,6 +268,7 @@ export const useIssueChecklist = (
         entries.set(cacheKey, { loading: current.loading, items: current.items.filter((row) => row.id !== lineId) });
         emit(cacheKey);
       }
+      invalidateSummary(workspaceSlug, projectId);
     },
     [workspaceSlug, projectId, issueId]
   );

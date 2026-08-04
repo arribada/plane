@@ -1089,6 +1089,24 @@ export class ArribadaService extends APIService {
   }
 
   /**
+   * done/total for every work item in this project that owns a checklist.
+   *
+   * The list view's badges in one call. Asking per row was an N+1 that no test
+   * catches, because a test never scrolls.
+   *
+   * Owners with no members are absent from the map rather than sent as a zero:
+   * a row with no checklist shows nothing, and a zero per work item would make
+   * the payload grow with the project instead of with the feature.
+   */
+  async getChecklistSummary(workspaceSlug: string, projectId: string): Promise<Record<string, TIssueChecklistSummary>> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/checklist-summary/`)
+      .then((r) => r?.data?.summaries ?? {})
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
    * `name` creates a work item in this project and puts it on the list — what
    * typing a line into a checklist means. `member_issue_id` puts an existing one
    * there, which is what "move this into that" does from the other end.
@@ -1534,6 +1552,9 @@ export type TIssueChecklistItem = {
   done: boolean;
   target_date: string | null;
 };
+
+/** How much of one work item's checklist is finished, with none of the lines. */
+export type TIssueChecklistSummary = { done: number; total: number };
 
 // --- Workload timeline -------------------------------------------------------
 // Declared here beside the only call that produces them, the way

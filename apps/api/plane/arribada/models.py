@@ -1276,3 +1276,56 @@ class GithubIssue(models.Model):
 
     def __str__(self):
         return f"{self.repo}#{self.number}"
+
+
+class IssueChecklistItem(models.Model):
+    """A work item that belongs to the checklist of another work item.
+
+    Deliberately NOT Plane's parent/sub-issue link, and that is the whole point.
+    A parent relationship propagates: sub-issues appear under their parent in
+    every list, every board and every timeline, they change counts and they
+    change filters. Membership of a checklist should do none of that — the member
+    is an ordinary work item that happens to also be ticked off somewhere.
+
+    Which is why "done" is NOT a column here. Ticking a box means the member work
+    item is finished, so the tick is read from its state group. A stored boolean
+    beside a state is two answers to one question, and the day they disagree
+    nobody knows which to believe.
+
+    One member may appear on several checklists — a shared piece of work really
+    does belong to two efforts — so this is a plain pair, unique per owner.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
+    )
+    # The work item whose checklist this is.
+    owner = models.ForeignKey(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_checklist"
+    )
+    # The work item that is on it. CASCADE: if the member is deleted the line has
+    # nothing left to point at, and a checklist of ghosts is worse than a shorter
+    # checklist.
+    member = models.ForeignKey(
+        "db.Issue", on_delete=models.CASCADE, related_name="arribada_checklist_memberships"
+    )
+    sort_order = models.FloatField(default=65535)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        db_table = "arribada_issue_checklist_item"
+        ordering = ("sort_order",)
+        verbose_name = "Checklist item"
+        verbose_name_plural = "Checklist items"
+        constraints = [
+            models.UniqueConstraint(fields=["owner", "member"], name="arribada_unique_checklist_pair"),
+            # An item on its own checklist is a loop with no meaning: it would be
+            # ticked by finishing itself.
+            models.CheckConstraint(
+                check=~models.Q(owner=models.F("member")), name="arribada_checklist_not_self"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.owner_id} ✓ {self.member_id}"

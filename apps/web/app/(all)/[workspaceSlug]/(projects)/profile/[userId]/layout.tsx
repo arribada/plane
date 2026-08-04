@@ -20,6 +20,7 @@ import { USER_PROFILE_PROJECT_SEGREGATION } from "@/constants/fetch-keys";
 import { useUserPermissions } from "@/hooks/store/user";
 import useSize from "@/hooks/use-window-size";
 // local components
+import { yourWorkPanel } from "@/plane-web/store/your-work-panel";
 import { UserService } from "@/services/user.service";
 import type { Route } from "./+types/layout";
 import { UserProfileHeader } from "./header";
@@ -96,7 +97,11 @@ function UseProfileLayout({ params }: Route.ComponentProps) {
             </div>
           </ContentWrapper>
         </div>
-        {isSmallerScreen && <ProfileSidebar userProjectsData={userProjectsData} />}
+        {/* Only the desktop instance answers to the preference. Below 768px the
+            panel is an overlay with its own toggle in the header and its own
+            outside-click dismissal, and a second switch governing the same thing
+            is how one of them ends up stuck. */}
+        {isSmallerScreen && !yourWorkPanel.hidden && <ProfileSidebar userProjectsData={userProjectsData} />}
       </div>
     </>
   );

@@ -19,6 +19,7 @@ import { ProfileIssuesFilter } from "@/components/profile/profile-issues-filter"
 // hooks
 import { useAppTheme } from "@/hooks/store/use-app-theme";
 import { useUser, useUserPermissions } from "@/hooks/store/user";
+import { yourWorkPanel } from "@/plane-web/store/your-work-panel";
 import { Button } from "@plane/propel/button";
 
 type TUserProfileHeader = {
@@ -70,6 +71,20 @@ export const UserProfileHeader = observer(function UserProfileHeader(props: TUse
       </Header.LeftItem>
       <Header.RightItem>
         <div className="hidden md:flex md:items-center">{showProfileIssuesFilter && <ProfileIssuesFilter />}</div>
+        {/* Desktop only. The panel was pinned open above 768px — a resize handler
+            re-opens it at every width in that range — so the mobile toggle below
+            was the only one that existed and it did nothing here. */}
+        <div className="hidden shrink-0 md:block">
+          <Button
+            variant="ghost"
+            size="lg"
+            onClick={() => yourWorkPanel.toggle()}
+            aria-pressed={!yourWorkPanel.hidden}
+            aria-label={yourWorkPanel.hidden ? "Show the details panel" : "Hide the details panel"}
+            title={yourWorkPanel.hidden ? "Show the details panel" : "Hide the details panel"}
+            appendIcon={<PanelRight className={yourWorkPanel.hidden ? "text-secondary" : "text-accent-primary"} />}
+          />
+        </div>
         <div className="flex gap-4 md:hidden">
           <CustomMenu
             maxHeight={"md"}

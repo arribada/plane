@@ -7464,6 +7464,13 @@ class IssueChecklistEndpoint(BaseAPIView):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        # Bound to the project, not merely to a project the caller can see. The
+        # POST on this class already does this; GET and DELETE did not, so any
+        # guest on any one project could read — and a member could delete — the
+        # checklist of any work item in the database by knowing its id.
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+
         rows = (
             IssueChecklistItem.objects.filter(owner_id=issue_id)
             .select_related("member", "member__state", "member__project")
@@ -7559,6 +7566,8 @@ class IssueChecklistEndpoint(BaseAPIView):
         removing a line from a list is not deleting the work it named."""
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
+            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
         deleted, _ = IssueChecklistItem.objects.filter(
             owner_id=issue_id, id=request.data.get("id")
         ).delete()

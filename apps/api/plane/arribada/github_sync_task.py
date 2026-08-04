@@ -4,13 +4,24 @@
 #
 # Periodic GitHub -> Plane ingestion. Pulls OPEN issues from the GitHub repos the
 # team has mapped to projects (ProjectWikiDoc.github_repo_urls), or an explicit
-# GITHUB_SYNC_REPOS allowlist, and UPSERTs them into the GHIN inbox project keyed
-# on external_id — so re-runs update instead of duplicating. The existing
-# github_classification task then routes each into its real project.
+# GITHUB_SYNC_REPOS allowlist, and records every one of them in the GithubIssue
+# table keyed on (workspace, repo, number) — so re-runs update instead of
+# duplicating.
+#
+# The inbox is that table now, not a project. It used to be the GHIN staging
+# project, and this whole sync was a loop over `Project.objects.filter(
+# identifier="GHIN")`: when GHIN was retired the loop body stopped executing and
+# the sync went on running, on schedule, doing nothing at all. Nothing errored.
+# So the capture no longer depends on any project existing — it is the one part
+# that must always happen, because it is what the triage page reads.
+#
+# A work item is created only when exactly one project claims the repo. A repo
+# nobody claims, or two projects claim, goes to the triage queue for a person to
+# decide: guessing would file work under a project that never asked for it.
 #
 # Dormant unless GITHUB_PAT is set (then it also lights up the classification task
 # and the Team-Hub activity feed, which read the same token). Scoped to mapped
-# repos on purpose, so a first run can't flood GHIN with every open org issue.
+# repos on purpose, so a first run can't flood the queue with every open org issue.
 
 import os
 from datetime import datetime
@@ -23,17 +34,13 @@ from django.utils import timezone
 GITHUB_API = "https://api.github.com"
 
 
-def _repo_owners():
-    """owner/repo -> the project that linked it. Empty when nobody has linked one.
+def _repo_claims():
+    """owner/repo -> {project_id, ...}: every project that named the repo.
 
-    The inbox was the only destination because nothing here knew where an issue
-    belonged. Now that a project names its repos, most issues have an obvious home
-    and routing them there is the difference between a queue somebody triages and
-    a queue somebody ignores.
-
-    A repo linked by TWO projects stays unrouted on purpose: guessing which one
-    owns it would file work under a project that never asked for it, and the
-    inbox is exactly the right place for "a human has to decide".
+    Kept whole, contested repos included, because two callers need two different
+    answers from the same scan: the router wants the repos exactly one project
+    claims, and the triage queue wants to show a person WHICH projects are
+    arguing over the rest so they can settle it.
     """
     from plane.arribada.models import ProjectWikiDoc
     from plane.arribada.views import _github_url
@@ -51,8 +58,63 @@ def _repo_owners():
                 continue
             repo = f"{bits[0]}/{bits[1]}".removesuffix(".git")
             claims.setdefault(repo, set()).add(project_id)
+    return claims
 
+
+def _repo_owners(claims=None):
+    """owner/repo -> the project that linked it. Empty when nobody has linked one.
+
+    The inbox was the only destination because nothing here knew where an issue
+    belonged. Now that a project names its repos, most issues have an obvious home
+    and routing them there is the difference between a queue somebody triages and
+    a queue somebody ignores.
+
+    A repo linked by TWO projects stays unrouted on purpose: guessing which one
+    owns it would file work under a project that never asked for it, and the
+    triage queue is exactly the right place for "a human has to decide".
+
+    `claims` is accepted so a caller that already scanned can pass its result in;
+    views.py calls this with no arguments and must keep working.
+    """
+    claims = _repo_claims() if claims is None else claims
     return {repo: next(iter(owners)) for repo, owners in claims.items() if len(owners) == 1}
+
+
+def _repo_workspaces(repos, claims):
+    """owner/repo -> the workspace its issues belong in, or None when unknowable.
+
+    The workspace used to come from the GHIN project, which is how the whole sync
+    ended up depending on GHIN existing. It is a property of the repo, not of any
+    inbox: the projects that named a repo say which workspace cares about it, and
+    even two projects fighting over one repo almost always sit in the same
+    workspace — a contested claim is still a claim on a workspace.
+
+    The last resort is "there is only one workspace here", which is true of every
+    self-hosted install this runs on. Beyond that the honest answer is None: a
+    GithubIssue row is keyed on a workspace, so an invented one would file real
+    issues into a tenant that never asked for them. The caller reports the repos
+    that land here rather than dropping them quietly, because a repo nobody can
+    place is a mapping somebody has to fix, not a fact to hide.
+    """
+    from plane.db.models import Project, Workspace
+
+    project_ids = {pid for owners in claims.values() for pid in owners}
+    # Deleted and archived projects are excluded: their wiki doc rows survive a
+    # soft delete, so a retired project would otherwise keep voting.
+    ws_of_project = dict(
+        Project.objects.filter(
+            id__in=project_ids, archived_at__isnull=True
+        ).values_list("id", "workspace_id")
+    )
+
+    only = list(Workspace.objects.values_list("id", flat=True)[:2])
+    lone = only[0] if len(only) == 1 else None
+
+    out = {}
+    for repo in repos:
+        found = {ws_of_project[pid] for pid in claims.get(repo, ()) if pid in ws_of_project}
+        out[repo] = found.pop() if len(found) == 1 else lone
+    return out
 
 
 def _repos_to_sync():
@@ -122,7 +184,7 @@ def _parse_gh_time(value):
         return None
 
 
-def _record_github_issue(workspace, repo, gh):
+def _record_github_issue(workspace_id, repo, gh):
     """Keep the issue as GitHub describes it, whole.
 
     Separate from creating a work item on purpose: an issue nobody has filed yet
@@ -148,7 +210,7 @@ def _record_github_issue(workspace, repo, gh):
         return None
     try:
         row, _ = GithubIssue.objects.update_or_create(
-            workspace=workspace,
+            workspace_id=workspace_id,
             repo=repo,
             number=int(number),
             defaults={
@@ -180,7 +242,7 @@ def _record_github_issue(workspace, repo, gh):
 
 
 
-def _link_github_issue(workspace, repo, gh, issue, auto):
+def _link_github_issue(workspace_id, repo, gh, issue, auto):
     """Record which work item this GitHub issue ended up in.
 
     `auto` distinguishes the router's decision from a person's, so an automatic
@@ -194,7 +256,7 @@ def _link_github_issue(workspace, repo, gh, issue, auto):
     if number is None:
         return
     try:
-        GithubIssue.objects.filter(workspace=workspace, repo=repo, number=int(number)).update(
+        GithubIssue.objects.filter(workspace_id=workspace_id, repo=repo, number=int(number)).update(
             filed_issue=issue, filed_at=_tz.now(), filed_by_rule="auto" if auto else ""
         )
     except Exception:
@@ -282,132 +344,197 @@ def github_plane_sync():
     if not repos:
         return {"skipped": "no repos mapped (set GITHUB_SYNC_REPOS or link repos to projects)"}
 
-    # fetch once; the same issues feed every GHIN project (usually just one)
     by_repo = {repo: _fetch_open_issues(pat, repo) for repo in repos}
     total_fetched = sum(len(v) for v in by_repo.values())
 
-    created = updated = 0
-    owners = _repo_owners()
+    claims = _repo_claims()
+    owners = _repo_owners(claims)
+    workspaces = _repo_workspaces(repos, claims)
 
-    for ghin in Project.objects.filter(identifier="GHIN").select_related("workspace"):
-        author_id = ghin.created_by_id or (
-            WorkspaceMember.objects.filter(workspace=ghin.workspace, is_active=True)
-            .values_list("member_id", flat=True)
-            .first()
-        )
-        default_state = (
-            State.objects.filter(project=ghin, default=True).first()
-            or State.objects.filter(project=ghin).order_by("sequence").first()
-        )
+    captured = created = updated = filed = queued = dismissed_skipped = 0
+    no_workspace = []
 
-        for repo, issues in by_repo.items():
-            # Where this repo's issues belong. The inbox is the fallback, not the
-            # default: an issue from a repo nobody claimed, or one two projects
-            # claim, is precisely what an inbox is for.
-            target = ghin
-            owner_id = owners.get(repo)
-            if owner_id:
-                claimed = Project.objects.filter(id=owner_id, archived_at__isnull=True).select_related("workspace").first()
-                # Same workspace only. A repo linked from another workspace's
-                # project would otherwise write an issue across a boundary that
-                # every permission check in Plane assumes cannot be crossed.
-                if claimed and claimed.workspace_id == ghin.workspace_id:
-                    target = claimed
+    # Per-project, not per-repo: ten repos claimed by one project used to mean ten
+    # identical State queries.
+    state_of = {}
+    author_of = {}
 
-            target_state = (
-                default_state
-                if target.id == ghin.id
-                else (
+    for repo, issues in by_repo.items():
+        if not issues:
+            continue
+
+        workspace_id = workspaces.get(repo)
+        if workspace_id is None:
+            # Named in GITHUB_SYNC_REPOS or in a wiki doc, but nothing says whose
+            # it is. Reported rather than dropped: it is a mapping to fix.
+            no_workspace.append(repo)
+            continue
+
+        # Where this repo's issues go. None means the triage queue, which is the
+        # normal answer for an unclaimed or contested repo, not a failure.
+        target = None
+        owner_id = owners.get(repo)
+        if owner_id:
+            target = (
+                Project.objects.filter(
+                    id=owner_id, archived_at__isnull=True, workspace_id=workspace_id
+                )
+                .select_related("workspace")
+                .first()
+            )
+
+        target_state = None
+        author_id = None
+        if target is not None:
+            if target.id not in state_of:
+                state_of[target.id] = (
                     State.objects.filter(project=target, default=True).first()
                     or State.objects.filter(project=target).order_by("sequence").first()
                 )
-            )
-
-            for gh in issues:
-                # Recorded whether or not it becomes a work item here: the raw
-                # issue is what the triage view will be built on.
-                record = _record_github_issue(ghin.workspace, repo, gh)
-                # Somebody looked at this and decided it belongs nowhere. Making a
-                # work item for it now is exactly the thing dismissing was meant to
-                # prevent — the row would be back in the inbox tomorrow and the
-                # decision would have cost nothing. The record itself stays current
-                # (title, labels, state), so restoring it later shows today's issue
-                # rather than the one from the day it was set aside.
-                if record is not None and record.dismissed_at is not None:
-                    continue
-                gid = str(gh.get("id") or "")
-                if not gid:
-                    continue
-                url = gh.get("html_url") or f"https://github.com/{repo}"
-                title = (gh.get("title") or "").strip()[:250] or f"{repo}#{gh.get('number')}"
-                # the description carries the repo url so classification can map it
-                desc_html = f'<p><a href="{url}">{url}</a></p>'
-
-                # Across both projects, not just the target: the row may already
-                # sit in the inbox from before this repo was linked, and creating a
-                # second copy in the project is how one issue becomes two tasks.
-                existing = (
-                    Issue.objects.filter(external_source="github", external_id=gid)
-                    .filter(project__in=[p for p in {ghin.id, target.id}])
+                author_of[target.id] = target.created_by_id or (
+                    WorkspaceMember.objects.filter(workspace_id=workspace_id, is_active=True)
+                    .values_list("member_id", flat=True)
                     .first()
                 )
-                if existing:
-                    # A row somebody has already dealt with is theirs, not the
-                    # sync's. Filing it, dating it, attaching it to a task or
-                    # assigning it are all acts of triage, and re-importing over
-                    # any of them undoes a decision a human made deliberately —
-                    # which is worse than the issue never arriving.
-                    #
-                    # Read from the work itself rather than a "touched" flag:
-                    # a flag has to be set by every code path that edits an
-                    # issue, and the one path that forgets is the one that
-                    # silently loses somebody's afternoon.
-                    triaged = bool(
-                        existing.start_date
-                        or existing.target_date
-                        or existing.parent_id
-                        # The explicit join, not `existing.assignees`: the M2M
-                        # goes through IssueAssignee, which is soft-deleted, so a
-                        # removed assignee would still count as triage.
-                        or IssueAssignee.objects.filter(
-                            issue_id=existing.id, deleted_at__isnull=True
-                        ).exists()
-                    )
-                    if triaged:
-                        continue
+            target_state = state_of[target.id]
+            author_id = author_of[target.id]
 
-                    fields = []
-                    if existing.project_id != target.id:
-                        existing.project_id = target.id
-                        existing.state = target_state
-                        fields.extend(["project", "state"])
-                    if existing.name != title:
-                        existing.name = title
-                        fields.append("name")
-                    if url not in (existing.description_html or ""):
-                        existing.description_html = desc_html
-                        fields.append("description_html")
-                    if fields:
-                        existing.save(update_fields=fields)
-                        updated += 1
-                else:
-                    made = Issue.objects.create(
-                        workspace=target.workspace,
-                        project=target,
-                        name=title,
-                        description_html=desc_html,
-                        external_source="github",
-                        external_id=gid,
-                        state=target_state,
-                        created_by_id=author_id,
-                    )
-                    created += 1
-                    # Only on creation, and only when a real project claimed the
-                    # repo. Enriching an inbox row would put a discipline and an
-                    # assignee on work nobody has accepted yet, and enriching an
-                    # existing row would overwrite decisions somebody made.
-                    if target.id != ghin.id:
-                        _enrich_filed_issue(made, target, gh)
-                    _link_github_issue(ghin.workspace, repo, gh, made, target.id != ghin.id)
+        for gh in issues:
+            # Unconditional, and first. This is the capture the triage page reads,
+            # and it is the reason the sync no longer needs a project to exist:
+            # what GitHub said is worth keeping whether or not anybody has decided
+            # where it belongs.
+            record = _record_github_issue(workspace_id, repo, gh)
+            if record is not None:
+                captured += 1
 
-    return {"repos": len(repos), "fetched": total_fetched, "created": created, "updated": updated, "at": str(timezone.now())}
+            # Somebody looked at this and decided it belongs nowhere. Making a
+            # work item for it now is exactly the thing dismissing was meant to
+            # prevent — the row would be back in the queue tomorrow and the
+            # decision would have cost nothing. The record itself stays current
+            # (title, labels, state), so restoring it later shows today's issue
+            # rather than the one from the day it was set aside.
+            if record is not None and record.dismissed_at is not None:
+                dismissed_skipped += 1
+                continue
+
+            if target is None:
+                # Nobody claims this repo, or several do. Creating anything here
+                # is the guess the triage queue exists to avoid — a work item in a
+                # project that never asked for it costs somebody a deletion, and a
+                # holding project to put it in instead is the inbox we just
+                # retired for filling up unread.
+                queued += 1
+                continue
+
+            # A person already filed this somewhere. Filing IS triage — the same
+            # decision the `triaged` check below protects, made one step earlier —
+            # so the router must not now drag the work item to the project it
+            # would have picked. Rows it filed itself ("auto") stay its own to
+            # keep up to date.
+            if record is not None and record.filed_issue_id and record.filed_by_rule != "auto":
+                continue
+
+            gid = str(gh.get("id") or "")
+            if not gid:
+                continue
+            url = gh.get("html_url") or f"https://github.com/{repo}"
+            title = (gh.get("title") or "").strip()[:250] or f"{repo}#{gh.get('number')}"
+            # the description carries the repo url so classification can map it
+            desc_html = f'<p><a href="{url}">{url}</a></p>'
+
+            # Workspace-wide, not just the target project: the same issue may
+            # already have been filed by hand into a different project, and
+            # creating a second copy is how one issue becomes two tasks.
+            #
+            # Deleted and archived projects are excluded deliberately. The
+            # retired GHIN inbox still holds its rows, soft-deleted along with
+            # it; adopting one would resurrect a work item into a live project
+            # by a side door, which is not what retiring the inbox meant.
+            existing = Issue.objects.filter(
+                external_source="github",
+                external_id=gid,
+                workspace_id=workspace_id,
+                project__deleted_at__isnull=True,
+                project__archived_at__isnull=True,
+            ).first()
+            if existing:
+                # A row somebody has already dealt with is theirs, not the
+                # sync's. Filing it, dating it, attaching it to a task or
+                # assigning it are all acts of triage, and re-importing over
+                # any of them undoes a decision a human made deliberately —
+                # which is worse than the issue never arriving.
+                #
+                # Read from the work itself rather than a "touched" flag:
+                # a flag has to be set by every code path that edits an
+                # issue, and the one path that forgets is the one that
+                # silently loses somebody's afternoon.
+                triaged = bool(
+                    existing.start_date
+                    or existing.target_date
+                    or existing.parent_id
+                    # The explicit join, not `existing.assignees`: the M2M
+                    # goes through IssueAssignee, which is soft-deleted, so a
+                    # removed assignee would still count as triage.
+                    or IssueAssignee.objects.filter(
+                        issue_id=existing.id, deleted_at__isnull=True
+                    ).exists()
+                )
+                if triaged:
+                    continue
+
+                fields = []
+                if existing.project_id != target.id:
+                    existing.project_id = target.id
+                    existing.state = target_state
+                    fields.extend(["project", "state"])
+                if existing.name != title:
+                    existing.name = title
+                    fields.append("name")
+                if url not in (existing.description_html or ""):
+                    existing.description_html = desc_html
+                    fields.append("description_html")
+                if fields:
+                    existing.save(update_fields=fields)
+                    updated += 1
+                # Even when nothing needed changing: the record of WHERE this
+                # issue lives was missing, and an unlinked row is one the queue
+                # would offer again.
+                if record is not None and not record.filed_issue_id:
+                    _link_github_issue(workspace_id, repo, gh, existing, True)
+                    filed += 1
+            else:
+                made = Issue.objects.create(
+                    workspace=target.workspace,
+                    project=target,
+                    name=title,
+                    description_html=desc_html,
+                    external_source="github",
+                    external_id=gid,
+                    state=target_state,
+                    created_by_id=author_id,
+                )
+                created += 1
+                # Only on creation. Enriching an existing row would overwrite
+                # decisions somebody made.
+                _enrich_filed_issue(made, target, gh)
+                _link_github_issue(workspace_id, repo, gh, made, True)
+                filed += 1
+
+    # Every one of these is a different thing that happened, and collapsing them
+    # was how "the sync ran and created nothing" read as success. `skipped` stays
+    # reserved for the two early configuration answers above — the Sync-now view
+    # treats a truthy `skipped` as "nothing to do", so the repos that could not be
+    # placed get their own key.
+    return {
+        "repos": len(repos),
+        "fetched": total_fetched,
+        "captured": captured,
+        "created": created,
+        "updated": updated,
+        "filed": filed,
+        "queued": queued,
+        "dismissed_skipped": dismissed_skipped,
+        "skipped_no_workspace": sorted(no_workspace),
+        "at": str(timezone.now()),
+    }

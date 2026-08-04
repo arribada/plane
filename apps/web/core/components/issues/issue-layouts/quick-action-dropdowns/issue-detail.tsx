@@ -21,6 +21,7 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useUserPermissions } from "@/hooks/store/user";
 // plane-web components
+import { MoveIntoWorkItemModal } from "@/plane-web/components/issues/checklist/move-into-modal";
 import { DuplicateWorkItemModal } from "@/plane-web/components/issues/issue-layouts/quick-action-dropdowns/duplicate-modal";
 // helper
 import { ArchiveIssueModal } from "../../archive-issue-modal";
@@ -66,6 +67,7 @@ export const WorkItemDetailQuickActions = observer(function WorkItemDetailQuickA
   const [deleteIssueModal, setDeleteIssueModal] = useState(false);
   const [archiveIssueModal, setArchiveIssueModal] = useState(false);
   const [duplicateWorkItemModal, setDuplicateWorkItemModal] = useState(false);
+  const [moveIntoWorkItemModal, setMoveIntoWorkItemModal] = useState(false);
   // store hooks
   const { allowPermissions } = useUserPermissions();
   const { issuesFilter } = useIssues(EIssuesStoreType.PROJECT);
@@ -141,6 +143,7 @@ export const WorkItemDetailQuickActions = observer(function WorkItemDetailQuickA
     setDeleteIssueModal: customDeleteAction,
     setArchiveIssueModal: customArchiveAction,
     setDuplicateWorkItemModal: customDuplicateAction,
+    setMoveIntoWorkItemModal,
     handleDelete: customDeleteAction,
     handleUpdate,
     handleArchive: customArchiveAction,
@@ -151,33 +154,14 @@ export const WorkItemDetailQuickActions = observer(function WorkItemDetailQuickA
   //   const MENU_ITEMS = useWorkItemDetailMenuItems(menuItemProps);
   const baseMenuItems = useWorkItemDetailMenuItems(menuItemProps);
 
-  const MENU_ITEMS = baseMenuItems
-    .map((item) => {
-      // Customize edit action for work item
-      if (item.key === "edit") {
-        return {
-          ...item,
-          shouldRender: isEditingAllowed && !isPeekMode,
-        };
-      }
-      // Customize delete action for work item
-      if (item.key === "delete") {
-        return {
-          ...item,
-        };
-      }
-      // Hide copy link in peek mode
-      if (item.key === "copy-link") {
-        return {
-          ...item,
-          shouldRender: !isPeekMode,
-        };
-      }
-      return item;
-    })
-    .filter(function MENU_ITEMS(item) {
-      return item.shouldRender !== false;
-    });
+  // Editing and copying the link are hidden in the peek, which offers both by
+  // other means. Filtered rather than rewritten through a spread: the old
+  // version overwrote shouldRender only to filter on it one line later.
+  const MENU_ITEMS = baseMenuItems.filter(function MENU_ITEMS(item) {
+    if (item.key === "edit") return isEditingAllowed && !isPeekMode;
+    if (item.key === "copy-link") return !isPeekMode;
+    return item.shouldRender !== false;
+  });
 
   const CONTEXT_MENU_ITEMS = MENU_ITEMS.map(function CONTEXT_MENU_ITEMS(item) {
     return {
@@ -234,6 +218,15 @@ export const WorkItemDetailQuickActions = observer(function WorkItemDetailQuickA
           }}
           workspaceSlug={workspaceSlug.toString()}
           projectId={issue.project_id}
+        />
+      )}
+      {issue.project_id && workspaceSlug && (
+        <MoveIntoWorkItemModal
+          workspaceSlug={workspaceSlug.toString()}
+          projectId={issue.project_id}
+          issueId={issue.id}
+          isOpen={moveIntoWorkItemModal}
+          onClose={() => setMoveIntoWorkItemModal(false)}
         />
       )}
 

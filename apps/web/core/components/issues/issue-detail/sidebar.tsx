@@ -37,6 +37,7 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
 // components
+import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/panel";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
 import { useFinishedPrompt } from "@/plane-web/components/issues/issue-details/use-finished-prompt";
@@ -307,6 +308,16 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               isEditable={isEditable}
             />
           </div>
+
+          {/* Outside the property list, not another row in it: a checklist is a
+              set of work items rather than a value of this one, and the list
+              above truncates every child it holds. */}
+          <IssueChecklistPanel
+            workspaceSlug={workspaceSlug}
+            projectId={projectId}
+            issueId={issueId}
+            disabled={!isEditable}
+          />
         </div>
       </div>
     </>

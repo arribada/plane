@@ -1072,6 +1072,59 @@ export class ArribadaService extends APIService {
       });
   }
 
+  /**
+   * The work items on this one's checklist.
+   *
+   * `done` arrives derived from each member's state group. It is not read back
+   * from a column here for the same reason the server does not keep one: the
+   * state IS whether the work is finished, and a second copy of that fact would
+   * be a second answer to the same question.
+   */
+  async getIssueChecklist(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueChecklistItem[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/checklist/`)
+      .then((r) => r?.data?.items ?? [])
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /**
+   * `name` creates a work item in this project and puts it on the list — what
+   * typing a line into a checklist means. `member_issue_id` puts an existing one
+   * there, which is what "move this into that" does from the other end.
+   */
+  async addToIssueChecklist(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    payload: { name: string } | { member_issue_id: string }
+  ): Promise<{ id: string; issue_id: string; created: boolean }> {
+    return this.post(
+      `/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/checklist/`,
+      payload
+    )
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
+  /** Takes the LINE off the list. The work item it named goes on existing. */
+  async removeFromIssueChecklist(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    id: string
+  ): Promise<{ deleted: boolean }> {
+    return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/checklist/`, {
+      id,
+    })
+      .then((r) => r?.data)
+      .catch((e) => {
+        throw e?.response?.data;
+      });
+  }
+
   /** What it actually took. Sent on its own, so the estimate is left alone. */
   async setIssueActualEffort(
     workspaceSlug: string,
@@ -1457,6 +1510,30 @@ export class ArribadaService extends APIService {
       });
   }
 }
+
+// --- Checklist ---------------------------------------------------------------
+
+/**
+ * One line of a work item's checklist.
+ *
+ * `id` is the LINE, `issue_id` the work item it points at — two different things
+ * that both have to travel, because removing a line must never be mistaken for
+ * deleting the work.
+ *
+ * The project is named rather than assumed: a checklist may legitimately point
+ * at work living in another project.
+ */
+export type TIssueChecklistItem = {
+  id: string;
+  issue_id: string;
+  name: string;
+  sequence_id: number;
+  project_id: string;
+  project_identifier: string;
+  state_id: string | null;
+  done: boolean;
+  target_date: string | null;
+};
 
 // --- Workload timeline -------------------------------------------------------
 // Declared here beside the only call that produces them, the way

@@ -36,6 +36,7 @@ import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 // plane web components
+import { IssueChecklistPanel } from "@/plane-web/components/issues/checklist/panel";
 import { WorkItemAdditionalSidebarProperties } from "@/plane-web/components/issues/issue-details/additional-properties";
 import { IssueEffortField } from "@/plane-web/components/issues/issue-details/effort-field";
 import { IssueRoleField } from "@/plane-web/components/issues/issue-details/role-field";
@@ -299,6 +300,11 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           isPeekView
         />
       </div>
+
+      {/* Same panel as the full work item page. The peek is what opens from a
+          list or the timeline, so a checklist that only existed on the full page
+          would be invisible to everyone who never opens one. */}
+      <IssueChecklistPanel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
     </div>
   );
 });

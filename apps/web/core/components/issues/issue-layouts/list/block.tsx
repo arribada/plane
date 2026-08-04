@@ -30,6 +30,7 @@ import { useProject } from "@/hooks/store/use-project";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
+import { ListRowChecklist } from "@/plane-web/components/issues/checklist/list-row-checklist";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // types
@@ -284,6 +285,16 @@ export const IssueBlock = observer(function IssueBlock(props: IssueBlockProps) {
             >
               <p className="cursor-pointer truncate text-body-xs-medium text-primary">{issue.name}</p>
             </Tooltip>
+            {/* Arribada: the list is the only layout that shows checklist
+                membership. It renders nothing for a row that owns no checklist,
+                so the rest of the list looks exactly as it did. */}
+            {!isEpic && (
+              <ListRowChecklist
+                workspaceSlug={workspaceSlug}
+                projectId={issue.project_id ?? undefined}
+                issueId={issue.id}
+              />
+            )}
             {isEpic && displayProperties && (
               <WithDisplayPropertiesHOC
                 displayProperties={displayProperties}
@@ -321,6 +332,10 @@ export const IssueBlock = observer(function IssueBlock(props: IssueBlockProps) {
                 isEpic={isEpic}
               />
               <div
+                // Presentational: it exists to stop clicks on the quick-action
+                // menu from reaching the row's link, and has no behaviour of its
+                // own for a keyboard to reach.
+                role="presentation"
                 className={cn("hidden", {
                   "md:flex": isSidebarCollapsed,
                   "lg:flex": !isSidebarCollapsed,

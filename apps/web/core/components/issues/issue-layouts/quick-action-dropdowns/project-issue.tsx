@@ -20,6 +20,7 @@ import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useUserPermissions } from "@/hooks/store/user";
 // plane-web imports
+import { MoveIntoWorkItemModal } from "@/plane-web/components/issues/checklist/move-into-modal";
 import { DuplicateWorkItemModal } from "@/plane-web/components/issues/issue-layouts/quick-action-dropdowns/duplicate-modal";
 // helper
 import { ArchiveIssueModal } from "../../archive-issue-modal";
@@ -49,6 +50,7 @@ export const ProjectIssueQuickActions = observer(function ProjectIssueQuickActio
   const [deleteIssueModal, setDeleteIssueModal] = useState(false);
   const [archiveIssueModal, setArchiveIssueModal] = useState(false);
   const [duplicateWorkItemModal, setDuplicateWorkItemModal] = useState(false);
+  const [moveIntoWorkItemModal, setMoveIntoWorkItemModal] = useState(false);
   // store hooks
   const { allowPermissions } = useUserPermissions();
   const { issuesFilter } = useIssues(EIssuesStoreType.PROJECT);
@@ -94,6 +96,7 @@ export const ProjectIssueQuickActions = observer(function ProjectIssueQuickActio
     setDeleteIssueModal,
     setArchiveIssueModal,
     setDuplicateWorkItemModal,
+    setMoveIntoWorkItemModal,
     handleDelete,
     handleUpdate,
     handleArchive,
@@ -146,6 +149,15 @@ export const ProjectIssueQuickActions = observer(function ProjectIssueQuickActio
           onClose={() => setDuplicateWorkItemModal(false)}
           workspaceSlug={workspaceSlug.toString()}
           projectId={issue.project_id}
+        />
+      )}
+      {issue.project_id && workspaceSlug && (
+        <MoveIntoWorkItemModal
+          workspaceSlug={workspaceSlug.toString()}
+          projectId={issue.project_id}
+          issueId={issue.id}
+          isOpen={moveIntoWorkItemModal}
+          onClose={() => setMoveIntoWorkItemModal(false)}
         />
       )}
 

@@ -4,8 +4,8 @@
  * See the LICENSE file for details.
  */
 
-import { useMemo } from "react";
-import { XCircle, ArchiveRestoreIcon } from "lucide-react";
+import { useCallback, useMemo } from "react";
+import { XCircle, ArchiveRestoreIcon, ListChecks } from "lucide-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { LinkIcon, CopyIcon, NewTabIcon, EditIcon, ArchiveIcon, TrashIcon } from "@plane/propel/icons";
@@ -68,6 +68,10 @@ export interface MenuItemFactoryProps {
   setDeleteIssueModal: (open: boolean) => void;
   setArchiveIssueModal?: (open: boolean) => void;
   setDuplicateWorkItemModal?: (open: boolean) => void;
+  // Arribada: opens the checklist-membership picker. Optional, so a surface that
+  // does not mount the modal simply does not offer the action rather than
+  // offering one that does nothing.
+  setMoveIntoWorkItemModal?: (open: boolean) => void;
   handleRemoveFromView?: () => void;
   handleRestore?: () => Promise<void>;
   // External handlers
@@ -119,6 +123,7 @@ export const useIssueActionHandlers = (props: MenuItemFactoryProps) => {
           title: "Restore success",
           message: "Your work item can be found in project work items.",
         });
+        return undefined;
       })
       .catch(() => {
         setToast({
@@ -155,6 +160,7 @@ export const useMenuItemFactory = (props: MenuItemFactoryProps) => {
     setDeleteIssueModal,
     setArchiveIssueModal,
     setDuplicateWorkItemModal,
+    setMoveIntoWorkItemModal,
     handleRemoveFromView,
   } = props;
 
@@ -241,6 +247,20 @@ export const useMenuItemFactory = (props: MenuItemFactoryProps) => {
     shouldRender: isRestoringAllowed,
   });
 
+  // Arribada: containment, not re-parenting. Nothing about the work item moves
+  // — it keeps its project, its parent and its place in every view — it simply
+  // appears on another item's checklist, which is the only place it shows.
+  const createMoveIntoWorkItemMenuItem = (): TContextMenuItem => ({
+    key: "move-into-work-item",
+    title: "Move into a work item",
+    description: "Puts it on that item's checklist. It stays where it is.",
+    icon: ListChecks,
+    className: "items-start",
+    iconClassName: "mt-1",
+    action: () => setMoveIntoWorkItemModal?.(true),
+    shouldRender: isEditingAllowed && !!setMoveIntoWorkItemModal,
+  });
+
   const createDeleteMenuItem = (): TContextMenuItem => ({
     key: "delete",
     title: t("common.actions.delete"),
@@ -259,6 +279,7 @@ export const useMenuItemFactory = (props: MenuItemFactoryProps) => {
     createCopyLinkMenuItem,
     createRemoveFromCycleMenuItem,
     createRemoveFromModuleMenuItem,
+    createMoveIntoWorkItemMenuItem,
     createArchiveMenuItem,
     createRestoreMenuItem,
     createDeleteMenuItem,
@@ -275,6 +296,7 @@ export const useProjectIssueMenuItems = (props: MenuItemFactoryProps): TContextM
       factory.createCopyMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createMoveIntoWorkItemMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
     ],
@@ -289,11 +311,12 @@ export const useWorkItemDetailMenuItems = (props: MenuItemFactoryProps): TContex
     () => [
       factory.createCopyMenuItem(props.workspaceSlug),
       factory.createOpenInNewTabMenuItem(),
+      factory.createMoveIntoWorkItemMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createRestoreMenuItem(),
       factory.createDeleteMenuItem(),
     ],
-    [factory]
+    [factory, props.workspaceSlug]
   );
 };
 
@@ -315,14 +338,18 @@ export const useAllIssueMenuItems = (props: MenuItemFactoryProps): TContextMenuI
 
 export const useCycleIssueMenuItems = (props: MenuItemFactoryProps): TContextMenuItem[] => {
   const factory = useMenuItemFactory(props);
+  const { setIssueToEdit, setCreateUpdateIssueModal, issue, cycleId } = props;
 
-  const customEditAction = () => {
-    props.setIssueToEdit({
-      ...props.issue,
-      cycle_id: props.cycleId ?? null,
+  // The edit action carries the cycle, so it is what the memo below actually
+  // depends on — naming `cycleId` there kept a stale action whenever anything
+  // else about the work item changed.
+  const customEditAction = useCallback(() => {
+    setIssueToEdit({
+      ...issue,
+      cycle_id: cycleId ?? null,
     });
-    props.setCreateUpdateIssueModal(true);
-  };
+    setCreateUpdateIssueModal(true);
+  }, [setIssueToEdit, setCreateUpdateIssueModal, issue, cycleId]);
 
   return useMemo(
     () => [
@@ -334,20 +361,23 @@ export const useCycleIssueMenuItems = (props: MenuItemFactoryProps): TContextMen
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
     ],
-    [factory, props.cycleId]
+    [factory, customEditAction]
   );
 };
 
 export const useModuleIssueMenuItems = (props: MenuItemFactoryProps): TContextMenuItem[] => {
   const factory = useMenuItemFactory(props);
+  const { setIssueToEdit, setCreateUpdateIssueModal, issue, moduleId } = props;
 
-  const customEditAction = () => {
-    props.setIssueToEdit({
-      ...props.issue,
-      module_ids: props.moduleId ? [props.moduleId] : [],
+  // Same as the cycle version: the memo depends on the action, not on the id
+  // the action happens to close over.
+  const customEditAction = useCallback(() => {
+    setIssueToEdit({
+      ...issue,
+      module_ids: moduleId ? [moduleId] : [],
     });
-    props.setCreateUpdateIssueModal(true);
-  };
+    setCreateUpdateIssueModal(true);
+  }, [setIssueToEdit, setCreateUpdateIssueModal, issue, moduleId]);
 
   return useMemo(
     () => [
@@ -359,7 +389,7 @@ export const useModuleIssueMenuItems = (props: MenuItemFactoryProps): TContextMe
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
     ],
-    [factory, props.moduleId]
+    [factory, customEditAction]
   );
 };
 

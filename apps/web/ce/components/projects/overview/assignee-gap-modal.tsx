@@ -29,7 +29,9 @@ type TItem = {
   role: string | null;
   suggested: string | null;
 };
-type TMember = { id: string; name: string; email: string };
+// `assignable` is false for roster people with no Plane account: an assignee
+// is a foreign key to an account, so they are shown and not selectable.
+type TMember = { id: string; name: string; email: string; assignable: boolean; roles: string[] };
 
 type Props = { isOpen: boolean; onClose: () => void; onDone: () => void };
 
@@ -91,7 +93,7 @@ export const AssigneeGapModal = observer(function AssigneeGapModal({ isOpen, onC
       isOpen={isOpen}
       onClose={onClose}
       title="Put somebody on these"
-      blurb="Rows already showing a name took it from the item's discipline, because exactly one person on this project holds it. Nothing is saved until you press the button."
+      blurb="Rows already showing a name took it from the item's discipline, because exactly one person on this project holds it. People on the roster with no Plane account are listed but cannot be picked — an assignee has to be an account. Nothing is saved until you press the button."
       count={items?.length ?? null}
       emptyMessage="Every open work item has somebody on it."
       filled={filled}
@@ -119,11 +121,22 @@ export const AssigneeGapModal = observer(function AssigneeGapModal({ isOpen, onC
               className="w-44 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
             >
               <option value="">Leave unassigned</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
+              {members.map((m) =>
+                m.assignable ? (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {m.roles.length > 0 ? ` — ${m.roles.join(", ")}` : ""}
+                  </option>
+                ) : (
+                  // Listed, disabled, and told why. Leaving them out made the
+                  // picker look broken: their disciplines are on the rows and
+                  // the people who hold them were simply absent.
+                  <option key={`${m.name}-external`} value="" disabled>
+                    {m.name}
+                    {m.roles.length > 0 ? ` (${m.roles.join(", ")})` : ""} — no Plane account
+                  </option>
+                )
+              )}
             </select>
           </li>
         ))}

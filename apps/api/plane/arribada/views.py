@@ -6665,21 +6665,65 @@ def _unheld_disciplines(project_id):
 
 
 def _assignable_members(project_id):
-    """People on this project who have a Plane account to be assigned with."""
+    """Everyone on this project, and whether they can actually take work.
+
+    Two populations that look the same to a reader and are not the same to the
+    database. Plane's assignee is a foreign key to a user account, so only people
+    with an account can be put on a work item. But most of this project's roster
+    has no account — the instance has a handful and the team is twenty — and a
+    picker that silently omitted them read as broken: the disciplines are right
+    there on the rows, and the people who hold them were missing from the list
+    with nothing saying why.
+
+    So they are listed, marked, and not selectable. "H.C.C holds mechanical but
+    has no Plane account" is an answer; an absence is not.
+    """
     rows = (
         ProjectMember.objects.filter(project_id=project_id, is_active=True)
         .exclude(member__email__startswith="bot_user_")
         .select_related("member")
         .values("member_id", "member__display_name", "member__email")
     )
-    return [
+    people = [
         {
             "id": str(r["member_id"]),
             "name": r["member__display_name"] or r["member__email"],
-            "email": r["member__email"],
+            "email": r["member__email"] or "",
+            "assignable": True,
+            "roles": [],
         }
         for r in rows
     ]
+    have_account = {p["id"] for p in people}
+
+    for name, email, roles, member_id in ProjectTeamMember.objects.filter(
+        project_id=project_id
+    ).values_list("name", "email", "roles", "member_id"):
+        if member_id and str(member_id) in have_account:
+            # Already in the list with an account; lend it their disciplines so
+            # the picker can say what each person covers.
+            for person in people:
+                if person["id"] == str(member_id):
+                    person["roles"] = [str(r).strip() for r in (roles or []) if str(r).strip()]
+            continue
+        if not (name or "").strip():
+            continue
+        people.append(
+            {
+                # No account, so no id to assign with. The name is the key the
+                # client renders; it is never sent back.
+                "id": "",
+                "name": name.strip(),
+                "email": (email or "").strip(),
+                "assignable": False,
+                "roles": [str(r).strip() for r in (roles or []) if str(r).strip()],
+            }
+        )
+
+    # Assignable first, then alphabetical: the list is for picking somebody, and
+    # the people you cannot pick belong underneath.
+    people.sort(key=lambda p: (not p["assignable"], p["name"].lower()))
+    return people
 
 
 

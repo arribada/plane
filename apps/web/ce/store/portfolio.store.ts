@@ -109,7 +109,7 @@ const NO_ITEMS: string[] = [];
 const ORDER_KEY = "arribada.portfolio.manualOrder";
 const FOLDER_PREFIX = "__folder__:";
 const NO_FOLDER = FOLDER_PREFIX + "none";
-type TFolder = { id: string; name: string; project_ids: string[] };
+type TFolder = { id: string; name: string; parent_id: string | null; project_ids: string[] };
 
 // Date comparator for row sorting: dated rows come before undated ones.
 const cmpDate = (a: string | null, b: string | null) => {
@@ -378,12 +378,35 @@ export class PortfolioStore implements IPortfolioStore {
     const sorted = this.sortedProjectIds;
     const seen = new Set<string>();
     const groups: { headerId: string; name: string; projectIds: string[] }[] = [];
+
+    // Depth-first over the folder tree, not a flat pass. Folders nest, and a
+    // parent whose projects all live in its subfolders holds none of its own —
+    // so a flat pass skipped it as empty and left its children sitting among
+    // unrelated top-level swimlanes, with nothing on screen saying they belonged
+    // together. The swimlane list is flat, so the hierarchy is carried in the
+    // name as a path; an empty parent still does not get a row of its own.
+    const byParent = new Map<string | null, TFolder[]>();
+    const known = new Set(this.folders.map((f) => f.id));
     for (const f of this.folders) {
-      const inFolder = new Set(f.project_ids);
-      const pids = sorted.filter((id) => inFolder.has(id) && !seen.has(id));
-      pids.forEach((id) => seen.add(id));
-      if (pids.length) groups.push({ headerId: FOLDER_PREFIX + f.id, name: f.name, projectIds: pids });
+      // A folder whose parent has gone missing is treated as a root rather than
+      // dropped: losing a swimlane is worse than misplacing one.
+      const key = f.parent_id && known.has(f.parent_id) ? f.parent_id : null;
+      byParent.set(key, [...(byParent.get(key) ?? []), f]);
     }
+
+    const walk = (parentId: string | null, prefix: string) => {
+      for (const f of byParent.get(parentId) ?? []) {
+        const path = prefix ? `${prefix} / ${f.name}` : f.name;
+        const inFolder = new Set(f.project_ids);
+        const pids = sorted.filter((id) => inFolder.has(id) && !seen.has(id));
+        pids.forEach((id) => seen.add(id));
+        if (pids.length) groups.push({ headerId: FOLDER_PREFIX + f.id, name: path, projectIds: pids });
+        // Children follow their parent, whether or not the parent had a row.
+        walk(f.id, path);
+      }
+    };
+    walk(null, "");
+
     const ungrouped = sorted.filter((id) => !seen.has(id));
     if (ungrouped.length) groups.push({ headerId: NO_FOLDER, name: "No folder", projectIds: ungrouped });
     return groups;
@@ -482,7 +505,12 @@ export class PortfolioStore implements IPortfolioStore {
         this.service.getFolders(workspaceSlug).catch(() => []),
       ]);
       runInAction(() => {
-        this.folders = folders.map((f) => ({ id: f.id, name: f.name, project_ids: f.project_ids }));
+        this.folders = folders.map((f) => ({
+          id: f.id,
+          name: f.name,
+          parent_id: f.parent_id ?? null,
+          project_ids: f.project_ids,
+        }));
         this.projectMap = {};
         for (const project of projects) set(this.projectMap, [project.id], project);
         // default selection: every non-archived project, in API order
@@ -543,7 +571,12 @@ export class PortfolioStore implements IPortfolioStore {
         this.service.getUserTimeline(workspaceSlug, userId),
       ]);
       runInAction(() => {
-        this.folders = folders.map((f) => ({ id: f.id, name: f.name, project_ids: f.project_ids }));
+        this.folders = folders.map((f) => ({
+          id: f.id,
+          name: f.name,
+          parent_id: f.parent_id ?? null,
+          project_ids: f.project_ids,
+        }));
         this.projectMap = {};
         for (const project of projects) set(this.projectMap, [project.id], project);
 

@@ -1280,7 +1280,7 @@ export class ArribadaService extends APIService {
       role: string | null;
       suggested: string | null;
     }[];
-    members: { id: string; name: string; email: string }[];
+    members: { id: string; name: string; email: string; assignable: boolean; roles: string[] }[];
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/assignee-gap/`)
       .then((r) => r?.data)

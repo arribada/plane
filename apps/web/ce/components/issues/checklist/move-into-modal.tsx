@@ -12,6 +12,11 @@
  * Nothing about the work item changes. It keeps its project, its parent, its
  * assignee and its place in every view — "move" here means it now appears on
  * another item's checklist, which is the one place membership shows.
+ *
+ * Several targets at once, because the picker is multi-select with a "Select
+ * all" button and the model puts one member on as many checklists as you like.
+ * It used to take `selected[0]` and drop the rest, so picking three and being
+ * congratulated left two of them nowhere.
  */
 import { observer } from "mobx-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
@@ -29,28 +34,54 @@ type Props = {
   onClose: () => void;
 };
 
+/** How a target reads in the toast: the identifier somebody actually recognises. */
+const named = (target: ISearchIssueResponse) => `${target.project__identifier}-${target.sequence_id}`;
+
 export const MoveIntoWorkItemModal = observer(function MoveIntoWorkItemModal(props: Props) {
   const { workspaceSlug, projectId, issueId, isOpen, onClose } = props;
 
   const onSubmit = async (selected: ISearchIssueResponse[]) => {
-    const target = selected[0];
-    if (!target) return;
-    try {
-      const result = await addExistingToChecklist(workspaceSlug, target.project_id, target.id, issueId);
-      setToast({
-        type: TOAST_TYPE.SUCCESS,
-        // The endpoint is idempotent, so saying "moved" after a no-op would be a
-        // lie the second time somebody picks the same target.
-        title: result.created ? "Moved" : "Already there",
-        message: `It is on the checklist of ${target.project__identifier}-${target.sequence_id}.`,
-      });
-    } catch (error) {
+    if (selected.length === 0) return;
+
+    // allSettled, not all: one target failing must not throw away the ones that
+    // worked, and the reader has to be told which is which — a blanket error
+    // after two of three succeeded would send them to undo work that is fine.
+    const results = await Promise.allSettled(
+      selected.map((target) => addExistingToChecklist(workspaceSlug, target.project_id, target.id, issueId))
+    );
+
+    const added: string[] = [];
+    const already: string[] = [];
+    const failed: string[] = [];
+    results.forEach((result, index) => {
+      const label = named(selected[index]);
+      if (result.status === "rejected") failed.push(label);
+      // The endpoint is idempotent, so saying "moved" after a no-op would be a
+      // lie the second time somebody picks the same target.
+      else if (result.value.created) added.push(label);
+      else already.push(label);
+    });
+
+    if (added.length === 0 && already.length === 0) {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't move it",
-        message: (error as { error?: string })?.error || "Nothing changed.",
+        message: `Nothing changed on ${failed.join(", ")}.`,
       });
+      return;
     }
+
+    const landed = [...added, ...already];
+    setToast({
+      // Partly done is not success: naming the ones that did not land is the
+      // only way somebody can retry just those.
+      type: failed.length > 0 ? TOAST_TYPE.WARNING : TOAST_TYPE.SUCCESS,
+      title: added.length > 0 ? `Moved into ${added.length}` : "Already there",
+      message:
+        failed.length > 0
+          ? `It is on the checklist of ${landed.join(", ")}. ${failed.join(", ")} did not take it.`
+          : `It is on the checklist of ${landed.join(", ")}.`,
+    });
   };
 
   return (

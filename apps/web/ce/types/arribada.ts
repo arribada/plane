@@ -470,6 +470,28 @@ export type TProjectExpense = {
 
 export type TMoney = { currency: string; amount: number };
 
+/** One sprint's cost, or — with a null `cycle_id` — everything in no sprint. */
+export type TCycleCost = {
+  /** Null on the unsprinted row. There is no cycle to link to, so a client that
+   *  routes on this cannot be made to route somewhere wrong. */
+  cycle_id: string | null;
+  name: string;
+  start_date: string | null;
+  end_date: string | null;
+  /** Archived cycles are kept: money they consumed did not stop having been
+   *  spent, and dropping them would reclassify their cost as unsprinted. */
+  archived: boolean;
+  /** Estimated from the plan. */
+  labour: number;
+  /** Recorded in the ledger, budgeted lines included — a sprint is a thing
+   *  somebody commits to, so what it has committed belongs in its figure. */
+  expense: number;
+  amount: number;
+  /** Work items in the sprint, not costed items: "9 items · nothing" is the
+   *  reading that says those items carry no dates or no discipline. */
+  items: number;
+};
+
 /**
  * The same figures read in one currency, as an approximation.
  *
@@ -524,6 +546,20 @@ export type TProjectBudget = {
     /** Rates held in a currency this reading cannot convert, so their cost has
      *  no month. The days are still in `labour.by_role`. */
     unconvertible?: string[];
+  } | null;
+  /** What each sprint costs, and what falls outside every one of them.
+   *
+   *  A cycle is the unit a project manager commits to and reports on; a calendar
+   *  month is an accounting artefact nobody plans in. Both halves are already
+   *  converted into `currency`, because these rows are read against each other
+   *  as bar lengths and two currencies have no comparable length. Absent on an
+   *  older server. */
+  by_cycle?: {
+    cycles: TCycleCost[];
+    currency: string;
+    /** Currencies the EUR/GBP pair cannot reach, so this chart leaves them out.
+     *  Their money is still in `expenses` and `labour`, as recorded. */
+    unconvertible: string[];
   } | null;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {

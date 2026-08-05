@@ -21,7 +21,7 @@ from rest_framework.response import Response
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.serializers import ProjectSerializer
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Issue, IssueAssignee, Project, ProjectMember, State, User, WorkspaceMember
+from plane.db.models import Cycle, CycleIssue, Issue, IssueAssignee, Project, ProjectMember, State, User, WorkspaceMember
 from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
@@ -5231,6 +5231,10 @@ class ProjectBudgetEndpoint(BaseAPIView):
                 from_effort += 1
             tasks.append(
                 {
+                    # Carried so the per-sprint breakdown below can place this
+                    # task's cost. Nothing else reads it — `_labour_cost` takes
+                    # only `role` and `days`.
+                    "id": r["id"],
                     "role": roles.get(str(r["id"])),
                     "days": float(recorded)
                     if recorded is not None
@@ -5313,8 +5317,27 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # spent yet" beside a figure that said otherwise. A currency the pair cannot
         # reach is still left out — and named, so it is a stated omission and not a
         # silent one.
+        #
+        # The same arithmetic also feeds the per-sprint breakdown, from the same
+        # loop rather than a second one: two passes over the same tasks is how a
+        # project ends up with a monthly total and a sprint total that do not add
+        # up to each other.
         labour_by_month = {}
+        labour_by_cycle = {}
         labour_unconvertible = set()
+        # Which sprint each work item sits in. Read from the join table directly —
+        # `CycleIssue.objects` already drops soft-deleted rows — because this map
+        # has to be able to place EVERY item that carries money, including the
+        # ones `Issue.issue_objects` hides. An item this map cannot place has its
+        # cost reported as unsprinted, which is a claim, so it had better be true.
+        #
+        # An item in two sprints keeps whichever the dict saw last. Deliberate:
+        # the alternative is to count its cost in both, and a chart whose rows
+        # add up to more than the project costs is worse than one that puts a
+        # rare item under one of its two sprints.
+        cycle_of_issue = dict(
+            CycleIssue.objects.filter(cycle__project_id=project_id).values_list("issue_id", "cycle_id")
+        )
         for task in tasks:
             role = (task["role"] or "").strip().lower()
             rate = rate_map.get(role) if role else None
@@ -5329,6 +5352,26 @@ class ProjectBudgetEndpoint(BaseAPIView):
                 continue
             key = f"{task['ends'].year}-{task['ends'].month:02d}"
             labour_by_month[key] = labour_by_month.get(key, 0.0) + value
+            # `None` is a real bucket here, not a miss: work in no sprint is the
+            # figure a sprint view exists to expose.
+            cycle_key = cycle_of_issue.get(task["id"])
+            labour_by_cycle[cycle_key] = labour_by_cycle.get(cycle_key, 0.0) + value
+
+        # Expenses beside that labour, in the same buckets. Planned lines are
+        # counted here although the monthly rhythm leaves them out, and the two
+        # are answering different questions: the rhythm is about the pace money
+        # has actually left the account, while a sprint is a thing somebody
+        # COMMITS to — a £4,000 board order budgeted into next sprint is exactly
+        # what they need to see before they commit to it.
+        expense_by_cycle = {}
+        cycle_unconvertible = set()
+        for row in expenses:
+            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
+            if value is None:
+                cycle_unconvertible.add((row.currency or "?").strip().upper())
+                continue
+            cycle_key = cycle_of_issue.get(row.issue_id) if row.issue_id else None
+            expense_by_cycle[cycle_key] = expense_by_cycle.get(cycle_key, 0.0) + value
 
         # What has been committed against the allocation, converted into the
         # allocation's own currency at the rate a human recorded.
@@ -5384,6 +5427,14 @@ class ProjectBudgetEndpoint(BaseAPIView):
             expenses,
         )
 
+        by_cycle = _cost_by_cycle(
+            project_id,
+            labour_by_cycle,
+            expense_by_cycle,
+            allocation_currency,
+            sorted(cycle_unconvertible | labour_unconvertible),
+        )
+
         return Response(
             {
                 "display": display,
@@ -5430,6 +5481,10 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     allocation_currency,
                     sorted(labour_unconvertible),
                 ),
+                # Cost per sprint. A cycle is the unit a project manager commits
+                # to and reports on, and until now the only time axis on this page
+                # was the calendar month — which nobody plans in.
+                "by_cycle": by_cycle,
                 "labour": labour,
                 "expenses": {
                     "by_category": sorted(
@@ -7086,6 +7141,130 @@ class GithubTriageEndpoint(BaseAPIView):
             {"total": sum(r["untriaged"] for r in rows), "projects": rows},
             status=status.HTTP_200_OK,
         )
+
+
+def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unconvertible):
+    """What each sprint costs, and what falls outside every one of them.
+
+    The Finance page could read a project by discipline and by calendar month.
+    Neither is a unit anybody commits to: a month is an accounting artefact and a
+    discipline has no dates. A cycle is what a manager promises a funder and what
+    they review at the end of, so it is the grain a budget conversation actually
+    happens in.
+
+    Both halves arrive already converted into the allocation's currency, because
+    a reader compares these rows against each other — bar against bar — and two
+    rows in two currencies have no comparable length. The recorded amounts are
+    untouched and still in `expenses` and `labour` beside this.
+
+    Three decisions worth stating:
+
+    - The unsprinted bucket is always reported when it holds anything, and never
+      folded into a total. Work nobody has put in a sprint is the single most
+      useful thing on this chart: it is either work about to arrive unannounced
+      or work somebody has quietly stopped tracking.
+    - Archived cycles stay. The Sprints page hides them because they are done
+      being planned; money they consumed did not stop having been spent, and
+      dropping them here would silently reclassify their cost as unsprinted.
+      They are flagged so a reader can tell.
+    - `items` counts the work items in the cycle, not the costed ones. A sprint
+      showing "9 items · nothing" is a sprint whose items carry no dates or no
+      discipline — which the warnings panel above already names, and which a
+      count of only the costed items would have hidden.
+    """
+    rows = list(
+        Cycle.objects.filter(project_id=project_id)
+        .order_by("start_date", "created_at")
+        .values("id", "name", "start_date", "end_date", "archived_at")
+    )
+
+    # Grouped, not one query per cycle. Counted from Issue.issue_objects the way
+    # the Sprints page counts, so the two screens agree on "how big is this
+    # sprint" — archived, draft and triage items are out of both.
+    #
+    # `issue_cycle__deleted_at__isnull=True` makes this a LEFT JOIN, so an item in
+    # no sprint comes back under a null key rather than not at all. That is the
+    # count wanted, and it is why this does not subtract: an item may sit in two
+    # cycles, so the group totals can exceed the project's item count and a
+    # subtraction would report the unsprinted figure as negative.
+    grouped = {
+        r["issue_cycle__cycle_id"]: r["n"]
+        for r in Issue.issue_objects.filter(
+            project_id=project_id, issue_cycle__deleted_at__isnull=True
+        )
+        .values("issue_cycle__cycle_id")
+        .annotate(n=Count("id", distinct=True))
+    }
+    live_cycles = {row["id"] for row in rows}
+    items_by_cycle = {key: n for key, n in grouped.items() if key in live_cycles}
+    # The null key, plus anything claimed by a cycle that no longer exists — a
+    # soft-deleted cycle leaves its join rows behind, and an item whose only
+    # sprint has been deleted is, for every purpose this chart has, unsprinted.
+    loose_items = sum(n for key, n in grouped.items() if key not in live_cycles)
+
+    def fold(bucket):
+        """Money against a cycle nobody can see any more belongs to nobody.
+
+        The caller keyed on whatever the join table said, which still names
+        soft-deleted cycles. Left as-is, that money would simply vanish off this
+        chart — the one failure mode a budget screen may not have.
+        """
+        out = {}
+        for key, value in bucket.items():
+            out.setdefault(key if key in live_cycles else None, 0.0)
+            out[key if key in live_cycles else None] += value
+        return out
+
+    labour_by_cycle = fold(labour_by_cycle)
+    expense_by_cycle = fold(expense_by_cycle)
+
+    cycles = []
+    for row in rows:
+        labour = round(labour_by_cycle.get(row["id"], 0.0), 2)
+        expense = round(expense_by_cycle.get(row["id"], 0.0), 2)
+        cycles.append(
+            {
+                "cycle_id": str(row["id"]),
+                "name": row["name"],
+                # Cycles store datetimes where the rest of this app stores dates.
+                "start_date": row["start_date"].date().isoformat() if row["start_date"] else None,
+                "end_date": row["end_date"].date().isoformat() if row["end_date"] else None,
+                "archived": row["archived_at"] is not None,
+                "labour": labour,
+                "expense": expense,
+                "amount": round(labour + expense, 2),
+                "items": items_by_cycle.get(row["id"], 0),
+            }
+        )
+
+    loose_labour = round(labour_by_cycle.get(None, 0.0), 2)
+    loose_expense = round(expense_by_cycle.get(None, 0.0), 2)
+    if loose_labour or loose_expense or loose_items:
+        cycles.append(
+            {
+                # Null rather than a sentinel string: there is no cycle to link to,
+                # and a client that keys on this must not be able to route to one.
+                "cycle_id": None,
+                "name": "Not in any sprint",
+                "start_date": None,
+                "end_date": None,
+                "archived": False,
+                "labour": loose_labour,
+                "expense": loose_expense,
+                "amount": round(loose_labour + loose_expense, 2),
+                "items": loose_items,
+            }
+        )
+
+    return {
+        "cycles": cycles,
+        # The currency every figure above was converted into, so the client
+        # formats them rather than assuming the allocation's.
+        "currency": currency,
+        # Currencies the EUR/GBP pair cannot reach. Their money is in `expenses`
+        # and `labour` as recorded; only this chart cannot place it.
+        "unconvertible": list(unconvertible),
+    }
 
 
 def _spend_rhythm(

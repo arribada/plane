@@ -653,6 +653,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           // ledger. On a project with no expenses — nearly all of them — it was
           // the only cost information on screen and it was the last thing on it.
           byRole={labour?.by_role ?? []}
+          // Cost per sprint. The page could read a project by discipline and by
+          // calendar month, and a manager commits to neither.
+          byCycle={budget?.by_cycle}
           money={money}
           currency={alloc?.currency ?? "EUR"}
         />

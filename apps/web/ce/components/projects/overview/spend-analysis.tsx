@@ -44,6 +44,18 @@ export type TSpendRhythm = {
 
 type TCategory = { category: string; planned: number; actual: number; currency: string };
 
+type TCycle = {
+  cycle_id: string | null;
+  name: string;
+  start_date: string | null;
+  end_date: string | null;
+  archived: boolean;
+  labour: number;
+  expense: number;
+  amount: number;
+  items: number;
+};
+
 type TRole = {
   role: string;
   days: number;
@@ -57,6 +69,8 @@ type Props = {
   rhythm: TSpendRhythm | null | undefined;
   byCategory: TCategory[];
   byRole: TRole[];
+  /** Absent on an older server; the sprint section simply does not render. */
+  byCycle?: { cycles: TCycle[]; currency: string; unconvertible: string[] } | null;
   money: (value: number, currency: string) => string;
   currency: string;
 };
@@ -83,20 +97,32 @@ const monthLabel = (key: string) => {
 /** Days as somebody would say them: 7, not 7.00, but 7.5 stays 7.5. */
 const dayCount = (days: number) => `${Number(days.toFixed(2))} d`;
 
-export function SpendAnalysis({ rhythm, byCategory, byRole, money, currency }: Props) {
+/** "3 Feb – 17 Feb", or one date when only one is set, or nothing. */
+const sprintDates = (start: string | null, end: string | null) => {
+  if (start && end) return `${renderFormattedDate(start)} – ${renderFormattedDate(end)}`;
+  return start ? renderFormattedDate(start) : end ? renderFormattedDate(end) : "";
+};
+
+export function SpendAnalysis({ rhythm, byCategory, byRole, byCycle, money, currency }: Props) {
   const months = rhythm?.months ?? [];
   const spentByCategory = byCategory.filter((row) => row.actual > 0);
   const total = spentByCategory.reduce((sum, row) => sum + row.actual, 0);
   // A discipline with no days at all is nothing to draw; one with days and no
   // rate is the whole point of the section and stays.
   const roles = byRole.filter((row) => row.days > 0);
+  // Every sprint the server sent, empty ones included: a sprint that costs
+  // nothing is a sprint whose items carry no dates or no discipline, and a
+  // filter here would hide exactly the row somebody needs to see. Dropped only
+  // when the project runs no sprints at all and there is no chart to draw.
+  const sprints = byCycle?.cycles ?? [];
+  const sprintCcy = byCycle?.currency ?? currency;
   // The rhythm is computed in the allocation's currency; older servers did not
   // say so, and this component was assuming it and happening to be right.
   const rhythmCcy = rhythm?.currency ?? currency;
 
   // Genuinely nothing to say: no plan, no receipts. Not an error and not an
   // empty chart — a sentence.
-  if (months.length === 0 && total === 0 && roles.length === 0) {
+  if (months.length === 0 && total === 0 && roles.length === 0 && !sprints.some((row) => row.amount > 0)) {
     return (
       <p className="px-3 py-4 text-13 text-tertiary">
         Nothing recorded yet. The charts appear as soon as the work items carry dates and a discipline, or the first
@@ -120,6 +146,17 @@ export function SpendAnalysis({ rhythm, byCategory, byRole, money, currency }: P
   const hasLabour = months.some((m) => (m.labour ?? 0) > 0);
   const hasExpense = months.some((m) => (m.expense ?? 0) > 0 || (m.labour == null && m.amount > 0));
   const bothKinds = hasLabour && hasExpense;
+
+  // The same reading for the sprint rows, asked separately: a project can carry
+  // budgeted expense in a sprint and none on the monthly curve, which counts
+  // only money that has actually left the account.
+  const sprintCeiling = Math.max(...sprints.map((row) => row.amount), 1);
+  const sprintBothKinds = sprints.some((row) => row.labour > 0) && sprints.some((row) => row.expense > 0);
+  const unsprinted = sprints.find((row) => row.cycle_id === null);
+  // A project that runs no sprints at all comes back as one row. A one-bar bar
+  // chart is a sentence pretending to be a chart, so it gets to be a sentence —
+  // and when that row is also worth nothing there is no sentence worth writing.
+  const noSprints = sprints.length === 1 && !!unsprinted;
 
   return (
     <div className="space-y-5 px-3 py-3">
@@ -174,6 +211,143 @@ export function SpendAnalysis({ rhythm, byCategory, byRole, money, currency }: P
             <p className="mt-2 text-11 text-tertiary">
               Rates are recorded in {roleCurrencies.join(" and ")}, so the bar lengths above are not comparable to each
               other. The figures beside them are.
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* Cost per sprint, between the discipline breakdown and the monthly rate.
+          A cycle is the unit somebody commits to and reports on; the month below
+          answers a different question — how fast is this burning — and putting
+          the planning unit first is what makes the runway reading land. */}
+      {noSprints && unsprinted && unsprinted.amount > 0 && (
+        <section>
+          <h3 className="mb-1 text-11 font-medium tracking-wide text-tertiary uppercase">Cost per sprint</h3>
+          <p className="text-12 text-secondary">
+            This project runs no sprints, so all {money(unsprinted.amount, sprintCcy)} of it — {unsprinted.items} work
+            item{unsprinted.items === 1 ? "" : "s"} — sits outside any sprint review.
+          </p>
+        </section>
+      )}
+
+      {sprints.length > 0 && !noSprints && (
+        <section>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-11 font-medium tracking-wide text-tertiary uppercase">Cost per sprint</h3>
+            <span className="text-11 text-tertiary">
+              Labour estimated from the plan, expenses as recorded — budgeted ones included
+            </span>
+          </div>
+
+          {/* Two series need a legend; one names itself in the line above. */}
+          {sprintBothKinds && (
+            <ul className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              <li className="flex items-center gap-1.5 text-11 text-secondary">
+                <span className="size-2.5 flex-shrink-0 rounded-sm bg-accent-primary/45" aria-hidden />
+                Labour — estimated from the plan
+              </li>
+              <li className="flex items-center gap-1.5 text-11 text-secondary">
+                <span className="size-2.5 flex-shrink-0 rounded-sm bg-accent-primary" aria-hidden />
+                Expenses — recorded
+              </li>
+            </ul>
+          )}
+
+          {/* Horizontal, because a sprint's name is a sentence somebody wrote
+              ("Sprint 3 — Príncipe field prep") and a column chart would either
+              clip it or turn it on its side. */}
+          <ul className="flex flex-col gap-2">
+            {sprints.map((row) => {
+              const dates = sprintDates(row.start_date, row.end_date);
+              const loose = row.cycle_id === null;
+              return (
+                <li
+                  key={row.cycle_id ?? "unsprinted"}
+                  // The unsprinted row is a different kind of fact from a sprint,
+                  // so it is separated rather than merely last in the list.
+                  className={cn(loose && "mt-1 border-t border-subtle pt-2")}
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className={cn("truncate text-12", loose ? "text-tertiary italic" : "text-secondary")}>
+                        {row.name}
+                      </span>
+                      {row.archived && (
+                        <span
+                          className="flex-shrink-0 rounded bg-layer-1 px-1.5 text-10 text-tertiary"
+                          title="This sprint is archived. Its cost is kept — money it consumed was still spent."
+                        >
+                          archived
+                        </span>
+                      )}
+                      {dates && <span className="flex-shrink-0 text-10 text-tertiary">{dates}</span>}
+                    </span>
+                    <span className="flex-shrink-0 text-11 text-tertiary tabular-nums">
+                      {row.items} item{row.items === 1 ? "" : "s"}
+                      <span className={cn("ml-2", row.amount > 0 ? "text-primary" : "text-tertiary")}>
+                        {row.amount > 0 ? money(row.amount, sprintCcy) : "nothing costed"}
+                      </span>
+                    </span>
+                  </div>
+                  {row.amount > 0 ? (
+                    <div className="mt-1 h-1.5 w-full rounded-sm bg-layer-1">
+                      {/* gap-[2px] rather than a border between the halves: a
+                          border sits inside the box and the shortest legible
+                          segment here is about 2px wide, so it would eat it. */}
+                      <div
+                        className="flex h-full gap-[2px]"
+                        style={{ width: `${Math.max((row.amount / sprintCeiling) * 100, 1)}%` }}
+                        title={
+                          sprintBothKinds
+                            ? `${row.name} · ${money(row.labour, sprintCcy)} labour + ${money(row.expense, sprintCcy)} expenses`
+                            : `${row.name} · ${money(row.amount, sprintCcy)}`
+                        }
+                      >
+                        {row.labour > 0 && (
+                          <div
+                            className={cn(
+                              "h-full rounded-l-sm bg-accent-primary/45",
+                              // A lighter fill only reads as "the other one" when
+                              // there is another one.
+                              !sprintBothKinds && "rounded-r-sm bg-accent-primary",
+                              row.expense <= 0 && "rounded-r-sm"
+                            )}
+                            style={{ width: `${(row.labour / row.amount) * 100}%` }}
+                          />
+                        )}
+                        {row.expense > 0 && (
+                          <div
+                            className={cn("h-full rounded-r-sm bg-accent-primary", row.labour <= 0 && "rounded-l-sm")}
+                            style={{ width: `${(row.expense / row.amount) * 100}%` }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    // Empty track, not a missing one: the sprint exists and holds
+                    // items, and a row that simply disappeared would read as a
+                    // sprint that does not exist rather than one nobody has dated.
+                    <div
+                      className="mt-1 h-1.5 w-full rounded-sm border border-dashed border-subtle"
+                      title={`${row.name} · no cost — its items carry no dates, no discipline, or no rate`}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {unsprinted && unsprinted.amount > 0 && (
+            <p className="mt-2 text-11 text-tertiary">
+              {money(unsprinted.amount, sprintCcy)} of this project is not in any sprint. That is work no review covers
+              — either it is about to arrive unannounced, or nobody is tracking it.
+            </p>
+          )}
+
+          {byCycle?.unconvertible && byCycle.unconvertible.length > 0 && (
+            <p className="mt-2 text-11 text-tertiary">
+              Figures in {byCycle.unconvertible.join(", ")} are not on this chart — only euros and sterling convert, and
+              a third currency would need a rate nobody here chose. They are still in the ledger below.
             </p>
           )}
         </section>

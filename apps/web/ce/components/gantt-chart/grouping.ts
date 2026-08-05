@@ -26,7 +26,9 @@ export const GROUP_BY_OPTIONS: { value: TGanttGroupBy; label: string; hint?: str
   { value: "assignee", label: "Assignee" },
   { value: "state", label: "State" },
   { value: "priority", label: "Priority" },
-  { value: "cycle", label: "Sprint / cycle" },
+  // The key stays `cycle` — it is Plane's field name and it is code. Only the
+  // label is vocabulary, and here it is only ever a sprint.
+  { value: "cycle", label: "Sprint" },
 ];
 
 /** Prefixes a synthetic row id. Real ids are UUIDs, so this can never collide. */

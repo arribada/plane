@@ -6881,18 +6881,21 @@ class IssueFixedCostEndpoint(BaseAPIView):
     capacity bar booked its owner for those six weeks, and the workload timeline
     called it a clash with the work they were actually doing.
 
-    None of that is a new kind of money, so this writes no new kind of money: the
-    figure is a row in the same ProjectExpense ledger the Finance page already
-    reads, with `issue` saying which item it belongs to. One number, one place.
+    None of that is a new kind of money, and there is none here: the figure is a
+    row in the same ProjectExpense ledger the Finance page reads, with `issue`
+    saying which item it belongs to. One number, one place.
 
-    `replaces_labour` is what makes the item stop being costed as our time. It is
-    a choice and not a consequence of the link, because both cases are real — a
-    subcontracted build IS its invoice, while £200 of parts for a task we also
-    spend three days on is a cost BESIDE three days of labour, and collapsing the
-    two would silently zero the second one.
+    READ ONLY, deliberately. This used to accept a POST as well, so a price could
+    be typed straight from the work item panel. It no longer can: money is
+    entered on the expense form and nowhere else. Two entry points meant two sets
+    of fields and two sets of validation for one ledger row, and this one had
+    also had to invent a rule for WHICH of an item's several lines it was editing
+    — a rule no other screen knew about.
 
-    Writing is the lead's, like every other line on the sheet: this commits budget.
-    Everyone else reads it and raises a purchase request instead.
+    The read is the other half of that decision. An item whose cost is a
+    supplier's invoice still has to SAY so on the screen somebody opens it from,
+    or the panel shows no effort, no cost and no explanation, and the only
+    conclusion available is that the thing is free.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
@@ -6910,99 +6913,24 @@ class IssueFixedCostEndpoint(BaseAPIView):
         return Response(
             {
                 **_serialize_fixed_cost(row, issue),
-                # More than one line can be attached — a purchase request that was
-                # approved against this item leaves one too. The panel edits a
+                # More than one line can be attached — a purchase request that
+                # was approved against this item leaves one too. The panel shows a
                 # single line, so it has to be able to say the sheet holds others
-                # rather than silently representing the whole as the part.
+                # rather than silently representing the part as the whole.
                 "other_lines": max(0, len(rows) - (1 if row else 0)),
-                # A read-only reader still sees the figure; only the lead may
-                # change it. Sent rather than inferred in the browser, because the
-                # rule ("either roster counts, and an admin only on a leaderless
-                # project") lives in one place on the server.
-                "can_edit": _is_project_lead(request.user, project_id),
             },
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
-    def post(self, request, slug, project_id, issue_id):
-        project = _visible_projects(request, slug).filter(id=project_id).first()
-        if not project:
-            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-        denied = _lead_guard(request, project_id)
-        if denied:
-            return denied
-        issue = Issue.issue_objects.filter(id=issue_id, project_id=project_id).values(
-            "name", "start_date", "target_date"
-        ).first()
-        if not issue:
-            return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
-
-        rows = list(ProjectExpense.objects.filter(issue_id=issue_id, project_id=project_id))
-        row = _primary_fixed_cost(rows)
-
-        # Removing is explicit, never "the box came back empty". This deletes a
-        # recorded amount out of the ledger a grant is reconciled against, and a
-        # blur event is not consent — the same reason the sheet asks before it
-        # deletes a line.
-        if request.data.get("remove"):
-            if row:
-                row.delete()
-            return Response(_serialize_fixed_cost(None, issue), status=status.HTTP_200_OK)
-
-        try:
-            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
-            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
-        except (TypeError, ValueError):
-            return Response(
-                {"error": "The price and the quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST
-            )
-        lead_time, denied = _expense_lead_time(request.data.get("lead_time_days"))
-        if denied:
-            return denied
-
-        fields = {
-            "amount": amount,
-            "quantity": quantity,
-            "currency": str(request.data.get("currency") or "EUR").strip().upper()[:3],
-            "supplier": str(request.data.get("supplier") or "").strip()[:255],
-            "lead_time_days": lead_time,
-            "replaces_labour": bool(request.data.get("replaces_labour", True)),
-            "planned": bool(request.data.get("planned", True)),
-        }
-        if "category" in request.data:
-            fields["category"] = str(request.data.get("category") or ProjectExpense.HARDWARE)[:16]
-
-        if row:
-            for field, value in fields.items():
-                setattr(row, field, value)
-            row.save()
-        else:
-            row = ProjectExpense.objects.create(
-                project=project,
-                issue_id=issue_id,
-                # The item's own name, so the ledger reads as a sentence rather
-                # than as a row of unlabelled money. Copied once: the lead may
-                # rename the line afterwards and renaming the task must not
-                # overwrite what they wrote on the sheet.
-                label=(issue["name"] or "Supplier cost")[:255],
-                # Subcontracted manufacturing is the case this exists for; the
-                # lead can change it, and every other category stays available.
-                category=fields.pop("category", ProjectExpense.SERVICES),
-                created_by=request.user,
-                **fields,
-            )
-        return Response(_serialize_fixed_cost(row, issue), status=status.HTTP_200_OK)
-
 
 def _primary_fixed_cost(rows):
-    """The one line of several that the work item panel edits.
+    """The one line of several that the work item panel shows.
 
     Prefers the line that stands in for labour, because that is the one whose
     flag changes what the item costs everywhere else; then the largest, which on
     a task with a build and its shipping is the build. Deterministic on purpose —
-    a panel that edited a different row depending on query ordering would look
-    like it lost somebody's number.
+    a panel that named a different figure depending on query ordering would look
+    like it had lost somebody's number.
     """
     if not rows:
         return None

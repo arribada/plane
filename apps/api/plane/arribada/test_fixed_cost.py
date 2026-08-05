@@ -7,7 +7,7 @@
 Two pieces of arithmetic sit under the feature and both are easy to get quietly
 wrong later.
 
-The first is which of several ledger lines the work item panel edits. A panel
+The first is which of several ledger lines the work item panel shows. A panel
 that picked a different row depending on query ordering would look like it had
 lost somebody's number, and the row it picks is the one whose flag decides
 whether the item is costed as labour at all.
@@ -36,7 +36,7 @@ class Line:
         self.replaces_labour = replaces_labour
 
 
-# --- which line the panel edits ---------------------------------------------
+# --- which line the panel shows ---------------------------------------------
 
 
 def test_nothing_recorded_is_nothing_to_edit():

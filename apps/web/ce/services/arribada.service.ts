@@ -26,7 +26,6 @@ import type {
   TProjectDocs,
   TProcurementRequest,
   TProjectExpense,
-  TExpenseCategory,
   TCurrencySettings,
   TRolePreset,
   TRoleRate,
@@ -1109,34 +1108,6 @@ export class ArribadaService extends APIService {
    */
   async getIssueFixedCost(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueFixedCost> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/fixed-cost/`)
-      .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
-  }
-
-  /** Lead only. `{ remove: true }` deletes the ledger line the item carried. */
-  async setIssueFixedCost(
-    workspaceSlug: string,
-    projectId: string,
-    issueId: string,
-    data:
-      | { remove: true }
-      | {
-          amount: number;
-          quantity?: number;
-          currency: string;
-          category?: TExpenseCategory;
-          planned?: boolean;
-          supplier?: string;
-          lead_time_days?: number | null;
-          replaces_labour?: boolean;
-        }
-  ): Promise<TIssueFixedCost> {
-    return this.post(
-      `/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/fixed-cost/`,
-      data
-    )
       .then((r) => r?.data)
       .catch((e) => {
         throw e?.response?.data;

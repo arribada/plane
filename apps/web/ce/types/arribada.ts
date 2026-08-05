@@ -616,7 +616,8 @@ export type TProjectBudget = {
  *
  * The money is a line in the ordinary expense ledger — there is no second notion
  * of spend — and `replaces_labour` is what takes the item out of the labour
- * estimate and out of everybody's capacity.
+ * estimate and out of everybody's capacity. Read-only: the line is entered and
+ * changed on the expense form, which is the only place money is entered at all.
  */
 export type TIssueFixedCost = {
   /** Null when nothing has been recorded against this item. */
@@ -635,10 +636,8 @@ export type TIssueFixedCost = {
    *  — and null once the item already has a target somebody decided. */
   suggested_target: string | null;
   /** Other lines on the sheet against this same item, which this panel does not
-   *  edit. Only present on a read. */
+   *  show. Only present on a read. */
   other_lines?: number;
-  /** Whether this reader may change it. The sheet is the lead's. */
-  can_edit?: boolean;
 };
 
 /** Somebody asking to spend the project's money. Inert until the lead approves. */

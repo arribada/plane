@@ -41,8 +41,24 @@ type Props = {
   toolbarActions?: React.ReactNode;
 };
 
-const toolButton =
-  "flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover";
+/** Grows a control's tap area six pixels up and six pixels down without moving
+ *  or resizing anything that is drawn.
+ *
+ *  Everything in this toolbar is between 16 and 24 pixels tall, because it is a
+ *  dense row of secondary controls and it should look like one. A finger is not
+ *  16 pixels wide. Padding would have been the obvious fix, but padding paints:
+ *  each of these buttons has a hover background, and inflating them would turn
+ *  the toolbar into a second header. An empty ::after belongs to its button, so
+ *  a tap anywhere in it is a tap on the button, and it draws nothing.
+ *
+ *  Vertical only. Adjacent controls here sit half a gap apart, so widening the
+ *  areas sideways would stack one button's target on top of its neighbour's —
+ *  worse than a small target is a target that fires the button next to it. The
+ *  row's gap-y is 12px for the same reason: two of these areas meeting between
+ *  two wrapped lines must not overlap either. */
+const touchArea = "relative after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']";
+
+const toolButton = `flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-layer-transparent p-1 px-2 text-11 hover:bg-layer-transparent-hover ${touchArea}`;
 
 /** A hairline between two groups of controls.
  *
@@ -105,12 +121,19 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
           is its min-content — the widest single group — so when the row runs out of
           width the count above is squeezed and truncated first, and a group is
           never cut in half. */}
-      <div className="flex flex-1 flex-wrap items-center justify-end gap-x-2 gap-y-1.5">
+      <div className="flex flex-1 flex-wrap items-center justify-end gap-x-2 gap-y-3">
         {toolbarLeading}
         {toolbarLeading && <GanttToolbarDivider />}
 
-        {/* Time scale: which unit, where in it, and how tightly it is packed. */}
-        <div className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
+        {/* Time scale: which unit, where in it, and how tightly it is packed.
+            This group alone is about 420px of atomic controls, which is wider
+            than a phone — so unlike its neighbours it is allowed to wrap inside
+            itself, and it therefore cannot be flex-shrink-0. That costs nothing
+            on a wide chart: flex only shrinks an item once it is alone on a line
+            and still does not fit, so on a desktop this group behaves exactly as
+            it did, and on a phone it breaks between its own sub-groups instead
+            of pushing the page sideways. */}
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-3 whitespace-nowrap">
           {/* Buttons, not clickable divs: this is how the chart's scale is steered, and
               it was unreachable without a mouse. aria-pressed says which one is on.
               Boxed together because they are one choice of three, not three switches. */}
@@ -120,9 +143,13 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
                 key={chartView?.key}
                 type="button"
                 aria-pressed={currentView === chartView?.key}
-                className={cn("cursor-pointer rounded-sm px-2 py-0.5 text-11 hover:bg-layer-transparent-hover", {
-                  "bg-layer-transparent-active hover:bg-layer-transparent-active": currentView === chartView?.key,
-                })}
+                className={cn(
+                  "cursor-pointer rounded-sm px-2 py-0.5 text-11 hover:bg-layer-transparent-hover",
+                  touchArea,
+                  {
+                    "bg-layer-transparent-active hover:bg-layer-transparent-active": currentView === chartView?.key,
+                  }
+                )}
                 onClick={() => handleChartView(chartView?.key)}
               >
                 {t(chartView?.i18n_title)}
@@ -142,7 +169,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
           <div className="flex flex-shrink-0 items-center rounded-md bg-layer-3">
             <button
               type="button"
-              className="rounded-l-md p-1 px-1.5 hover:bg-layer-transparent-hover"
+              className={cn("rounded-l-md p-1 px-1.5 hover:bg-layer-transparent-hover", touchArea)}
               onClick={() => setZoom(zoom / 1.25)}
               aria-label="Zoom out"
               title="Show more time in the same width"
@@ -151,7 +178,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
             </button>
             <button
               type="button"
-              className="min-w-11 px-1 text-11 text-tertiary tabular-nums hover:text-primary"
+              className={cn("min-w-11 px-1 text-11 text-tertiary tabular-nums hover:text-primary", touchArea)}
               onClick={() => setZoom(1)}
               title="Back to this scale's own day width"
             >
@@ -159,7 +186,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
             </button>
             <button
               type="button"
-              className="rounded-r-md p-1 px-1.5 hover:bg-layer-transparent-hover"
+              className={cn("rounded-r-md p-1 px-1.5 hover:bg-layer-transparent-hover", touchArea)}
               onClick={() => setZoom(zoom * 1.25)}
               aria-label="Zoom in"
               title="Spread the same time over more width"
@@ -169,16 +196,23 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
           </div>
 
           {/* Beside the zoom rather than in the Display menu: it is the same question
-              — how much time is on screen — answered in one press. */}
+              — how much time is on screen — answered in one press.
+              "Fit" alone said nothing about what it fits, and the sentence that
+              did was in a title attribute, which a touch screen never shows. The
+              label now names the thing; the full sentence is the accessible name
+              and the desktop tooltip. */}
           {handleFitToBlocks && (
             <button
               type="button"
               className={toolButton}
               onClick={handleFitToBlocks}
+              // Begins with the words on the button, so voice control still
+              // reaches it by what it says.
+              aria-label="Fit whole plan: pick the closest scale on which every dated item fits, and scroll to its first day"
               title="Frame the whole plan: pick the closest scale on which every dated item fits, and scroll to its first day"
             >
               <Maximize2 className="size-3.5" />
-              Fit
+              Fit whole plan
             </button>
           )}
         </div>
@@ -232,8 +266,12 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
 
           <button
             type="button"
-            className="flex items-center justify-center rounded-md border border-subtle bg-layer-transparent p-1 transition-all hover:bg-layer-transparent-hover"
+            className={cn(
+              "flex items-center justify-center rounded-md border border-subtle bg-layer-transparent p-1 transition-all hover:bg-layer-transparent-hover",
+              touchArea
+            )}
             onClick={toggleFullScreenMode}
+            aria-label={fullScreenMode ? "Leave full screen" : "Fill the window with this timeline"}
             title={fullScreenMode ? "Leave full screen" : "Fill the window with this timeline"}
           >
             {fullScreenMode ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />}

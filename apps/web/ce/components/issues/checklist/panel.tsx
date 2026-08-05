@@ -151,14 +151,22 @@ export const IssueChecklistPanel = observer(function IssueChecklistPanel(props: 
       ) : (
         <ul className="flex flex-col gap-1">
           {checklist.items.map((item) => (
-            <li key={item.id} className="group flex items-center gap-2">
+            // gap-4, not gap-2: both controls on this line pull themselves back
+            // with -m-2, so the row needs 16px of gap to end up looking like the
+            // 8px it always had — and to keep the two padded hit boxes from
+            // touching. py-1 gives the rows enough pitch that one line's tick box
+            // cannot overlap the next one's.
+            <li key={item.id} className="group flex items-center gap-4 py-1">
               <button
                 type="button"
                 disabled={disabled || busyLine === item.id}
                 onClick={() => void toggle(item.id)}
                 aria-pressed={item.done}
                 aria-label={item.done ? `Reopen ${item.name}` : `Complete ${item.name}`}
-                className="flex-shrink-0 text-tertiary hover:text-accent-primary disabled:opacity-50"
+                // -m-2 p-2 leaves the 14px icon exactly where it is and takes the
+                // target out to a finger's width. This is the feature's primary
+                // action and it was a 14px tap.
+                className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-accent-primary disabled:opacity-50"
               >
                 {busyLine === item.id ? (
                   <Loader2 className="size-3.5 animate-spin" />
@@ -190,11 +198,13 @@ export const IssueChecklistPanel = observer(function IssueChecklistPanel(props: 
                   type="button"
                   onClick={() => void remove(item.id, item.name)}
                   aria-label={`Take ${item.name} off this checklist`}
-                  className={cn(
-                    // p-2 -m-2 leaves the icon where it is and takes the target to ~44px.
-                    "-m-2 flex-shrink-0 p-2 text-tertiary opacity-0 transition-opacity",
-                    "group-hover:opacity-100 hover:text-danger-primary focus-visible:opacity-100"
-                  )}
+                  // Always drawn, never revealed on hover. There is no hover on a
+                  // touch screen, and this is the only way a line comes off a
+                  // checklist — hiding it behind a pointer removed the feature
+                  // outright for anyone on a phone. It stays quiet at text-tertiary
+                  // and only colours on hover, which is what the reveal was for.
+                  // p-2 -m-2 leaves the icon where it is and takes the target out.
+                  className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-danger-primary"
                 >
                   <Trash2 className="size-3" />
                 </button>

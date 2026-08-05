@@ -79,8 +79,13 @@ export const ListRowChecklist = observer(function ListRowChecklist(props: Props)
       <Popover.Button
         onClick={swallow}
         aria-label={`Checklist, ${done} of ${total} done`}
+        // -my-2 py-2 grows the tap target downwards and upwards into the row's own
+        // padding — the row is min-h-11, so there is room — while leaving the badge
+        // drawn exactly where it was. Vertical only, deliberately: the horizontal
+        // neighbours here sit 2px away, so a negative x-margin would put this
+        // badge's hit area on top of the work item's name.
         className={cn(
-          "flex flex-shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 text-10 text-tertiary",
+          "-my-2 flex flex-shrink-0 items-center gap-1 rounded-sm px-1 py-2 text-10 text-tertiary",
           "hover:bg-layer-1 hover:text-secondary"
         )}
       >

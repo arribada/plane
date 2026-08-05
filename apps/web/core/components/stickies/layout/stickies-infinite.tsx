@@ -11,7 +11,7 @@ import useSWR from "swr";
 import { LayoutGrid, Loader2, Move } from "lucide-react";
 import { STICKIES_PER_PAGE } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import { ContentWrapper, Loader } from "@plane/ui";
+import { AlertModalCore, ContentWrapper, Loader } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { useIntersectionObserver } from "@/hooks/use-intersection-observer";
 import { useSticky } from "@/hooks/use-stickies";
@@ -35,6 +35,8 @@ export const StickiesInfinite = observer(function StickiesInfinite() {
   //state
   const [elementRef, setElementRef] = useState<HTMLDivElement | null>(null);
   const [switchingLayout, setSwitchingLayout] = useState(false);
+  /** Whether the "are you sure" for tidying up is on screen. */
+  const [confirmingTidyUp, setConfirmingTidyUp] = useState(false);
 
   // ref
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,6 +135,10 @@ export const StickiesInfinite = observer(function StickiesInfinite() {
       });
     } finally {
       setSwitchingLayout(false);
+      // Closed at the end, not on the click: this pages the whole workspace, so
+      // it can take seconds, and the dialog's own button is where that is shown.
+      // Closing first would have left the board looking idle while it worked.
+      setConfirmingTidyUp(false);
     }
   }, [workspaceSlug, resetStickyLayouts, switchingLayout]);
 
@@ -152,14 +158,18 @@ export const StickiesInfinite = observer(function StickiesInfinite() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            onClick={isFreeLayout ? handleTidyUp : handleArrangeFreely}
+            onClick={isFreeLayout ? () => setConfirmingTidyUp(true) : handleArrangeFreely}
             disabled={switchingLayout}
             className={cn(
               "flex items-center gap-1.5 rounded border border-subtle px-2 py-1 text-12 text-secondary",
               switchingLayout ? "opacity-50" : "hover:bg-layer-transparent-hover hover:text-primary"
             )}
             // Named, not iconic: tidying up discards placements somebody made by
-            // hand, and a bare icon is not enough warning for that.
+            // hand, and a bare icon is not enough warning for that. The name was
+            // still not enough — the sentence saying what "tidy up" destroys lived
+            // in this title, which a touch screen never shows, and the button did
+            // it to every note in the workspace on one tap with no way back. It
+            // asks first now; the title is the desktop hint it always was.
             title={
               isFreeLayout
                 ? "Put every sticky back into the automatic layout"
@@ -177,6 +187,21 @@ export const StickiesInfinite = observer(function StickiesInfinite() {
           </button>
         </div>
       )}
+
+      {/* Every note in the workspace, not just the ones on screen, and there is
+          no undo — the coordinates are gone from the database, not hidden. That
+          is a sentence worth reading before it happens rather than after. */}
+      <AlertModalCore
+        isOpen={confirmingTidyUp}
+        handleClose={() => setConfirmingTidyUp(false)}
+        handleSubmit={() => void handleTidyUp()}
+        isSubmitting={switchingLayout}
+        variant="danger"
+        title="Put every sticky back into the automatic layout?"
+        content="This forgets where every sticky in this workspace was placed — including the ones this board has not scrolled to yet — and packs them all again. It cannot be undone."
+        primaryButtonText={{ default: "Tidy up", loading: "Tidying up" }}
+        secondaryButtonText="Leave them where they are"
+      />
 
       {isFreeLayout ? (
         <>

@@ -759,6 +759,14 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             {pending.length} purchase request{pending.length === 1 ? "" : "s"} waiting
             {!canApprove && <span className="font-normal text-11 text-tertiary">— the project lead decides</span>}
           </p>
+          {/* Said once, in the open. It used to live only in Approve's title
+              attribute, which is nothing at all on a touch screen — and what the
+              button does to the budget is not a detail to discover afterwards. */}
+          {canApprove && (
+            <p className="mb-1.5 text-11 text-tertiary">
+              Approving writes the line straight into the project&apos;s expenses.
+            </p>
+          )}
           <ul className="flex flex-col gap-1">
             {pending.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -790,7 +798,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       type="button"
                       onClick={() => void decide(r.id, "approved")}
                       className="flex items-center gap-1 rounded bg-success-primary px-3 py-1.5 text-11 text-white"
-                      title="Approve — this writes the line into the project's expenses"
+                      aria-label={`Approve ${r.label} — this writes the line into the project's expenses`}
                     >
                       <Check className="size-3" />
                       Approve
@@ -798,7 +806,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "rejected")}
-                      className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                      aria-label={`Reject ${r.label}`}
+                      // Same box as Approve: the two sit 8px apart and one of them
+                      // was a 20px target, which is how a thumb aiming at Reject
+                      // approves a purchase instead.
+                      className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
                     >
                       <X className="size-3" />
                       Reject
@@ -822,7 +834,12 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 
       {/* The lines themselves */}
       <div>
-        <div className="mb-1.5 flex items-center gap-2">
+        {/* flex-wrap, and the spacer only pushes on a line wide enough to hold
+            everything: the delivery-scheduling checkbox alone is a third of a
+            phone's width, and with the two buttons and the decided-requests
+            summary beside it this row could not be drawn narrower than about
+            560px. It has no business scrolling the page sideways to say so. */}
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
           <Wallet className="size-3.5 text-tertiary" />
           <span className="text-12 font-medium text-secondary">
             Expenses {expenses.length > 0 && <span className="text-tertiary">({expenses.length})</span>}
@@ -983,13 +1000,17 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 )}
                 {/* The one badge that changes what a number MEANS: this line is
                     the item's whole cost, so the item contributes no person-days
-                    to the estimate above. */}
+                    to the estimate above. That was said in a title attribute,
+                    which a touch screen never shows — so a badge that rewrites a
+                    figure elsewhere on the page meant nothing at all on a phone.
+                    It says it out loud now; the title keeps the longer sentence
+                    for anyone who hovers. */}
                 {e.replaces_labour && (
                   <span
                     className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-10 text-secondary"
                     title="This work item is bought, not built here — it is not costed as our time"
                   >
-                    supplied
+                    supplied · not costed as our time
                   </span>
                 )}
                 {e.supplier && <span className="flex-shrink-0 text-11 text-tertiary">{e.supplier}</span>}

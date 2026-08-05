@@ -34,9 +34,18 @@ import {
   getFallbackBoxes,
 } from "./sticky-free-layout.helpers";
 
-/** How far an arrow key moves a note, and how far it moves with shift held. */
+/** How far an arrow key moves or grows a note, and how far with shift held. */
 const NUDGE_STEP = 8;
 const NUDGE_STEP_LARGE = 40;
+
+/** How long the keyboard is given to finish before the note is saved.
+ *
+ *  A pointer drag is one write because it has an end the browser tells us about.
+ *  The keyboard has no such end: holding an arrow key down fires at the OS repeat
+ *  rate, and every press used to be its own PATCH, so crossing a board was thirty
+ *  requests racing each other to decide where the note finally sat. The note still
+ *  moves on the frame the key is pressed — only the write waits. */
+const KEYBOARD_COMMIT_DELAY = 400;
 
 type TGesture = {
   stickyId: string;
@@ -68,6 +77,10 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
   // refs
   const canvasRef = useRef<HTMLDivElement>(null);
   const gestureRef = useRef<TGesture | null>(null);
+  /** The last keyboard-made box that has not been written yet, and the timer
+   *  that will write it. */
+  const pendingRef = useRef<{ stickyId: string; box: TStickyBox } | null>(null);
+  const commitTimerRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     const element = canvasRef.current;
@@ -146,6 +159,44 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
     [updateStickyLayout, workspaceSlug]
   );
 
+  /** Write whatever the keyboard has left pending, now. */
+  const flushPending = useCallback(() => {
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending) return;
+    commit(pending.stickyId, pending.box);
+    // The store applies the layout optimistically, so by the time this returns
+    // `placedBoxes` already holds the box the draft was showing — dropping the
+    // draft in the same tick swaps one for the other with nothing in between.
+    setDraft((current) => (current?.stickyId === pending.stickyId ? null : current));
+  }, [commit]);
+
+  /** Show the new box at once, save it when the keyboard stops. */
+  const scheduleCommit = useCallback(
+    (stickyId: string, box: TStickyBox) => {
+      pendingRef.current = { stickyId, box };
+      if (commitTimerRef.current !== null) window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = window.setTimeout(() => {
+        commitTimerRef.current = null;
+        flushPending();
+      }, KEYBOARD_COMMIT_DELAY);
+    },
+    [flushPending]
+  );
+
+  // Leaving the board mid-nudge must not throw the last presses away. The ref
+  // indirection is what lets the unmount effect run once, on unmount, and still
+  // call the current flush rather than the one from the first render.
+  const flushRef = useRef(flushPending);
+  useEffect(() => {
+    flushRef.current = flushPending;
+  }, [flushPending]);
+  useEffect(() => () => flushRef.current(), []);
+
   // The flash is a one-shot: clearing it lets the same note flash again the
   // next time it lands, which it would not if the class simply stayed on.
   useEffect(() => {
@@ -158,8 +209,18 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
     // Left button only: a right-click drag has its own meaning, and a
     // two-finger gesture should scroll the board rather than move a note.
     if (event.button !== 0) return;
+    // The primary pointer only. A second finger landing on the board raises a
+    // fresh pointerdown, and without this it overwrote `gestureRef` — the first
+    // finger's capture then went unheard, its pointerup matched no gesture, and
+    // the note it was carrying snapped back to where the drag began. Which is
+    // exactly what the comment above promises will not happen.
+    if (!event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
+    // Anything the keyboard was still holding is written before the pointer
+    // takes over, so a debounced nudge cannot land on top of the drag that
+    // followed it.
+    flushPending();
     const startBox = getBox(stickyId);
     gestureRef.current = {
       stickyId,
@@ -215,9 +276,12 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
     commit(gesture.stickyId, box);
   };
 
-  // A pointer-only board is unusable without a mouse, and the handle is already
-  // a focusable button, so the arrow keys move the note it belongs to.
-  const handleNudge = (event: React.KeyboardEvent<HTMLElement>, stickyId: string) => {
+  // A pointer-only board is unusable without a mouse, and both handles are
+  // focusable buttons, so the arrow keys drive whichever one has focus: the grip
+  // moves the note, the corner grows and shrinks it. Same keys, same steps, same
+  // shift-for-a-bigger-step — the handle the user reached for is what decides
+  // which of the two it means.
+  const handleArrowKeys = (event: React.KeyboardEvent<HTMLElement>, stickyId: string, mode: TGesture["mode"]) => {
     const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP;
     const offsets: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0],
@@ -228,8 +292,17 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
     const offset = offsets[event.key];
     if (!offset) return;
     event.preventDefault();
-    const box = getBox(stickyId);
-    commit(stickyId, { ...box, x: box.x + offset[0], y: box.y + offset[1] });
+    const current = getBox(stickyId);
+    const next = clampStickyBox(
+      mode === "move"
+        ? { ...current, x: current.x + offset[0], y: current.y + offset[1] }
+        : { ...current, width: current.width + offset[0], height: current.height + offset[1] }
+    );
+    // Draft first so the note answers the key on the same frame; the write is
+    // debounced behind it, because a held arrow key is one intention and not
+    // thirty.
+    setDraft({ stickyId, box: next });
+    scheduleCommit(stickyId, next);
   };
 
   return (
@@ -271,7 +344,7 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
                 onPointerMove={handlePointerMove}
                 onPointerUp={endGesture}
                 onPointerCancel={endGesture}
-                onKeyDown={(event) => handleNudge(event, stickyId)}
+                onKeyDown={(event) => handleArrowKeys(event, stickyId, "move")}
               >
                 <GripVertical className="size-3.5 rotate-90 text-placeholder" />
               </button>
@@ -280,15 +353,27 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
 
               {/* The grip does overlay the note's bottom corner, which is the
                   one place a resize handle is looked for. It only matters on
-                  hover, and hover is also when it becomes visible. */}
+                  hover, and hover is also when it becomes visible.
+
+                  16px is a corner a mouse can hit and a finger cannot. It grows
+                  to 36 on a coarse pointer only: the button sits over the editor,
+                  so on a mouse the smaller square costs the note nothing, and
+                  giving every user the touch-sized one would take a thumb's worth
+                  of the last line away from people who never needed it. The mark
+                  it draws is positioned from the corner, so it does not move.
+
+                  The arrow keys resize from here, as they move from the grip —
+                  the corner was pointer-only, which meant a note could be placed
+                  without a mouse and then never resized. */}
               <button
                 type="button"
-                aria-label="Resize this sticky"
-                className="absolute right-0 bottom-0 z-10 size-4 cursor-nwse-resize touch-none rounded-br-sm opacity-40 group-hover/sticky:opacity-100 focus-visible:opacity-100"
+                aria-label="Resize this sticky. Use the arrow keys to grow or shrink it."
+                className="absolute right-0 bottom-0 z-10 size-4 cursor-nwse-resize touch-none rounded-br-sm opacity-40 group-hover/sticky:opacity-100 focus-visible:opacity-100 pointer-coarse:size-9"
                 onPointerDown={(event) => beginGesture(event, stickyId, "resize")}
                 onPointerMove={handlePointerMove}
                 onPointerUp={endGesture}
                 onPointerCancel={endGesture}
+                onKeyDown={(event) => handleArrowKeys(event, stickyId, "resize")}
               >
                 <span
                   aria-hidden

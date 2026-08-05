@@ -34,6 +34,7 @@ import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn, renderFormattedDate } from "@plane/utils";
 import { downloadText } from "@/plane-web/components/gantt-chart/export";
+import { ExpenseModal } from "@/plane-web/components/workspace/expense-modal";
 import { buildBudgetCsv } from "./budget-export";
 import { SpendAnalysis } from "./spend-analysis";
 import { SpendCurve } from "./spend-curve";
@@ -83,27 +84,6 @@ const approx = (amount: number, currency: string) => `≈ ${money(amount, curren
 const recorded = (rows: { currency: string; amount: number }[]) =>
   rows.map((t) => money(t.amount, t.currency)).join(" · ");
 
-const EMPTY_DRAFT = {
-  category: "hardware" as TExpenseCategory,
-  label: "",
-  amount: "",
-  quantity: "1",
-  currency: "EUR",
-  planned: true,
-  // A label is what somebody called it once. A part number is what the next
-  // person types into a distributor's search eighteen months later, and the link
-  // is where it came from — the two fields that make a line reorderable rather
-  // than merely countable.
-  url: "",
-  manufacturerPartNumber: "",
-  // Stored, serialised and typed since the feature shipped, and read or written
-  // by nothing. They are the audit trail: a grant review asks who wanted this,
-  // from whom, why, and by when.
-  supplier: "",
-  needed_by: "",
-  justification: "",
-};
-
 export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
@@ -120,8 +100,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // are not the same thing; the second must not invite someone to re-enter a line.
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  // Which form is open, if any: "request" goes to the lead, "record" writes the
+  // line. Both are the same modal — see the comment where it is rendered.
+  const [expenseForm, setExpenseForm] = useState<"request" | "record" | null>(null);
   const [saving, setSaving] = useState(false);
   // The two workspace-level tables that make the labour figure mean anything.
   // Edited here rather than behind a settings page: this is where somebody
@@ -144,7 +125,6 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // Who may write to the sheet. Answered by the server, not inferred from the
   // workspace role: "project lead" is a job, and admin is a permission level.
   const [canApprove, setCanApprove] = useState(false);
-  const [asking, setAsking] = useState(false);
 
   // The sheet belongs to whoever answers for the budget. Everyone else asks.
   const canEdit = canApprove;
@@ -234,48 +214,6 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     }
   };
 
-  const add = async () => {
-    const label = draft.label.trim();
-    const amount = Number(draft.amount);
-    if (!label || !Number.isFinite(amount) || amount <= 0) return;
-    const url = draft.url.trim();
-    // Caught here as well as on the server so the answer arrives while the form
-    // is still open with the text in it, rather than as a toast over a form that
-    // has already been cleared.
-    if (url && !/^https?:\/\//i.test(url)) {
-      setToast({
-        type: TOAST_TYPE.ERROR,
-        title: "That link needs to start with http:// or https://",
-        message: "A link nobody can follow looks like evidence that exists. Nothing was saved.",
-      });
-      return;
-    }
-    setSaving(true);
-    try {
-      await service.addExpense(slug, pid, {
-        category: draft.category,
-        label,
-        amount,
-        quantity: Number(draft.quantity) || 1,
-        currency: draft.currency.trim().toUpperCase() || "EUR",
-        planned: draft.planned,
-        url,
-        manufacturer_part_number: draft.manufacturerPartNumber.trim(),
-      });
-      setDraft(EMPTY_DRAFT);
-      setAdding(false);
-      await load(displayCcy);
-    } catch {
-      setToast({
-        type: TOAST_TYPE.ERROR,
-        title: "Couldn't save that line",
-        message: "Nothing was recorded. Check the amount and try again.",
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const saveAllocation = async () => {
     const raw = allocDraft.trim();
     const amount = raw === "" ? null : Number(raw);
@@ -342,36 +280,6 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         title: "Couldn't change that",
         message: "The schedule still ignores deliveries.",
       });
-    }
-  };
-
-  const askFor = async () => {
-    const label = draft.label.trim();
-    const amount = Number(draft.amount);
-    if (!label || !Number.isFinite(amount) || amount <= 0) return;
-    setSaving(true);
-    try {
-      await service.requestPurchase(slug, pid, {
-        category: draft.category,
-        label,
-        amount,
-        quantity: Number(draft.quantity) || 1,
-        currency: draft.currency.trim().toUpperCase() || "EUR",
-        supplier: draft.supplier.trim(),
-        needed_by: draft.needed_by || null,
-        justification: draft.justification.trim(),
-      });
-      setDraft(EMPTY_DRAFT);
-      setAsking(false);
-      await load(displayCcy);
-    } catch {
-      setToast({
-        type: TOAST_TYPE.ERROR,
-        title: "Couldn't send that request",
-        message: "Nothing was submitted. Check the price and try again.",
-      });
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1006,10 +914,10 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             </details>
           )}
 
-          {canRequest && !asking && !adding && (
+          {canRequest && (
             <button
               type="button"
-              onClick={() => setAsking(true)}
+              onClick={() => setExpenseForm("request")}
               className="flex items-center gap-1 rounded border border-subtle px-2 py-1 text-11 text-secondary hover:bg-layer-2"
               title="Ask the project lead to approve a purchase"
             >
@@ -1020,10 +928,10 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           {/* Writing straight to the sheet is the lead's alone: it is the record of
               what the project has committed, and a budget nobody owns is a budget
               nobody can defend. */}
-          {canEdit && !adding && !asking && (
+          {canEdit && (
             <button
               type="button"
-              onClick={() => setAdding(true)}
+              onClick={() => setExpenseForm("record")}
               className="flex items-center gap-1 rounded border border-subtle px-2 py-1 text-11 text-secondary hover:bg-layer-2"
             >
               <Plus className="size-3" />
@@ -1032,217 +940,20 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           )}
         </div>
 
-        {asking && (
-          <div className="mb-2 rounded-lg border border-subtle bg-layer-2 p-2">
-            <p className="mb-1.5 text-11 text-tertiary">
-              This goes to the project lead. Nothing is committed until they approve it.
-            </p>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">What you need</span>
-                <input
-                  value={draft.label}
-                  onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                  placeholder="10 x Linkit V4 boards"
-                  className={cn(input, "w-56")}
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Category</span>
-                <select
-                  value={draft.category}
-                  onChange={(e) => setDraft({ ...draft, category: e.target.value as TExpenseCategory })}
-                  className={cn(input, "w-44")}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Unit price</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={draft.amount}
-                  onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
-                  className={cn(input, "w-24")}
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Qty</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="1"
-                  value={draft.quantity}
-                  onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
-                  className={cn(input, "w-16")}
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Supplier</span>
-                <input
-                  value={draft.supplier}
-                  onChange={(e) => setDraft({ ...draft, supplier: e.target.value })}
-                  placeholder="JLCPCB"
-                  className={cn(input, "w-36")}
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Needed by</span>
-                <input
-                  type="date"
-                  value={draft.needed_by}
-                  onChange={(e) => setDraft({ ...draft, needed_by: e.target.value })}
-                  className={cn(input, "w-36")}
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-10 text-tertiary uppercase">Why</span>
-                <input
-                  value={draft.justification}
-                  onChange={(e) => setDraft({ ...draft, justification: e.target.value })}
-                  placeholder="Replaces the boards lost in the Príncipe deployment"
-                  className={cn(input, "w-72")}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => void askFor()}
-                disabled={saving || !draft.label.trim() || !(Number(draft.amount) > 0)}
-                className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
-              >
-                {saving ? "Sending…" : "Send request"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAsking(false);
-                  setDraft(EMPTY_DRAFT);
-                }}
-                className="px-1 text-12 text-secondary hover:text-primary"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {adding && (
-          <div className="mb-2 flex flex-wrap items-end gap-2 rounded-lg border border-subtle bg-layer-2 p-2">
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">What</span>
-              <input
-                // The form only exists because "Add a line" was just pressed, so
-                // the caret belongs in its first field; there is nothing to steal
-                // focus from.
-                // oxlint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
-                value={draft.label}
-                onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                placeholder="10 x Linkit V4 boards"
-                className={cn(input, "w-56")}
-              />
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Category</span>
-              <select
-                value={draft.category}
-                onChange={(e) => setDraft({ ...draft, category: e.target.value as TExpenseCategory })}
-                className={cn(input, "w-44")}
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Unit price</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={draft.amount}
-                onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
-                className={cn(input, "w-24")}
-              />
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Qty</span>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                value={draft.quantity}
-                onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
-                className={cn(input, "w-16")}
-              />
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Ccy</span>
-              <input
-                value={draft.currency}
-                onChange={(e) => setDraft({ ...draft, currency: e.target.value })}
-                maxLength={3}
-                className={cn(input, "w-14 uppercase")}
-              />
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Part number</span>
-              <input
-                value={draft.manufacturerPartNumber}
-                onChange={(e) => setDraft({ ...draft, manufacturerPartNumber: e.target.value })}
-                placeholder="MAX-M10S-00B"
-                maxLength={120}
-                className={cn(input, "font-mono w-40")}
-              />
-            </label>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-10 text-tertiary uppercase">Link</span>
-              <input
-                type="url"
-                value={draft.url}
-                onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-                placeholder="https://…"
-                className={cn(input, "w-56")}
-              />
-            </label>
-            <label className="flex items-center gap-1.5 pb-1.5">
-              <input
-                type="checkbox"
-                checked={!draft.planned}
-                onChange={(e) => setDraft({ ...draft, planned: !e.target.checked })}
-                className="size-3.5 text-accent-primary accent-current"
-              />
-              <span className="text-11 text-secondary" title="Leave unticked while this is still a budget line">
-                Already spent
-              </span>
-            </label>
-            <button
-              type="button"
-              onClick={() => void add()}
-              disabled={saving || !draft.label.trim() || !(Number(draft.amount) > 0)}
-              className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Add"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAdding(false);
-                setDraft(EMPTY_DRAFT);
-              }}
-              className="px-1 text-12 text-secondary hover:text-primary"
-            >
-              Cancel
-            </button>
-          </div>
+        {/* One modal for both, and the same one the sidebar opens. Three forms
+            for one object is how they came to disagree about which fields exist:
+            only this page could record a link or a part number, only the sidebar
+            could be opened without first finding the project, and the work item a
+            cost belongs to could be named from none of them. */}
+        {(canRequest || canEdit) && (
+          <ExpenseModal
+            isOpen={expenseForm !== null}
+            onClose={() => setExpenseForm(null)}
+            workspaceSlug={slug}
+            projectId={pid}
+            mode={expenseForm === "record" ? "record" : "request"}
+            onSaved={() => void load(displayCcy)}
+          />
         )}
 
         {expenses.length === 0 ? (

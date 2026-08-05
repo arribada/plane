@@ -703,6 +703,30 @@ class ProcurementRequest(models.Model):
 
     supplier = models.CharField(max_length=255, blank=True, default="")
     justification = models.TextField(blank=True, default="")
+
+    # --- the four the expense line has and this did not ----------------------
+    #
+    # The docstring above the block of copied fields says approval is a copy and
+    # not a translation, and that a field on only one side is a field that
+    # silently disappears at the moment of approval. These are the four that were
+    # on only one side.
+    #
+    # `url` and `manufacturer_part_number` are what make a line reorderable
+    # eighteen months later; a request is exactly where somebody has them to
+    # hand, because they were just looking at the distributor's page. Losing them
+    # on approval would mean the only way to record them was to raise the request,
+    # wait for a yes, then go back and edit the resulting expense line.
+    #
+    # `lead_time_days` and `replaces_labour` belong to the work item the request
+    # names. Without them a member can say "this task is a supplier's invoice"
+    # and approval would quietly turn it back into person-days.
+    url = models.URLField(max_length=2000, blank=True, default="")
+    manufacturer_part_number = models.CharField(max_length=120, blank=True, default="")
+    lead_time_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    # Only ever meaningful with an issue, which the endpoints enforce — the same
+    # rule, and for the same reason, as on ProjectExpense.
+    replaces_labour = models.BooleanField(default=False)
+
     # The purchasing record past approval.
     order_reference = models.CharField(max_length=255, blank=True, default="")
     ordered_on = models.DateField(null=True, blank=True)

@@ -5555,6 +5555,12 @@ def _serialize_request(row):
         "supplier": row.supplier,
         "justification": row.justification,
         "needed_by": row.needed_by.isoformat() if row.needed_by else None,
+        # The four that used to exist on the expense line and not here, so a
+        # request could not carry them through the yes.
+        "url": row.url,
+        "manufacturer_part_number": row.manufacturer_part_number,
+        "lead_time_days": row.lead_time_days,
+        "replaces_labour": row.replaces_labour,
         "order_reference": row.order_reference,
         "ordered_on": row.ordered_on.isoformat() if row.ordered_on else None,
         "expected_on": row.expected_on.isoformat() if row.expected_on else None,
@@ -5618,6 +5624,19 @@ class ProjectProcurementEndpoint(BaseAPIView):
         if amount <= 0:
             return Response({"error": "A price is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # The same three validators the expense sheet uses, so a request and a
+        # line cannot disagree about what a valid link, a valid work item or a
+        # valid lead time is. All three refuse BEFORE anything is written.
+        url, denied = _expense_link(request.data.get("url"))
+        if denied:
+            return denied
+        issue_id, denied = _expense_issue(request.data.get("issue_id"), project_id)
+        if denied:
+            return denied
+        lead_time, denied = _expense_lead_time(request.data.get("lead_time_days"))
+        if denied:
+            return denied
+
         row = ProcurementRequest.objects.create(
             project=project,
             requested_by=request.user,
@@ -5629,6 +5648,18 @@ class ProjectProcurementEndpoint(BaseAPIView):
             supplier=str(request.data.get("supplier") or "")[:255],
             justification=str(request.data.get("justification") or "")[:2000],
             needed_by=_parse_date(request.data.get("needed_by")),
+            url=url,
+            manufacturer_part_number=str(request.data.get("manufacturer_part_number") or "").strip()[:120],
+            # The work item this purchase is for. It was on the model, it was
+            # copied on approval, and no write path had ever set it — so the
+            # only way a line ever named an item was for the lead to type it
+            # onto the sheet afterwards.
+            issue_id=issue_id,
+            lead_time_days=lead_time,
+            # Never true without a work item, exactly as on the expense line: a
+            # flag with nothing to exclude reads on the Finance page as if it
+            # were excluding something.
+            replaces_labour=bool(request.data.get("replaces_labour")) and bool(issue_id),
         )
         return Response(_serialize_request(row), status=status.HTTP_201_CREATED)
 
@@ -5688,11 +5719,24 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                         # was supplying it or what it was for.
                         supplier=row.supplier,
                         issue_id=row.issue_id,
-                        # NOT replaces_labour. A purchase request is for parts a
-                        # task is waiting on, not for the task itself, and
-                        # defaulting it true would silently take that task's
-                        # person-days out of the estimate on the strength of a
-                        # link that only ever meant "this delivery unblocks it".
+                        # The rest of the shape, so approval stays a copy. These
+                        # used to exist only on the expense line, which meant a
+                        # requester could type a part number and a link and watch
+                        # them disappear the moment somebody said yes.
+                        url=row.url,
+                        manufacturer_part_number=row.manufacturer_part_number,
+                        lead_time_days=row.lead_time_days,
+                        # `replaces_labour` is now the requester's answer rather
+                        # than a hardcoded False. The old comment was right that
+                        # it must not be DERIVED from the link — a purchase is
+                        # usually for parts a task waits on, not for the task
+                        # itself — but the form now asks, and refusing to carry
+                        # an answer somebody gave is a different failure: the
+                        # item goes back to being costed as person-days on top
+                        # of the invoice, which is the double count this whole
+                        # feature exists to stop. Guarded on the link for the
+                        # same reason the write paths guard it.
+                        replaces_labour=row.replaces_labour and bool(row.issue_id),
                         created_by=request.user,
                     )
                     row.expense = expense

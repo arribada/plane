@@ -10,7 +10,7 @@ import { CreateProjectModal } from "@/components/project/create-project-modal";
 // hooks
 import { useCommandPalette } from "@/hooks/store/use-command-palette";
 // plane web components
-import { RequestExpenseModal } from "@/plane-web/components/workspace/request-expense-modal";
+import { ExpenseModal } from "@/plane-web/components/workspace/expense-modal";
 
 export type TWorkspaceLevelModalsProps = {
   workspaceSlug: string;
@@ -29,7 +29,7 @@ export const WorkspaceLevelModals = observer(function WorkspaceLevelModals(props
         onClose={() => toggleCreateProjectModal(false)}
         workspaceSlug={workspaceSlug.toString()}
       />
-      <RequestExpenseModal
+      <ExpenseModal
         isOpen={requestExpenseModal}
         onClose={() => toggleRequestExpenseModal(false)}
         workspaceSlug={workspaceSlug.toString()}

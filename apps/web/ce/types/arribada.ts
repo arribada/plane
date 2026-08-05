@@ -653,6 +653,16 @@ export type TProcurementRequest = {
   supplier: string;
   justification: string;
   needed_by: string | null;
+  /** Where it came from, and what a distributor's search box wants. Carried
+   *  through to the expense line on approval — the requester is the one with
+   *  the page open, so losing them at the yes meant nobody ever recorded them. */
+  url?: string;
+  manufacturer_part_number?: string;
+  /** Calendar days the supplier quoted. */
+  lead_time_days?: number | null;
+  /** True = this purchase IS the linked work item's cost, so that item is not
+   *  also costed as our time. Only meaningful with `issue_id`. */
+  replaces_labour?: boolean;
   /** The purchasing record past the money decision. */
   order_reference?: string;
   ordered_on?: string | null;

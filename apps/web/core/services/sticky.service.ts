@@ -6,7 +6,7 @@
 
 // helpers
 import { STICKIES_PER_PAGE, API_BASE_URL } from "@plane/constants";
-import type { TSticky } from "@plane/types";
+import type { TPaginationInfo, TSticky } from "@plane/types";
 // services
 import { APIService } from "@/services/api.service";
 
@@ -23,12 +23,19 @@ export class StickyService extends APIService {
       });
   }
 
+  /**
+   * One page of stickies. The return type says what the endpoint actually
+   * sends: the caller destructures `{ results, ...paginationInfo }` and stores
+   * the rest, so a type naming only `total_pages` was a type that happened to
+   * be sufficient rather than one that was true — and anything wanting to page
+   * to the end had no `next_cursor` to reach for.
+   */
   async getStickies(
     workspaceSlug: string,
     cursor: string,
     query?: string,
     per_page?: number
-  ): Promise<{ results: TSticky[]; total_pages: number }> {
+  ): Promise<TPaginationInfo & { results: TSticky[] }> {
     return this.get(`/api/workspaces/${workspaceSlug}/stickies/`, {
       params: {
         cursor,

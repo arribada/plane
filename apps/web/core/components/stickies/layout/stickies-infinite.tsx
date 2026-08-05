@@ -122,12 +122,14 @@ export const StickiesInfinite = observer(function StickiesInfinite() {
     if (!slug || switchingLayout) return;
     setSwitchingLayout(true);
     try {
+      // Every sticky, including the pages this board has not scrolled to yet —
+      // it pages to the end itself, so this can take a moment on a big board.
       await resetStickyLayouts(slug);
     } catch {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Could not tidy up",
-        message: "Your stickies are unchanged. Please try again.",
+        message: "Anything that had already moved was put back. Please try again.",
       });
     } finally {
       setSwitchingLayout(false);

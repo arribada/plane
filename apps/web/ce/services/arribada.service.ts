@@ -200,7 +200,11 @@ export class ArribadaService extends APIService {
     {
       issue_id: string;
       kind: "gate" | "delivery" | "review";
+      /** Already resolved: the custom label, or the item's own name. */
       label: string;
+      /** The custom label alone, "" when nobody wrote one. Absent on an older
+       *  server, which had no way to set one either. */
+      custom_label?: string;
       start_date: string | null;
       target_date: string | null;
       done: boolean;
@@ -213,17 +217,24 @@ export class ArribadaService extends APIService {
       });
   }
 
-  /** Mark or unmark one item. `kind: null` removes the mark. */
+  /**
+   * Mark or unmark one item, or rename what a funder reads.
+   *
+   * `kind: null` removes the mark; `kind: undefined` omits the key entirely and
+   * changes only the label. The two are not interchangeable — the server reads
+   * an absent `kind` as "leave the mark alone" and a null one as "take it off",
+   * and it used to read both as the second.
+   */
   async setProjectMilestone(
     workspaceSlug: string,
     projectId: string,
     issueId: string,
-    kind: "gate" | "delivery" | "review" | null,
+    kind: "gate" | "delivery" | "review" | null | undefined,
     label?: string
   ): Promise<unknown> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`, {
       issue_id: issueId,
-      kind,
+      ...(kind === undefined ? {} : { kind }),
       // Omitted, not blanked, when the caller has no label to offer. Sending
       // `""` told the server to erase one — so changing a kind from any surface
       // that does not carry the label wiped the sentence a funder reads.

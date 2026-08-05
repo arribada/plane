@@ -806,6 +806,13 @@ class ProjectMilestonesEndpoint(BaseAPIView):
                         # `label` is what a funder should read; the item's own name is
                         # written for the team and is the fallback.
                         "label": r["label"] or r["issue__name"],
+                        # The same field UNcoalesced, because a form that edits it
+                        # needs to know the difference between "nobody has written
+                        # one" and "somebody wrote one that happens to match the
+                        # item's name". Prefilling the box from `label` above would
+                        # turn every mark into a custom label the first time
+                        # anybody opened the field and pressed Enter.
+                        "custom_label": r["label"],
                         "start_date": r["issue__start_date"].isoformat() if r["issue__start_date"] else None,
                         "target_date": r["issue__target_date"].isoformat() if r["issue__target_date"] else None,
                         "done": r["issue__state__group"] == "completed",
@@ -818,7 +825,15 @@ class ProjectMilestonesEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
     def post(self, request, slug, project_id):
-        """Mark or unmark one item. `kind: null` removes the mark."""
+        """Mark or unmark one item, or rename what a funder reads.
+
+        `kind: null` removes the mark. `kind` ABSENT changes only the label —
+        which is a different request and used to be the same one, because
+        `request.data.get("kind")` answers None to both. A caller sending
+        `{issue_id, label}` therefore deleted the milestone and never reached the
+        line that writes a label, so the field existed, was read by the public
+        funder timeline and by the PDF, and could not be set from anywhere.
+        """
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -827,14 +842,33 @@ class ProjectMilestonesEndpoint(BaseAPIView):
             return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
 
         kind = request.data.get("kind")
-        if kind is None:
-            IssueMilestone.objects.filter(issue_id=issue_id).delete()
-            return Response({"issue_id": str(issue_id), "kind": None}, status=status.HTTP_200_OK)
-
-        valid = {choice for choice, _ in IssueMilestone.KIND_CHOICES}
-        if kind not in valid:
+        # Presence, not truthiness. "Take the mark off" and "leave the mark alone"
+        # are opposite instructions and used to arrive identically.
+        if "kind" in request.data:
+            if kind is None:
+                IssueMilestone.objects.filter(issue_id=issue_id).delete()
+                return Response({"issue_id": str(issue_id), "kind": None}, status=status.HTTP_200_OK)
+            valid = {choice for choice, _ in IssueMilestone.KIND_CHOICES}
+            if kind not in valid:
+                return Response(
+                    {"error": f"kind must be one of {', '.join(sorted(valid))}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Label-only. There is nothing to name unless the item is already a
+            # milestone, and creating one here would let a stray label turn an
+            # ordinary work item into a funder deliverable.
+            row = IssueMilestone.objects.filter(issue_id=issue_id).first()
+            if not row:
+                return Response(
+                    {"error": "That work item is not a milestone yet"}, status=status.HTTP_400_BAD_REQUEST
+                )
+            if "label" in request.data:
+                row.label = str(request.data.get("label") or "")[:255]
+                row.save(update_fields=["label", "updated_at"])
             return Response(
-                {"error": f"kind must be one of {', '.join(sorted(valid))}"}, status=status.HTTP_400_BAD_REQUEST
+                {"issue_id": str(row.issue_id), "kind": row.kind, "label": row.label},
+                status=status.HTTP_200_OK,
             )
 
         # The label is written ONLY when the caller sent the key. It always was,

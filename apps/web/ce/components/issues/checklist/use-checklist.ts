@@ -260,13 +260,26 @@ export const useIssueChecklist = (
       //
       // A few of the stores in the union have no `updateIssue` at all (the draft
       // and profile ones), and they fall down the same path for the same reason.
-      if (issueMap?.[memberIssueId] && issueStore.updateIssue) {
+      //
+      // AND the member has to belong to the project this store is showing. The
+      // map is the app-wide one — `context.issue.issues.issuesMap`, every issue
+      // loaded anywhere this session, including one merely peeked at — so
+      // "present in the map" was never "on this list". `updateIssue` does not
+      // only patch a row: it calls `updateIssueList`, which files the id into
+      // THIS store's `groupedIssueIds` under whichever group the new state_id
+      // belongs to, and bumps that group's count. It asks nothing about the
+      // project. Ticking a checklist line whose member lives in project B, from
+      // a board showing project A, put B's work item into A's Done column and
+      // added one to the total, until a reload. Nothing is wrong with the
+      // service path for that member; it is on nobody's screen here.
+      const belongsToThisView = !!projectId && memberProjectId === projectId;
+      if (belongsToThisView && issueMap?.[memberIssueId] && issueStore.updateIssue) {
         await issueStore.updateIssue(workspaceSlug, memberProjectId, memberIssueId, { state_id: stateId });
       } else {
         await issueService.patchIssue(workspaceSlug, memberProjectId, memberIssueId, { state_id: stateId });
       }
     },
-    [workspaceSlug, issueStore, issueMap]
+    [workspaceSlug, projectId, issueStore, issueMap]
   );
 
   useEffect(() => {

@@ -50,7 +50,10 @@ export function MilestoneToggle({ workspaceSlug, projectId, issueId, current }: 
     if (busy) return;
     setBusy(true);
     try {
-      await service.setProjectMilestone(workspaceSlug, projectId, issueId, NEXT[state]);
+      // `?? null` is load-bearing since the service learnt to omit an
+      // undefined `kind`: an unmapped state would otherwise send a label-only
+      // write, which is a different request entirely.
+      await service.setProjectMilestone(workspaceSlug, projectId, issueId, NEXT[state] ?? null);
       // The chart reads milestones from a module-scope cache; without this the
       // diamond does not appear until a hard reload.
       invalidateProjectMilestones(workspaceSlug, projectId);

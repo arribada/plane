@@ -20,7 +20,19 @@ import { bumpProjectRevision, useProjectRevision } from "./derived-revision";
 
 export type TMilestoneKind = "gate" | "delivery" | "review";
 
-export type TProjectMilestones = Record<string, { kind: TMilestoneKind; label: string }>;
+export type TProjectMilestones = Record<
+  string,
+  {
+    kind: TMilestoneKind;
+    /** What a funder reads — the custom label if there is one, otherwise the work
+     *  item's own name. Already resolved by the server. */
+    label: string;
+    /** The custom label alone, empty when nobody has written one. A form that
+     *  edits it must prefill from THIS: prefilling from `label` would turn every
+     *  mark into a custom label the first time anybody opened the box. */
+    customLabel: string;
+  }
+>;
 
 type Entry = { promise: Promise<TProjectMilestones>; value: TProjectMilestones | null };
 
@@ -57,7 +69,14 @@ export const useProjectMilestones = (
           .getProjectMilestones(workspaceSlug, projectId)
           .then((rows) => {
             const map: TProjectMilestones = {};
-            for (const row of rows) map[row.issue_id] = { kind: row.kind, label: row.label };
+            for (const row of rows)
+              map[row.issue_id] = {
+                kind: row.kind,
+                label: row.label,
+                // Absent on an older server, where there was no way to set one
+                // anyway — so "" is both the fallback and the truth.
+                customLabel: row.custom_label ?? "",
+              };
             return map;
           })
           .catch(() => {

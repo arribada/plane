@@ -319,40 +319,84 @@ export class StickyStore implements IStickyStore {
    * the masonry orders by, so tidying up returns you to the arrangement you
    * had before you started dragging rather than to an arbitrary one.
    *
+   * EVERY sticky, not the loaded ones. `workspaceStickies` holds whatever has
+   * been paged in so far — thirty per page — so on a board with more than that
+   * the button used to tidy the first page and silently leave the rest holding
+   * coordinates. The board is in free layout when ANY loaded note carries a
+   * position, so scrolling far enough to load one of the survivors put the
+   * whole board back into free layout and every tidied note back where it was
+   * pushed by the masonry. "Tidy up" that undoes itself on scroll is worse than
+   * one that refuses.
+   *
+   * Paged here with the service rather than through `fetchWorkspaceStickies`,
+   * for two reasons: this must not disturb `paginationInfo` or the ids the
+   * board is rendering from, and it must ignore `searchQuery` — a note hidden
+   * behind a search term is still a note in the wrong place.
+   *
    * Rolls back every sticky if any write fails, because a half-tidied board is
-   * a state the user cannot reason about: some notes home, some not, and no
-   * way to tell which.
+   * a state the user cannot reason about: some notes home, some not, and no way
+   * to tell which. The rollback now reaches the SERVER as well as the screen —
+   * `Promise.all` rejects on the first failure while the others may already have
+   * been committed, so restoring only the local copies left the board claiming
+   * a layout the database did not have.
    */
   resetStickyLayouts = async (workspaceSlug: string) => {
-    const placedIds = (this.workspaceStickies[workspaceSlug] || []).filter(
-      (id) => this.stickies[id]?.position_x != null
-    );
-    if (placedIds.length === 0) return;
-    const previous = new Map(
-      placedIds.map((id) => [
-        id,
-        {
-          position_x: this.stickies[id].position_x,
-          position_y: this.stickies[id].position_y,
-          width: this.stickies[id].width,
-          height: this.stickies[id].height,
-        },
-      ])
-    );
-    const cleared = { position_x: null, position_y: null, width: null, height: null };
-    try {
-      runInAction(() => {
-        placedIds.forEach((id) => Object.assign(this.stickies[id], cleared));
-      });
-      await Promise.all(placedIds.map((id) => this.stickyService.updateSticky(workspaceSlug, id, cleared)));
-    } catch (error) {
-      console.error("Error in resetting sticky layouts:", error);
-      runInAction(() => {
-        previous.forEach((layout, id) => {
-          if (this.stickies[id]) Object.assign(this.stickies[id], layout);
+    // Nothing above 300 pages: a runaway cursor here would be an unbounded
+    // request loop on a click, and 9,000 stickies is not a board anybody has.
+    const MAX_PAGES = 300;
+    const placed: { id: string; layout: Partial<TSticky> }[] = [];
+    let cursor = `${STICKIES_PER_PAGE}:0:0`;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      // Sequential by construction: each page's cursor is in the previous
+      // page's response, so there is no set of promises to start in parallel.
+      // oxlint-disable-next-line no-await-in-loop
+      const response = await this.stickyService.getStickies(workspaceSlug, cursor);
+      for (const sticky of response.results ?? []) {
+        if (sticky.position_x == null) continue;
+        placed.push({
+          id: sticky.id,
+          layout: {
+            position_x: sticky.position_x,
+            position_y: sticky.position_y,
+            width: sticky.width,
+            height: sticky.height,
+          },
         });
-      });
-      throw error;
+      }
+      if (!response.next_page_results || !response.next_cursor) break;
+      cursor = response.next_cursor;
     }
+    if (placed.length === 0) return;
+
+    const cleared = { position_x: null, position_y: null, width: null, height: null };
+    runInAction(() => {
+      // Only the ones on screen have a local copy to move; the rest are cleared
+      // on the server and will arrive that way when they are next paged in.
+      placed.forEach(({ id }) => {
+        if (this.stickies[id]) Object.assign(this.stickies[id], cleared);
+      });
+    });
+
+    const results = await Promise.allSettled(
+      placed.map(({ id }) => this.stickyService.updateSticky(workspaceSlug, id, cleared))
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (!failure) return;
+
+    console.error("Error in resetting sticky layouts:", failure.reason);
+    // Put back the ones that DID land, so the board is not half tidied. Best
+    // effort and settled, because a restore that throws would replace one
+    // inconsistent state with a less legible one.
+    await Promise.allSettled(
+      placed
+        .filter((_, index) => results[index].status === "fulfilled")
+        .map(({ id, layout }) => this.stickyService.updateSticky(workspaceSlug, id, layout))
+    );
+    runInAction(() => {
+      placed.forEach(({ id, layout }) => {
+        if (this.stickies[id]) Object.assign(this.stickies[id], layout);
+      });
+    });
+    throw failure.reason;
   };
 }

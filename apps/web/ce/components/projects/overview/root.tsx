@@ -95,6 +95,21 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
   // guests too, so the role is what decides whether the entry point is shown.
   const canOpenAiSettings = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, slug);
 
+  // The same rule the Finance tab has always applied (ce/components/projects/
+  // navigation/helper.tsx): a budget is not something an outside collaborator is
+  // invited to read. Overview is guest-visible and was rendering the identical
+  // block with no guard at all, so hiding the tab hid nothing.
+  //
+  // The endpoints behind this refuse guests too (MONEY_ROLES in views.py) — that
+  // is the fix. This is what stops a guest being shown an empty panel and a
+  // button that can only 403.
+  const canSeeMoney = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.PROJECT,
+    slug,
+    pid
+  );
+
   const handleScheduleChange = useCallback(
     async (patch: { start_date?: string | null; target_date?: string | null }) => {
       if (!slug || !pid) return;
@@ -209,16 +224,22 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           Ctrl-P works just as well; this exists because nobody discovers that a
           page prints properly unless something says so. */}
       <div className="print-hide flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => void buildReport()}
-          disabled={reporting}
-          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
-          title="A PDF a funder can read: period, status, deliverables and the money as recorded"
-        >
-          <FileText className="size-3" />
-          {reporting ? "Building…" : "Funder report"}
-        </button>
+        {/* Behind the same rule as the budget block: the report is three quarters
+            money — the allocation, the expense sheet and the purchase queue — and
+            all three calls behind it now refuse a guest. Offering the button
+            anyway would hand them a PDF with every figure silently missing. */}
+        {canSeeMoney && (
+          <button
+            type="button"
+            onClick={() => void buildReport()}
+            disabled={reporting}
+            className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
+            title="A PDF a funder can read: period, status, deliverables and the money as recorded"
+          >
+            <FileText className="size-3" />
+            {reporting ? "Building…" : "Funder report"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => window.print()}
@@ -255,9 +276,11 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       {/* Cost sits after the counts and before the sprints: it is a summary of the
           project, not a detail of its schedule. Collapsed by default — most days
           nobody is looking at money. */}
-      <OverviewSection title="What it costs">
-        <OverviewBudgetBlock />
-      </OverviewSection>
+      {canSeeMoney && (
+        <OverviewSection title="What it costs">
+          <OverviewBudgetBlock />
+        </OverviewSection>
+      )}
 
       {/* Straight after cost, and collapsed: publishing is rare, but somebody
           looking for it looks among the project's outward-facing settings rather

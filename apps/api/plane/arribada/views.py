@@ -67,6 +67,19 @@ from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 
+# What a money surface may be read by. A guest here is typically a funder or a
+# partner invited to follow one project, and the allocation, the hourly rates, a
+# supplier's name and the purchase queue are not what they were invited to read.
+# The Finance tab has excluded guests since it shipped — but the client is not
+# where that rule holds, and the same figures were reachable straight from the
+# API and, until this landed, from the guest-visible Overview page.
+#
+# Deliberately a separate list rather than a narrowing of VIEWER_ROLES. Every
+# other endpoint on that list — the schedule, the deliverables, the work items,
+# the team — is meant to answer a guest, and editing it in place would silently
+# close all of them.
+MONEY_ROLES = [ROLE.ADMIN, ROLE.MEMBER]
+
 # Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
 GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
 
@@ -4650,10 +4663,11 @@ class WorkspaceCalendarEndpoint(BaseAPIView):
 
 
 class WorkspaceRoleRatesEndpoint(BaseAPIView):
-    """What an hour of each discipline costs. Reading is open to anyone who can see
-    the workspace; writing is admin-only — a rate is a commercial fact."""
+    """What an hour of each discipline costs. Reading takes a member — a rate is a
+    commercial fact, and MONEY_ROLES says who is entitled to one; writing is
+    admin-only on top of that."""
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         rows = WorkspaceRoleRate.objects.filter(workspace__slug=slug)
         return Response(
@@ -4879,9 +4893,13 @@ def _lead_guard(request, project_id):
 
 
 class ProjectExpensesEndpoint(BaseAPIView):
-    """Everything a project spends that is not somebody's time."""
+    """Everything a project spends that is not somebody's time.
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    MONEY_ROLES: the sheet names suppliers and amounts, which is not a guest's
+    to read.
+    """
+
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5218,9 +5236,11 @@ class ProjectBudgetEndpoint(BaseAPIView):
     different degrees. Labour is *derived* — it moves the moment somebody drags a
     bar — while an expense is a number a person typed and often has a receipt for.
     Presenting a single figure would give the estimate the authority of the receipt.
+
+    MONEY_ROLES: this is the allocation and what has been drawn against it.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5653,9 +5673,14 @@ class ProjectProcurementEndpoint(BaseAPIView):
     The split is the point. The expense sheet is what the project has committed,
     so it belongs to whoever answers for the budget; everybody else asks. A request
     is inert until approved — approval is what writes the money down.
+
+    MONEY_ROLES on the read as well as the write. "Anyone on the project" was
+    already ADMIN or MEMBER on the POST; the queue itself names suppliers, prices
+    and who was refused, so a guest could not raise a request and could read
+    every one of them.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -6962,9 +6987,13 @@ class IssueFixedCostEndpoint(BaseAPIView):
     supplier's invoice still has to SAY so on the screen somebody opens it from,
     or the panel shows no effort, no cost and no explanation, and the only
     conclusion available is that the thing is free.
+
+    MONEY_ROLES: it is a line of the same ledger the Finance page reads, so it
+    answers the same people. A guest sees the work item without its price rather
+    than the price without the page it belongs to.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)

@@ -165,7 +165,12 @@ export const UndatedGapModal = observer(function UndatedGapModal(props: Props) {
                 aria-label={`Due date for ${item.name}`}
                 className={
                   bad
-                    ? "w-36 flex-shrink-0 rounded border border-danger-strong bg-layer-2 px-2 py-1 text-12 text-danger-primary outline-none"
+                    ? // A ring rather than the border colour the good variant
+                      // uses: this border is already danger-coloured, so a focus
+                      // style that only recolours it says nothing. Dropping the
+                      // outline without putting anything back left the one field
+                      // you are most likely to be fixing with no focus at all.
+                      "w-36 flex-shrink-0 rounded border border-danger-strong bg-layer-2 px-2 py-1 text-12 text-danger-primary outline-none focus:ring-1 focus:ring-danger-strong"
                     : "w-36 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
                 }
               />

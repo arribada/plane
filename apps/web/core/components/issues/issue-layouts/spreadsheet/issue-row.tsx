@@ -392,7 +392,10 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
                   // menu from reaching the row's link, and has no behaviour of
                   // its own for a keyboard to reach.
                   role="presentation"
-                  className={`opacity-0 transition-opacity group-hover:opacity-100 ${isMenuActive ? "!opacity-100" : ""}`}
+                  // ARRIBADA FIX: `focus-within`. This one already used opacity
+                  // rather than `hidden`, so the trigger was reachable by Tab —
+                  // but reachable and invisible, which is worse than either.
+                  className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${isMenuActive ? "!opacity-100" : ""}`}
                   onClick={(e) => e.stopPropagation()}
                 >
                   {quickActions({

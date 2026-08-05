@@ -158,9 +158,14 @@ export const CalendarIssueBlock = observer(
                     // quick-action menu from reaching the block's link, and has
                     // no behaviour of its own for a keyboard to reach.
                     role="presentation"
+                    // ARRIBADA FIX: same hole as the kanban card — `hidden` is
+                    // display:none, which makes the quick-actions trigger inside
+                    // unfocusable, so a keyboard could never open this menu.
+                    // Opacity keeps it in the tab order; focus-within reveals it.
+                    // This block reserves its size either way, so nothing moves.
                     className={cn("size-5 flex-shrink-0", {
-                      "hidden group-hover/calendar-block:block": !isMobile,
-                      block: isMenuActive,
+                      "opacity-0 group-hover/calendar-block:opacity-100 focus-within:opacity-100": !isMobile,
+                      "!opacity-100": isMenuActive,
                     })}
                     onClick={(e) => {
                       e.preventDefault();

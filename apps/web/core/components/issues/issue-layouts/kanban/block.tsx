@@ -93,6 +93,12 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
       // <button>, so the real interactive element and the keyboard affordance
       // are the button around it. Giving this div a role of its own would nest
       // a second control inside that button.
+      //
+      // The consequence, and the reason the wrapper below no longer relies on
+      // this: `onClick` here can only ever see a mouse. Enter or Space on the
+      // button dispatches a click on the button, and events do not travel down
+      // to children, so `isMenuActive` stays false for a keyboard. It is now
+      // only the pointer highlight; visibility is CSS on the wrapper.
       role="presentation"
       className={`flex h-full w-full cursor-pointer items-center rounded-sm p-1 text-placeholder hover:bg-layer-1 ${
         isMenuActive ? "bg-layer-1 text-primary" : "text-secondary"
@@ -125,9 +131,19 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
           // from reaching the card's link, and has no behaviour of its own for
           // a keyboard to reach.
           role="presentation"
+          // ARRIBADA FIX: this was `hidden group-hover:block`, and display:none
+          // makes every descendant unfocusable — so the card's quick-actions
+          // menu could not be reached by a keyboard at all, not merely styled
+          // oddly. Opacity hides it just as well while leaving the trigger in
+          // the tab order, and focus-within reveals it the moment a keyboard
+          // arrives. pointer-events follow the same switch so the invisible
+          // strip this leaves above the card cannot swallow a click.
+          // Upstream, kept minimal: the alternative was for CustomMenu to take a
+          // visibility callback, which would touch six more files.
           className={cn("absolute -top-1 right-0", {
-            "hidden group-hover/kanban-block:block": !isMobile,
-            "!block": isMenuActive,
+            "pointer-events-none opacity-0 group-hover/kanban-block:pointer-events-auto group-hover/kanban-block:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100":
+              !isMobile,
+            "!pointer-events-auto !opacity-100": isMenuActive,
           })}
           onClick={handleEventPropagation}
         >

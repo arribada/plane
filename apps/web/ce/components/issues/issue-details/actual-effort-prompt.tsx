@@ -21,6 +21,7 @@ import { observer } from "mobx-react";
 import { Loader2, X } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -91,12 +92,26 @@ export const ActualEffortPrompt = observer(function ActualEffortPrompt(props: Pr
     }
   };
 
+  // Escape, a focus trap, focus restored to the board behind it, no scrolling
+  // underneath and a name for the dialog. The input's own Escape handler only
+  // ever worked while the caret was in the input; this one works wherever focus
+  // has got to. Above the early return so the hook runs on every render.
+  const { panelProps, backdropProps } = useModalShell({
+    open: loaded,
+    onClose,
+    busy: saving,
+    label: "How long did it actually take?",
+  });
+
   if (!loaded) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" aria-label="Skip" className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="shadow-lg relative z-10 w-full max-w-md rounded-lg border border-subtle bg-layer-1">
+      <div {...backdropProps} className="absolute inset-0 bg-black/40" />
+      <div
+        {...panelProps}
+        className="shadow-lg relative z-10 w-full max-w-md rounded-lg border border-subtle bg-layer-1"
+      >
         <header className="flex items-center gap-2 border-b border-subtle px-4 py-3">
           <h2 className="flex-1 text-14 font-medium text-primary">How long did it actually take?</h2>
           <button type="button" onClick={onClose} aria-label="Skip" className="text-tertiary hover:text-primary">
@@ -114,8 +129,9 @@ export const ActualEffortPrompt = observer(function ActualEffortPrompt(props: Pr
           </p>
           <div className="flex items-center gap-2">
             <input
-              // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by an action, not on page load
-              autoFocus
+              // The dialog opens here rather than on the close button that comes
+              // first in the markup: this field is the whole question.
+              data-modal-initial-focus
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
@@ -123,7 +139,6 @@ export const ActualEffortPrompt = observer(function ActualEffortPrompt(props: Pr
                   e.preventDefault();
                   void save();
                 }
-                if (e.key === "Escape") onClose();
               }}
               inputMode="decimal"
               placeholder="0.5"

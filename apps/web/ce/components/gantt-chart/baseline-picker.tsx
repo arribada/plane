@@ -115,7 +115,11 @@ export const BaselinePicker = observer(function BaselinePicker() {
                   } · ${current.entry_count} work items`
                 : undefined
             }
-            className="bg-transparent px-1.5 py-1 text-11 text-secondary outline-none"
+            // The outline is suppressed because it drew a box outside the
+            // rounded wrapper; a ring inside it says the same thing without the
+            // clipping. Suppressing it and putting nothing back left a control
+            // that gives a keyboard no sign of where it is.
+            className="bg-transparent px-1.5 py-1 text-11 text-secondary outline-none focus:ring-1 focus:ring-accent-strong"
           >
             {snapshots.map((snapshot) => (
               <option key={snapshot.id} value={snapshot.id}>

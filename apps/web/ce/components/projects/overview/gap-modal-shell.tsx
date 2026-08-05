@@ -14,6 +14,7 @@
 import type { ReactNode } from "react";
 import { Loader2, X } from "lucide-react";
 import { cn } from "@plane/utils";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 type Props = {
   isOpen: boolean;
@@ -54,12 +55,21 @@ export function GapModalShell(props: Props) {
     footerExtra,
   } = props;
 
+  // Escape, a focus trap, focus restored to whatever opened it, a page that
+  // stops scrolling underneath, and a name a screen reader can read out. This
+  // shell had none of the five, and being shared meant three dialogs went
+  // without. Above the early return so the hook runs on every render.
+  const { panelProps, backdropProps } = useModalShell({ open: isOpen, onClose, busy: saving, label: title });
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="shadow-lg relative z-10 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-subtle bg-layer-1">
+      <div {...backdropProps} className="absolute inset-0 bg-black/40" />
+      <div
+        {...panelProps}
+        className="shadow-lg relative z-10 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-subtle bg-layer-1"
+      >
         <header className="flex items-center gap-2 border-b border-subtle px-4 py-3">
           <h2 className="flex-1 text-14 font-medium text-primary">{title}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-tertiary hover:text-primary">

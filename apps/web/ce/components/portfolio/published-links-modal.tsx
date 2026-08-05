@@ -20,6 +20,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { ExternalLink, Globe, X } from "lucide-react";
 import { renderFormattedDate } from "@plane/utils";
+import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TWorkspacePublicTimeline } from "@/plane-web/types/arribada";
 
@@ -49,12 +50,23 @@ export const PublishedLinksModal = observer(function PublishedLinksModal({ isOpe
     };
   }, [isOpen, slug]);
 
+  // Escape, a focus trap, focus restored to the opener, no scrolling underneath
+  // and a name for the dialog. Above the early return so it runs every render.
+  const { panelProps, backdropProps } = useModalShell({
+    open: isOpen,
+    onClose,
+    label: "Published outside the login",
+  });
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="shadow-lg relative z-10 w-full max-w-2xl rounded-lg border border-subtle bg-layer-1">
+      <div {...backdropProps} className="absolute inset-0 bg-black/40" />
+      <div
+        {...panelProps}
+        className="shadow-lg relative z-10 w-full max-w-2xl rounded-lg border border-subtle bg-layer-1"
+      >
         <header className="flex items-center gap-2 border-b border-subtle px-4 py-3">
           <Globe className="size-4 text-tertiary" />
           <h2 className="flex-1 text-14 font-medium text-primary">Published outside the login</h2>

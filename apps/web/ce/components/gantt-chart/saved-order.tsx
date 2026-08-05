@@ -24,6 +24,7 @@ import { cn } from "@plane/utils";
 import type { EIssuesStoreType } from "@plane/types";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
+import { useLightDismiss } from "@/plane-web/components/common/use-light-dismiss";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -44,6 +45,11 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
   const [orders, setOrders] = useState<TOrder[]>([]);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+
+  // A <details> has no light dismiss of its own: without this the menu stays
+  // open over the rest of the toolbar until you come back and click the summary
+  // a second time. Above the early return so the hook runs on every render.
+  const detailsRef = useLightDismiss<HTMLDetailsElement>({ open, onDismiss: () => setOpen(false) });
 
   const slug = workspaceSlug?.toString();
   const pid = projectId?.toString();
@@ -122,6 +128,7 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
 
   return (
     <details
+      ref={detailsRef}
       className="group relative flex-shrink-0"
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}

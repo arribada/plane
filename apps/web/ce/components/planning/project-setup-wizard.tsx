@@ -871,7 +871,10 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                 {
                   key: "agile",
                   title: "Set up a whole project — sprints",
-                  hint: "The same project, cut into fixed periods. Creates a cycle per sprint.",
+                  // Was "Creates a cycle per sprint" — one object under two names
+                  // in one sentence. Plane's Cycle is what this product calls a
+                  // sprint, everywhere, including its own screens now.
+                  hint: "The same project, cut into fixed periods — one sprint each.",
                 },
                 {
                   key: "sprint",
@@ -1315,7 +1318,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                   {
                     key: "sprints",
                     title: "Sprints",
-                    hint: "The same plan, cut into fixed periods. Creates a cycle per sprint.",
+                    hint: "The same plan, cut into fixed periods — one sprint each.",
                   },
                 ] as const
               ).map((option) => (

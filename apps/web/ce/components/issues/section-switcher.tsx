@@ -53,7 +53,7 @@ const SECTIONS: Section[] = [
   { key: "issues", label: "Work items", path: "issues", icon: <ListTodo className={ICON} />, enabled: () => true },
   {
     key: "cycles",
-    label: "Cycles",
+    label: "Sprints",
     path: "cycles",
     icon: <RefreshCw className={ICON} />,
     enabled: (p) => !!p.cycle_view,

@@ -193,6 +193,14 @@ export const DEFAULT_GLOBAL_VIEWS_LIST: {
 export interface IWorkspaceSidebarNavigationItem {
   key: string;
   labelTranslationKey: string;
+  /**
+   * What to show when the catalogue has no entry for `labelTranslationKey`.
+   * `t()` returns the KEY on a miss, so without this a typo or a key that never
+   * got an entry renders as a lowercase slug in the sidebar — which is exactly
+   * how "portfolio" and "workload" shipped. The project navigation has carried
+   * the same field for the same reason since its own keys missed.
+   */
+  name?: string;
   href: string;
   access: EUserWorkspaceRoles[];
   highlight: (pathname: string, url: string) => boolean;
@@ -280,18 +288,20 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS: Record<string, IWorkspac
   },
   portfolio: {
     key: "portfolio",
-    labelTranslationKey: "portfolio",
+    labelTranslationKey: "sidebar.portfolio",
+    name: "Portfolio",
     href: `/portfolio/`,
     access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER, EUserWorkspaceRoles.GUEST],
     highlight: (pathname: string, url: string) => pathname === url,
   },
   github_triage: {
     key: "github_triage",
-    // The catalogue has no entry for this, and `t()` returns the KEY when it
-    // misses — which is why "portfolio" and "workload" read correctly by luck
-    // and "github_triage" would have read as itself. The key IS the label until
-    // somebody translates it.
-    labelTranslationKey: "GitHub triage",
+    // Was `labelTranslationKey: "GitHub triage"` — English smuggled through the
+    // key so that `t()`'s miss-returns-the-key behaviour rendered something
+    // readable. It worked and it could never be translated. `name` is now where
+    // the fallback English lives, and the key is a key.
+    labelTranslationKey: "sidebar.github_triage",
+    name: "GitHub triage",
     href: `/github-triage/`,
     // Members and admins only: filing an issue into a project creates work
     // there, which a guest cannot do anywhere else either.
@@ -300,16 +310,18 @@ export const WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS: Record<string, IWorkspac
   },
   workload: {
     key: "workload",
-    labelTranslationKey: "workload",
+    labelTranslationKey: "sidebar.workload",
+    name: "Workload",
     href: `/workload/`,
     access: [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
     highlight: (pathname: string, url: string) => pathname === url,
   },
   "request-expense": {
     key: "request_expense",
-    // Same story as github_triage: no catalogue entry, and `t()` hands back the
-    // key on a miss, so the key has to read as the label.
-    labelTranslationKey: "Request an expense",
+    // Same story as github_triage, same fix: a real key, with the English kept
+    // as the fallback `name`.
+    labelTranslationKey: "sidebar.request_expense",
+    name: "Request an expense",
     // Never used — see `opensModal`. Kept non-empty so joinUrlPath cannot be
     // handed "" by some future caller that forgets the flag.
     href: `/projects/`,

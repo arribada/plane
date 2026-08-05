@@ -45,9 +45,9 @@ const TOUR_STEPS: {
   },
   {
     key: "cycles",
-    title: "Move with cycles",
+    title: "Move with sprints",
     description:
-      "Cycles help you and your team to progress faster, similar to the sprints commonly used in agile development.",
+      "Sprints help you and your team to progress faster: a fixed period you plan, run and close as one thing.",
     image: CyclesTour,
     prevStep: "work-items",
     nextStep: "modules",

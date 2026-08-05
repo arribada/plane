@@ -77,7 +77,14 @@ export const SidebarItemBase = observer(function SidebarItemBase({
   const itemHref =
     item.key === "your_work" && data?.id ? joinUrlPath(slug, item.href, data?.id) : joinUrlPath(slug, item.href);
   const icon = getSidebarNavigationItemIcon(item.key);
-  const label = t(item.labelTranslationKey);
+  // `t()` returns the KEY when the catalogue has no entry for it, so a missing
+  // key renders as a lowercase slug — "portfolio", "workload" — sitting in the
+  // sidebar next to Home and Projects. The project navigation has degraded to a
+  // readable `name` for exactly this reason since its own keys missed; this is
+  // the same guard, so the NEXT missing key is a wrong language rather than a
+  // visible bug.
+  const translated = t(item.labelTranslationKey);
+  const label = translated === item.labelTranslationKey ? (item.name ?? translated) : translated;
 
   // Entries that open a modal get a button, not a link: an <a> that swallows its
   // own navigation still offers a URL to middle-click and to copy, and there is

@@ -16,7 +16,7 @@ export default {
     views: "Vues",
     analytics: "Analyses",
     work_items: "Éléments de travail",
-    cycles: "Cycles",
+    cycles: "Sprints",
     modules: "Modules",
     intake: "Intake",
     drafts: "Brouillons",
@@ -24,6 +24,10 @@ export default {
     pro: "Pro",
     upgrade: "Mettre à niveau",
     stickies: "Post-it",
+    portfolio: "Portefeuille",
+    workload: "Charge de travail",
+    github_triage: "Tri GitHub",
+    request_expense: "Demander une dépense",
   },
   auth: {
     common: {
@@ -281,29 +285,29 @@ export default {
   general_settings: "Paramètres généraux",
   sign_out: "Se déconnecter",
   signing_out: "Déconnexion",
-  active_cycles: "Cycles actifs",
+  active_cycles: "Sprints actifs",
   active_cycles_description:
-    "Surveillez les cycles à travers les projets, suivez les éléments de travail prioritaires et zoomez sur les cycles qui nécessitent votre attention.",
-  on_demand_snapshots_of_all_your_cycles: "Instantanés à la demande de tous vos cycles",
+    "Surveillez les sprints à travers les projets, suivez les éléments de travail prioritaires et zoomez sur les sprints qui nécessitent votre attention.",
+  on_demand_snapshots_of_all_your_cycles: "Instantanés à la demande de tous vos sprints",
   upgrade: "Mettre à niveau",
-  "10000_feet_view": "Vue à 10 000 pieds de tous les cycles actifs.",
+  "10000_feet_view": "Vue à 10 000 pieds de tous les sprints actifs.",
   "10000_feet_view_description":
-    "Dézoomez pour voir les cycles en cours dans tous vos projets en même temps au lieu de passer d’un cycle à l’autre dans chaque projet.",
-  get_snapshot_of_each_active_cycle: "Obtenez un aperçu de chaque cycle actif.",
+    "Dézoomez pour voir les sprints en cours dans tous vos projets en même temps au lieu de passer d’un sprint à l’autre dans chaque projet.",
+  get_snapshot_of_each_active_cycle: "Obtenez un aperçu de chaque sprint actif.",
   get_snapshot_of_each_active_cycle_description:
-    "Suivez les métriques de haut niveau pour tous les cycles actifs, suivez leur état d’avancement et évaluez leur impact par rapport aux échéances.",
+    "Suivez les métriques de haut niveau pour tous les sprints actifs, suivez leur état d’avancement et évaluez leur impact par rapport aux échéances.",
   compare_burndowns: "Comparez les burndowns.",
   compare_burndowns_description:
-    "Surveillez les performances de chacune de vos équipes en jetant un coup d’œil au rapport burndown de chaque cycle.",
+    "Surveillez les performances de chacune de vos équipes en jetant un coup d’œil au rapport burndown de chaque sprint.",
   quickly_see_make_or_break_issues: "Repérez rapidement les éléments de travail critiques.",
   quickly_see_make_or_break_issues_description:
-    "Prévisualisez les éléments de travail hautement prioritaires pour chaque cycle par rapport aux dates d’échéance. Visualisez-les pour chaque cycle en un clic.",
-  zoom_into_cycles_that_need_attention: "Zoomez sur les cycles qui nécessitent votre attention.",
+    "Prévisualisez les éléments de travail hautement prioritaires pour chaque sprint par rapport aux dates d’échéance. Visualisez-les pour chaque sprint en un clic.",
+  zoom_into_cycles_that_need_attention: "Zoomez sur les sprints qui nécessitent votre attention.",
   zoom_into_cycles_that_need_attention_description:
-    "Examinez l’état de tout cycle qui ne corresponde pas aux attentes en un clic.",
+    "Examinez l’état de tout sprint qui ne corresponde pas aux attentes en un clic.",
   stay_ahead_of_blockers: "Anticipez les blocages.",
   stay_ahead_of_blockers_description:
-    "Repérez les défis d’un projet à l’autre et repérez les dépendances inter-cycles qui ne sont pas évidentes depuis une autre vue.",
+    "Repérez les défis d’un projet à l’autre et repérez les dépendances inter-sprints qui ne sont pas évidentes depuis une autre vue.",
   analytics: "Analyses",
   workspace_invites: "Invitations à l’espace de travail",
   enter_god_mode: "Entrer en mode dieu",
@@ -385,7 +389,7 @@ export default {
   congrats: "Félicitations !",
   open_project: "Ouvrir le projet",
   issues: "Éléments de travail",
-  cycles: "Cycles",
+  cycles: "Sprints",
   modules: "Modules",
   pages: "Pages",
   intake: "Intake",
@@ -394,7 +398,7 @@ export default {
   projects_and_issues: "Projets et éléments de travail",
   projects_and_issues_description: "Activez ou désactivez ces éléments pour ce projet.",
   cycles_description:
-    "Définissez un cadre temporel pour chaque projet et ajustez la durée selon les besoins. Un cycle peut durer deux semaines, le suivant une semaine.",
+    "Définissez un cadre temporel pour chaque projet et ajustez la durée selon les besoins. Un sprint peut durer deux semaines, le suivant une semaine.",
   modules_description: "Organisez le travail en sous-projets avec des responsables et des acteurs spécifiques.",
   views_description:
     "Enregistrez des tris, filtres et options d’affichage personnalisés ou partagez-les avec votre équipe.",
@@ -670,8 +674,8 @@ export default {
     priority: "Priorité",
     team_project: "Projet d’équipe",
     project: "Projet",
-    cycle: "Cycle",
-    cycles: "Cycles",
+    cycle: "Sprint",
+    cycles: "Sprints",
     module: "Module",
     modules: "Modules",
     labels: "Étiquettes",
@@ -990,10 +994,10 @@ export default {
       press_enter: "Appuyez sur 'Entrée' pour ajouter un autre élément de travail",
       label: "Ajouter un élément de travail",
       cycle: {
-        failed: "L’élément de travail n’a pas pu être ajouté au cycle. Veuillez réessayer.",
+        failed: "L’élément de travail n’a pas pu être ajouté au sprint. Veuillez réessayer.",
         success:
-          "{count, plural, one {Élément de travail} other {Éléments de travail}} ajouté(s) au cycle avec succès.",
-        loading: "Ajout de {count, plural, one {l’élément de travail} other {éléments de travail}} au cycle",
+          "{count, plural, one {Élément de travail} other {Éléments de travail}} ajouté(s) au sprint avec succès.",
+        loading: "Ajout de {count, plural, one {l’élément de travail} other {éléments de travail}} au sprint",
       },
       assignee: "Ajouter des assignés",
       start_date: "Ajouter une date de début",
@@ -1007,9 +1011,9 @@ export default {
     remove: {
       label: "Supprimer l’élément de travail",
       cycle: {
-        loading: "Suppression de l’élément de travail du cycle",
-        success: "Élément de travail supprimé du cycle avec succès.",
-        failed: "L’élément de travail n’a pas pu être supprimé du cycle. Veuillez réessayer.",
+        loading: "Suppression de l’élément de travail du sprint",
+        success: "Élément de travail supprimé du sprint avec succès.",
+        failed: "L’élément de travail n’a pas pu être supprimé du sprint. Veuillez réessayer.",
       },
       module: {
         loading: "Suppression de l’élément de travail du module",
@@ -1368,7 +1372,7 @@ export default {
     work_items_closed_in: "Éléments de travail fermés dans",
     selected_projects: "Projets sélectionnés",
     total_members: "Total des membres",
-    total_cycles: "Total des Cycles",
+    total_cycles: "Total des Sprints",
     total_modules: "Total des Modules",
     pending_work_items: {
       title: "Éléments de travail en attente",
@@ -1411,9 +1415,9 @@ export default {
         primary_button: {
           text: "Commencez votre premier projet",
           comic: {
-            title: "L’analytics fonctionne mieux avec les Cycles + Modules",
+            title: "L’analytics fonctionne mieux avec les Sprints + Modules",
             description:
-              "D’abord, encadrez vos éléments de travail dans des Cycles et, si possible, regroupez les éléments qui s’étendent sur plus d’un cycle dans des Modules. Consultez les deux dans la navigation de gauche.",
+              "D’abord, encadrez vos éléments de travail dans des Sprints et, si possible, regroupez les éléments qui s’étendent sur plus d’un sprint dans des Modules. Consultez les deux dans la navigation de gauche.",
           },
         },
       },
@@ -1454,7 +1458,7 @@ export default {
     },
     error: {
       permission: "Vous n’avez pas la permission d’effectuer cette action.",
-      cycle_delete: "Échec de la suppression du cycle",
+      cycle_delete: "Échec de la suppression du sprint",
       module_delete: "Échec de la suppression du module",
       issue_delete: "Échec de la suppression de l’élément de travail",
     },
@@ -1482,7 +1486,7 @@ export default {
       general: {
         title: "Aucun projet actif",
         description:
-          "Considérez chaque projet comme le parent d’activités axées sur les objectifs. Les projets regroupent les tâches, les cycles et les modules et, avec l'aide de vos collègues, vous aident à atteindre ces objectifs. Créez un nouveau projet ou filtrez les projets archivés.",
+          "Considérez chaque projet comme le parent d’activités axées sur les objectifs. Les projets regroupent les tâches, les sprints et les modules et, avec l'aide de vos collègues, vous aident à atteindre ces objectifs. Créez un nouveau projet ou filtrez les projets archivés.",
         primary_button: {
           text: "Commencez votre premier projet",
           comic: {
@@ -2012,11 +2016,11 @@ export default {
     },
     features: {
       cycles: {
-        title: "Cycles",
-        short_title: "Cycles",
+        title: "Sprints",
+        short_title: "Sprints",
         description:
           "Planifiez le travail dans des périodes flexibles qui s'adaptent au rythme et au tempo uniques de ce projet.",
-        toggle_title: "Activer les cycles",
+        toggle_title: "Activer les sprints",
         toggle_description: "Planifiez le travail dans des périodes ciblées.",
       },
       modules: {
@@ -2052,15 +2056,15 @@ export default {
     },
   },
   project_cycles: {
-    add_cycle: "Ajouter un cycle",
+    add_cycle: "Ajouter un sprint",
     more_details: "Plus de détails",
-    cycle: "Cycle",
-    update_cycle: "Mettre à jour le cycle",
-    create_cycle: "Créer un cycle",
-    no_matching_cycles: "Aucun cycle correspondant",
-    remove_filters_to_see_all_cycles: "Supprimez les filtres pour voir tous les cycles",
-    remove_search_criteria_to_see_all_cycles: "Supprimez les critères de recherche pour voir tous les cycles",
-    only_completed_cycles_can_be_archived: "Seuls les cycles terminés peuvent être archivés",
+    cycle: "Sprint",
+    update_cycle: "Mettre à jour le sprint",
+    create_cycle: "Créer un sprint",
+    no_matching_cycles: "Aucun sprint correspondant",
+    remove_filters_to_see_all_cycles: "Supprimez les filtres pour voir tous les sprints",
+    remove_search_criteria_to_see_all_cycles: "Supprimez les critères de recherche pour voir tous les sprints",
+    only_completed_cycles_can_be_archived: "Seuls les sprints terminés peuvent être archivés",
     start_date: "Date de début",
     end_date: "Date de fin",
     in_your_timezone: "Dans votre fuseau horaire",
@@ -2068,7 +2072,7 @@ export default {
     date_range: "Plage de dates",
     add_date: "Ajouter une date",
     active_cycle: {
-      label: "Cycle actif",
+      label: "Sprint actif",
       progress: "Progression",
       chart: "Graphique d’avancement",
       priority_issue: "Éléments de travail prioritaires",
@@ -2079,10 +2083,10 @@ export default {
       labels: "Étiquettes",
     },
     upcoming_cycle: {
-      label: "Cycle à venir",
+      label: "Sprint à venir",
     },
     completed_cycle: {
-      label: "Cycle terminé",
+      label: "Sprint terminé",
     },
     status: {
       days_left: "Jours restants",
@@ -2093,71 +2097,71 @@ export default {
     },
     action: {
       restore: {
-        title: "Restaurer le cycle",
+        title: "Restaurer le sprint",
         success: {
-          title: "Cycle restauré",
-          description: "Le cycle a été restauré.",
+          title: "Sprint restauré",
+          description: "Le sprint a été restauré.",
         },
         failed: {
-          title: "Échec de la restauration du cycle",
-          description: "Le cycle n’a pas pu être restauré. Veuillez réessayer.",
+          title: "Échec de la restauration du sprint",
+          description: "Le sprint n’a pas pu être restauré. Veuillez réessayer.",
         },
       },
       favorite: {
-        loading: "Ajout du cycle aux favoris",
+        loading: "Ajout du sprint aux favoris",
         success: {
-          description: "Cycle ajouté aux favoris.",
+          description: "Sprint ajouté aux favoris.",
           title: "Succès !",
         },
         failed: {
-          description: "Impossible d’ajouter le cycle aux favoris. Veuillez réessayer.",
+          description: "Impossible d’ajouter le sprint aux favoris. Veuillez réessayer.",
           title: "Erreur !",
         },
       },
       unfavorite: {
-        loading: "Suppression du cycle des favoris",
+        loading: "Suppression du sprint des favoris",
         success: {
-          description: "Cycle retiré des favoris.",
+          description: "Sprint retiré des favoris.",
           title: "Succès !",
         },
         failed: {
-          description: "Impossible de retirer le cycle des favoris. Veuillez réessayer.",
+          description: "Impossible de retirer le sprint des favoris. Veuillez réessayer.",
           title: "Erreur !",
         },
       },
       update: {
-        loading: "Mise à jour du cycle",
+        loading: "Mise à jour du sprint",
         success: {
-          description: "Cycle mis à jour avec succès.",
+          description: "Sprint mis à jour avec succès.",
           title: "Succès !",
         },
         failed: {
-          description: "Erreur lors de la mise à jour du cycle. Veuillez réessayer.",
+          description: "Erreur lors de la mise à jour du sprint. Veuillez réessayer.",
           title: "Erreur !",
         },
         error: {
           already_exists:
-            "Vous avez déjà un cycle aux dates indiquées. Si vous souhaitez créer un cycle en brouillon, vous pouvez le faire en supprimant les deux dates.",
+            "Vous avez déjà un sprint aux dates indiquées. Si vous souhaitez créer un sprint en brouillon, vous pouvez le faire en supprimant les deux dates.",
         },
       },
     },
     empty_state: {
       general: {
-        title: "Regroupez et planifiez votre travail en Cycles.",
+        title: "Regroupez et planifiez votre travail en Sprints.",
         description:
           "Découpez le travail en périodes définies, planifiez à rebours depuis la date limite de votre projet pour fixer les dates, et progressez concrètement en équipe.",
         primary_button: {
-          text: "Définissez votre premier cycle",
+          text: "Définissez votre premier sprint",
           comic: {
-            title: "Les cycles sont des périodes répétitives.",
+            title: "Les sprints sont des périodes répétitives.",
             description:
-              "Un sprint, une itération, ou tout autre terme que vous utilisez pour le suivi hebdomadaire ou bimensuel du travail est un cycle.",
+              "Une itération, ou tout autre terme que vous utilisez pour le suivi hebdomadaire ou bimensuel du travail, s’appelle ici un sprint.",
           },
         },
       },
       no_issues: {
-        title: "Aucun élément de travail ajouté au cycle",
-        description: "Ajoutez ou créez des éléments de travail que vous souhaitez planifier et livrer dans ce cycle",
+        title: "Aucun élément de travail ajouté au sprint",
+        description: "Ajoutez ou créez des éléments de travail que vous souhaitez planifier et livrer dans ce sprint",
         primary_button: {
           text: "Créer un nouvel élément de travail",
         },
@@ -2166,18 +2170,18 @@ export default {
         },
       },
       completed_no_issues: {
-        title: "Aucun élément de travail dans le cycle",
+        title: "Aucun élément de travail dans le sprint",
         description:
-          "Aucun élément de travail dans le cycle. Les éléments sont soit transférés soit masqués. Pour voir les éléments masqués s’il y en a, mettez à jour vos propriétés d’affichage en conséquence.",
+          "Aucun élément de travail dans le sprint. Les éléments sont soit transférés soit masqués. Pour voir les éléments masqués s’il y en a, mettez à jour vos propriétés d’affichage en conséquence.",
       },
       active: {
-        title: "Aucun cycle actif",
+        title: "Aucun sprint actif",
         description:
-          "Un cycle actif inclut toute période qui englobe la date d’aujourd’hui dans sa plage. Trouvez ici la progression et les détails du cycle actif.",
+          "Un sprint actif inclut toute période qui englobe la date d’aujourd’hui dans sa plage. Trouvez ici la progression et les détails du sprint actif.",
       },
       archived: {
-        title: "Aucun cycle archivé pour le moment",
-        description: "Pour organiser votre projet, archivez les cycles terminés. Retrouvez-les ici une fois archivés.",
+        title: "Aucun sprint archivé pour le moment",
+        description: "Pour organiser votre projet, archivez les sprints terminés. Retrouvez-les ici une fois archivés.",
       },
     },
   },
@@ -2410,13 +2414,13 @@ export default {
   active_cycle: {
     empty_state: {
       progress: {
-        title: "Ajoutez des éléments de travail au cycle pour voir sa progression",
+        title: "Ajoutez des éléments de travail au sprint pour voir sa progression",
       },
       chart: {
-        title: "Ajoutez des éléments de travail au cycle pour voir le graphique d’avancement.",
+        title: "Ajoutez des éléments de travail au sprint pour voir le graphique d’avancement.",
       },
       priority_issue: {
-        title: "Visualisez en un coup d’œil les éléments de travail prioritaires traités dans le cycle.",
+        title: "Visualisez en un coup d’œil les éléments de travail prioritaires traités dans le sprint.",
       },
       assignee: {
         title: "Ajoutez des acteurs aux éléments de travail pour voir une répartition du travail par acteur.",
@@ -2437,9 +2441,9 @@ export default {
         },
       },
       cycle: {
-        title: "Les Cycles ne sont pas activés pour ce projet.",
+        title: "Les Sprints ne sont pas activés pour ce projet.",
         description:
-          "Découpez le travail en segments temporels, planifiez à rebours depuis la date d’échéance de votre projet pour définir les étapes, et progressez concrètement en équipe. Activez la fonctionnalité Cycles pour votre projet pour commencer à les utiliser.",
+          "Découpez le travail en segments temporels, planifiez à rebours depuis la date d’échéance de votre projet pour définir les étapes, et progressez concrètement en équipe. Activez la fonctionnalité Sprints pour votre projet pour commencer à les utiliser.",
         primary_button: {
           text: "Gérer les fonctionnalités",
         },
@@ -2560,7 +2564,7 @@ export default {
     },
     member: {
       title: "Membre",
-      description: "Capacité à lire, écrire, modifier et supprimer des entités dans les projets, cycles et modules",
+      description: "Capacité à lire, écrire, modifier et supprimer des entités dans les projets, sprints et modules",
     },
     admin: {
       title: "Administrateur",
@@ -2663,8 +2667,8 @@ export default {
     },
   },
   cycle: {
-    label: "{count, plural, one {Cycle} other {Cycles}}",
-    no_cycle: "Pas de cycle",
+    label: "{count, plural, one {Sprint} other {Sprints}}",
+    no_cycle: "Pas de sprint",
   },
   module: {
     label: "{count, plural, one {Module} other {Modules}}",

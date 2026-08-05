@@ -48,15 +48,15 @@ export default {
       cta_primary: "Create your first work item",
     },
     cycles: {
-      title: "Group and timebox your work in Cycles.",
+      title: "Group and timebox your work in Sprints.",
       description:
         "Break work down by timeboxed chunks, work backwards from your project deadline to set dates, and make tangible progress as a team.",
-      cta_primary: "Set your first cycle",
+      cta_primary: "Set your first sprint",
     },
     cycle_work_items: {
-      title: "No work items to show in this cycle",
+      title: "No work items to show in this sprint",
       description:
-        "Create work items to begin monitoring your team's progress this cycle and achieve your goals on time.",
+        "Create work items to begin monitoring your team's progress this sprint and achieve your goals on time.",
       cta_primary: "Create work item",
       cta_secondary: "Add existing work item",
     },
@@ -115,8 +115,8 @@ export default {
       cta_primary: "Set automation",
     },
     archive_cycles: {
-      title: "No archived cycles yet",
-      description: "To tidy up your project, archive completed cycles. Find them here once archived.",
+      title: "No archived sprints yet",
+      description: "To tidy up your project, archive completed sprints. Find them here once archived.",
     },
     archive_modules: {
       title: "No archived Modules yet",
@@ -160,7 +160,7 @@ export default {
         "Create projects with work items and assignees to start tracking performance, progress, and team impact here.",
     },
     analytics_no_cycle: {
-      title: "Create cycles to organise work into time-bound phases and track progress across sprints.",
+      title: "Create sprints to organise work into time-bound phases and track progress across them.",
     },
     analytics_no_module: {
       title: "Create modules to organize your work and track progress across different stages.",

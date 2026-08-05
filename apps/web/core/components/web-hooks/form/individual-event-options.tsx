@@ -21,8 +21,8 @@ export const INDIVIDUAL_WEBHOOK_OPTIONS: {
   },
   {
     key: "cycle",
-    label: "Cycles",
-    description: "Cycle created, updated, or deleted",
+    label: "Sprints",
+    description: "Sprint created, updated, or deleted",
   },
   {
     key: "issue",

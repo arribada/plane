@@ -17,7 +17,7 @@ export default {
     views: "Views",
     analytics: "Analytics",
     work_items: "Work items",
-    cycles: "Cycles",
+    cycles: "Sprints",
     modules: "Modules",
     intake: "Intake",
     drafts: "Drafts",
@@ -25,6 +25,15 @@ export default {
     pro: "Pro",
     upgrade: "Upgrade",
     stickies: "Stickies",
+    // Entries this fork adds. They were pointed at keys that did not exist —
+    // and `t()` hands back the key on a miss, so the sidebar rendered a
+    // lowercase "portfolio" and "workload" next to Home and Projects. Two of
+    // them dodged it by hiding English inside the key itself, which reads
+    // correctly and can never be translated. Real keys, real entries.
+    portfolio: "Portfolio",
+    workload: "Workload",
+    github_triage: "GitHub triage",
+    request_expense: "Request an expense",
   },
 
   auth: {

@@ -67,18 +67,48 @@ from .serializers import ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 
-# What a money surface may be read by. A guest here is typically a funder or a
-# partner invited to follow one project, and the allocation, the hourly rates, a
-# supplier's name and the purchase queue are not what they were invited to read.
-# The Finance tab has excluded guests since it shipped — but the client is not
-# where that rule holds, and the same figures were reachable straight from the
-# API and, until this landed, from the guest-visible Overview page.
+# What a money surface may be read or written by. A guest here is typically a
+# funder or a partner invited to follow one project, and the allocation, the
+# hourly rates, a supplier's name and the purchase queue are not what they were
+# invited to read. The Finance tab has excluded guests since it shipped — but the
+# client is not where that rule holds, and the same figures were reachable
+# straight from the API and, until this landed, from the guest-visible Overview
+# page.
 #
 # Deliberately a separate list rather than a narrowing of VIEWER_ROLES. Every
 # other endpoint on that list — the schedule, the deliverables, the work items,
 # the team — is meant to answer a guest, and editing it in place would silently
 # close all of them.
 MONEY_ROLES = [ROLE.ADMIN, ROLE.MEMBER]
+
+# MONEY_ROLES GOES WITH level="PROJECT", and that pairing is the whole rule.
+#
+# Everything else in this app runs at level="WORKSPACE" and scopes itself with
+# `_visible_projects`, which asks only "is the caller a member of this project at
+# all". That split is fine while the role list is VIEWER_ROLES, because all three
+# roles are on it and the role question has no answer to get wrong. It is not
+# fine for money: at level="WORKSPACE" the role that gets tested is the caller's
+# WORKSPACE role, so somebody who is MEMBER of the workspace and GUEST of *this
+# project* — the funder given a normal seat because they also work here, or
+# anybody demoted on one project — passed the check and read the budget. The
+# client had already hidden it from them, which is not a permission.
+#
+# level="PROJECT" reads the project role instead, and it is upstream Plane's own
+# idiom rather than something invented here: `allow_permission` falls through to
+# an explicit second branch that admits a WORKSPACE ADMIN whatever their project
+# role, so an admin is never locked out of a project they are on. See
+# plane/app/permissions/base.py.
+#
+# What it does NOT admit is a workspace admin who is not on the project at all —
+# and that costs nothing, because `_visible_projects` already refused that caller
+# with a 404 before any of this. Nobody who was being served stops being served;
+# the denial just moves one line earlier and says 403. Project scoping is a
+# property of the whole fork, not a rule about money: the same admin cannot read
+# that project's schedule or work items either. test_money_permissions.py pins
+# both halves.
+#
+# Two money endpoints stay at level="WORKSPACE" because they have no project to
+# scope to — see WorkspaceRoleRatesEndpoint and WorkspaceMyApprovalsEndpoint.
 
 # Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
 GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
@@ -740,9 +770,15 @@ class WorkspaceMyApprovalsEndpoint(BaseAPIView):
     Today somebody has to open each project in turn to discover they are blocking
     a colleague. The lead test is the same one the project endpoint uses, asked
     once per project rather than reimplemented.
+
+    MONEY_ROLES, at level="WORKSPACE" because it spans every project and so has no
+    single one to scope to. It emits totals, suppliers and who asked, which is the
+    procurement queue's payload by another route; the fact that it is empty for
+    almost everyone is the lead test doing that, not a permission, and a guest set
+    as a project lead would have read the lot.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug):
         visible = _visible_projects(request, slug)
         pending = (
@@ -4665,7 +4701,15 @@ class WorkspaceCalendarEndpoint(BaseAPIView):
 class WorkspaceRoleRatesEndpoint(BaseAPIView):
     """What an hour of each discipline costs. Reading takes a member — a rate is a
     commercial fact, and MONEY_ROLES says who is entitled to one; writing is
-    admin-only on top of that."""
+    admin-only on top of that.
+
+    The one money endpoint that stays at level="WORKSPACE" on purpose. A rate card
+    has no project dimension — there is no project in the URL to scope it to, and
+    it would be the same card whichever one you named. So the workspace role IS
+    the right question here: a workspace GUEST is the funder or partner this rule
+    exists for and is refused, and a workspace MEMBER is somebody who works here
+    and bills against these figures, whatever their role on any one project.
+    """
 
     @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
     def get(self, request, slug):
@@ -4899,7 +4943,7 @@ class ProjectExpensesEndpoint(BaseAPIView):
     to read.
     """
 
-    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -4908,7 +4952,7 @@ class ProjectExpensesEndpoint(BaseAPIView):
         rows = ProjectExpense.objects.filter(project_id=project_id).select_related("issue")
         return Response({"expenses": [_serialize_expense(r) for r in rows]}, status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -4963,7 +5007,7 @@ class ProjectExpensesEndpoint(BaseAPIView):
 
 
 class ProjectExpenseDetailEndpoint(BaseAPIView):
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def patch(self, request, slug, project_id, expense_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5025,7 +5069,7 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
         row.save()
         return Response(_serialize_expense(row), status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def delete(self, request, slug, project_id, expense_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5240,7 +5284,7 @@ class ProjectBudgetEndpoint(BaseAPIView):
     MONEY_ROLES: this is the allocation and what has been drawn against it.
     """
 
-    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5680,7 +5724,7 @@ class ProjectProcurementEndpoint(BaseAPIView):
     every one of them.
     """
 
-    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -5698,7 +5742,7 @@ class ProjectProcurementEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -5758,7 +5802,7 @@ class ProjectProcurementEndpoint(BaseAPIView):
 class ProjectProcurementDecisionEndpoint(BaseAPIView):
     """Approve or reject a request. Lead only, and approval is what spends."""
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id, request_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -5846,7 +5890,7 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
 
         return Response(_serialize_request(row), status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def patch(self, request, slug, project_id, request_id):
         """The purchasing record after the money decision: ordered, expected, arrived.
 
@@ -5902,7 +5946,7 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
         row.save()
         return Response(_serialize_request(row), status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def delete(self, request, slug, project_id, request_id):
         """Withdraw a request. The person who raised it may take it back while it is
         still pending; the lead may remove any of them."""
@@ -6993,7 +7037,7 @@ class IssueFixedCostEndpoint(BaseAPIView):
     than the price without the page it belongs to.
     """
 
-    @allow_permission(allowed_roles=MONEY_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)

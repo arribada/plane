@@ -29,7 +29,7 @@ env:
 
 jobs:
   typecheck:
-    name: typecheck (web)
+    name: typecheck + unit tests (web)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: tsc --noEmit (web + its workspace deps)
         run: pnpm turbo run check:types --filter=web
+
+      - name: Run the web unit tests
+        # In this job and not its own because `check:types` above already built
+        # every workspace package web imports, and the turbo `test` task needs the
+        # same ones — a second runner would pay for that build twice.
+        #
+        # The floor is the same guard the backend suite carries below, for the
+        # same reason: vitest collects by glob (see `include` in
+        # apps/web/vitest.config.ts, scoped to four source folders), and a test
+        # file written one folder outside it is silently collected as nothing.
+        # A suite that runs zero tests reports success. Raise this when you add
+        # tests.
+        run: |
+          set -e
+          N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
+          echo "collected $N web tests"
+          if [ "$N" -lt 11 ]; then
+            echo "::error::only $N web tests collected, expected at least 11 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+            exit 1
+          fi
+          pnpm turbo run test --filter=web
 
   backend:
     name: backend (api/worker/beat/migrator)

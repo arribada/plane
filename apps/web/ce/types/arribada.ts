@@ -600,7 +600,15 @@ export type TProjectBudget = {
   };
   /** Entered by a person, and usually the only figure with a receipt behind it. */
   expenses: {
+    /** A composition: every figure is read as a share of one total, so all of
+     *  them are in ONE currency — the allocation's — converted where a line was
+     *  entered in another. `currency` names that, and used to name whichever row
+     *  happened to create the bucket. Lines the EUR/GBP pair cannot reach are
+     *  left out, and are already named in `allocation.excluded_currencies`. */
     by_category: { category: TExpenseCategory; planned: number; actual: number; currency: string }[];
+    /** True when anything above had to be converted to get there, so it should
+     *  be shown with a "≈". Absent on an older server. */
+    by_category_converted?: boolean;
     planned: TMoney[];
     actual: TMoney[];
     count: number;

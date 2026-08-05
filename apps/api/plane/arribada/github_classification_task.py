@@ -64,9 +64,10 @@ def github_classification_warnings():
 
     since = timezone.now() - timedelta(hours=20)
 
-    # Live projects only. `Project.objects` is a SoftDeletionManager so a deleted
-    # project drops out here, while its wiki doc row survives — a retired project
-    # must not keep voting on who owns a repo.
+    # The rows this task needs anyway — the name, the workspace and the lead it
+    # nags. Live only, which `_repo_claims` now also enforces at its own source;
+    # this membership test is kept because it is what turns a claim into the
+    # project row below, not because the claim is doubted.
     projects = {
         str(row["id"]): row
         for row in Project.objects.filter(archived_at__isnull=True).values(

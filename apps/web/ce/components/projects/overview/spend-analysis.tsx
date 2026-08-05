@@ -68,6 +68,9 @@ type TRole = {
 type Props = {
   rhythm: TSpendRhythm | null | undefined;
   byCategory: TCategory[];
+  /** True when a figure in `byCategory` was converted to reach one currency, so
+   *  the shares are approximate. Absent on an older server. */
+  byCategoryConverted?: boolean;
   byRole: TRole[];
   /** Absent on an older server; the sprint section simply does not render. */
   byCycle?: { cycles: TCycle[]; currency: string; unconvertible: string[] } | null;
@@ -103,7 +106,7 @@ const sprintDates = (start: string | null, end: string | null) => {
   return start ? renderFormattedDate(start) : end ? renderFormattedDate(end) : "";
 };
 
-export function SpendAnalysis({ rhythm, byCategory, byRole, byCycle, money, currency }: Props) {
+export function SpendAnalysis({ rhythm, byCategory, byCategoryConverted, byRole, byCycle, money, currency }: Props) {
   const months = rhythm?.months ?? [];
   const spentByCategory = byCategory.filter((row) => row.actual > 0);
   const total = spentByCategory.reduce((sum, row) => sum + row.actual, 0);
@@ -466,7 +469,17 @@ export function SpendAnalysis({ rhythm, byCategory, byRole, byCycle, money, curr
 
       {total > 0 && (
         <section>
-          <h3 className="mb-2 text-11 font-medium tracking-wide text-tertiary uppercase">What it went on</h3>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-11 font-medium tracking-wide text-tertiary uppercase">What it went on</h3>
+            {/* The shares are a composition, so they are read in one currency.
+                When nothing had to be converted they ARE the recorded amounts,
+                and marking those too would train people to ignore the mark. */}
+            {byCategoryConverted && (
+              <span className="text-11 text-tertiary">
+                ≈ approximate — lines entered in another currency are converted to add up
+              </span>
+            )}
+          </div>
           <div className="flex h-3 w-full overflow-hidden rounded">
             {spentByCategory.map((row, index) => (
               <div

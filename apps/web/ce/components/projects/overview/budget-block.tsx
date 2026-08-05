@@ -556,6 +556,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         <SpendAnalysis
           rhythm={budget?.rhythm}
           byCategory={budget?.expenses?.by_category ?? []}
+          byCategoryConverted={budget?.expenses?.by_category_converted}
           // The per-discipline breakdown was computed on every read and rendered
           // as a row of pills at the very bottom of the page, below the expense
           // ledger. On a project with no expenses — nearly all of them — it was

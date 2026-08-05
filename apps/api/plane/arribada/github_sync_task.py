@@ -47,12 +47,31 @@ def _repo_claims():
     answers from the same scan: the router wants the repos exactly one project
     claims, and the triage queue wants to show a person WHICH projects are
     arguing over the rest so they can settle it.
+
+    Live projects only. A wiki doc row is a plain model with a CASCADE that never
+    fires, because Plane soft-deletes — so a deleted or archived project's row
+    survives it and goes on voting. `_repo_workspaces` and the classification
+    task each filter this out for themselves and each say why; `_repo_owners`
+    did not, and its test is `len(owners) == 1`. A repo claimed by one live
+    project and one retired one counted as contested and was never routed, so its
+    issues sat in the triage queue for good; a repo claimed only by a retired one
+    was reported as owned by a project the router then refused, so the run's own
+    summary disagreed with what it did.
+
+    Filtering here rather than in each caller because all three want the same
+    answer, and two of them had already worked that out separately.
     """
     from plane.arribada.models import ProjectWikiDoc
     from plane.arribada.views import _github_url
 
     claims = {}
-    for doc in ProjectWikiDoc.objects.exclude(github_repo_urls=[]).values_list("project_id", "github_repo_urls"):
+    for doc in (
+        ProjectWikiDoc.objects.filter(
+            project__deleted_at__isnull=True, project__archived_at__isnull=True
+        )
+        .exclude(github_repo_urls=[])
+        .values_list("project_id", "github_repo_urls")
+    ):
         project_id, urls = doc
         for url in urls or []:
             u = (_github_url(url) or str(url)).lower()

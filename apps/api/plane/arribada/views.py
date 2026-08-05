@@ -5291,8 +5291,20 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # "supplied" from "forgotten".
         labour["supplied_items"] = len(supplied)
 
+        # Read before the expense loop below, which needs the allocation's
+        # currency to bucket a composition chart in. Nothing here depends on the
+        # expenses, so the move is only a reordering.
+        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+        allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
+        allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
+        currency_settings = _currency_settings(slug)
+        eur_gbp = currency_settings["eur_gbp_rate"]
+
         expenses = list(ProjectExpense.objects.filter(project_id=project_id).select_related("issue"))
         by_category = {}
+        # True when any line had to be converted to get into the bucket above, so
+        # the reader can be shown a "≈".
+        category_converted = False
         spend_totals = {}
         # The same totals, restricted to the lines that stand in for our time.
         # Somebody looking at a budget needs to know what is our time and what is
@@ -5300,10 +5312,31 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # manager has, because you can move people and you cannot move a quote.
         supplied_totals = {}
         for row in expenses:
-            bucket = by_category.setdefault(
-                row.category, {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": row.currency}
-            )
-            bucket["planned" if row.planned else "actual"] += float(row.total)
+            # `by_category` is a COMPOSITION: every figure in it is read as a
+            # share of one total, so every figure has to be in one currency.
+            #
+            # It used to key on the category alone and take `currency` from
+            # whichever row happened to create the bucket — and the queryset has
+            # no ordering, so which row that was is up to Postgres. EUR 5,000 and
+            # GBP 3,000 of hardware became "8000" stamped with one of them, and
+            # adding an unrelated line could flip a whole category's currency.
+            # That figure reaches the funder's printed annex.
+            #
+            # So the same policy the rest of this endpoint already uses for a sum
+            # across currencies: convert what the EUR/GBP pair can reach into the
+            # allocation's currency, and leave out what it cannot — which is
+            # already named in `allocation.excluded_currencies`, computed from
+            # this very list. `spend_totals` below is deliberately NOT converted:
+            # it is the record, per currency, and stays exactly as entered.
+            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
+            if value is not None:
+                if (row.currency or "").strip().upper() != allocation_currency.strip().upper():
+                    category_converted = True
+                bucket = by_category.setdefault(
+                    row.category,
+                    {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": allocation_currency},
+                )
+                bucket["planned" if row.planned else "actual"] += value
             key = (row.currency, row.planned)
             spend_totals[key] = spend_totals.get(key, 0.0) + float(row.total)
             if row.replaces_labour:
@@ -5325,12 +5358,6 @@ class ProjectBudgetEndpoint(BaseAPIView):
                 continue
             key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
             expense_by_month[key] = expense_by_month.get(key, 0.0) + float(row.total)
-
-        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
-        allocated = float(schedule_row.budget_amount) if schedule_row and schedule_row.budget_amount is not None else None
-        allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
-        currency_settings = _currency_settings(slug)
-        eur_gbp = currency_settings["eur_gbp_rate"]
 
         # Labour belongs on the same timeline. A task that finished last month IS
         # money the project spent, whether or not anybody typed an expense line —
@@ -5524,6 +5551,11 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "by_category": sorted(
                         by_category.values(), key=lambda c: -(c["planned"] + c["actual"])
                     ),
+                    # Whether any line in the composition above was converted to
+                    # get there. False means every one was already in this
+                    # currency and the shares are exact — marking those too would
+                    # train people to ignore the mark.
+                    "by_category_converted": category_converted,
                     "planned": [
                         {"currency": c, "amount": round(v, 2)}
                         for (c, planned), v in sorted(spend_totals.items())
@@ -7357,9 +7389,23 @@ def _spend_rhythm(
     if remaining is not None and rate and rate > 0 and remaining > 0:
         months_of_runway = int(remaining // rate)
         today = timezone.now().date()
-        y = today.year + (today.month - 1 + months_of_runway) // 12
-        m = (today.month - 1 + months_of_runway) % 12 + 1
-        exhausted_on = str(_date(y, m, 1))
+        # `date()` refuses a year past 9999, and this arithmetic reaches one
+        # easily. `rate` is the mean of the last three months WITH spend, so a
+        # single €1 test line after a quiet stretch is a rate of €1 — against
+        # €100,000 remaining that is 100,000 months, the year 10,359, and a
+        # ValueError out of a helper nothing catches. It would 500 the whole
+        # budget payload: the allocation, the labour, the ledger and the funder
+        # report all travel in the same response.
+        #
+        # None rather than a clamped date. "The budget runs out around the year
+        # 9999" is not a reading anybody can act on, and the honest statement is
+        # that at this rate it does not run out on any horizon this project has.
+        # `months_left` two lines up already floors itself for the mirror-image
+        # reason; this is the ceiling it was missing.
+        if months_of_runway <= (_date.max.year - today.year) * 12:
+            y = today.year + (today.month - 1 + months_of_runway) // 12
+            m = (today.month - 1 + months_of_runway) % 12 + 1
+            exhausted_on = str(_date(y, m, 1))
 
     return {
         "months": months,

@@ -42,7 +42,13 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
   // carries the derived dates and the item counts, which is most of what makes a
   // table worth having over cards.
   const [rows, setRows] = useState<Record<string, TPortfolioProject>>({});
-  const [folders, setFolders] = useState<{ id: string; name: string; project_ids: string[] }[]>([]);
+  // `parent_id` is carried because folders nest. Dropped, every subfolder became
+  // a section indistinguishable from a top-level one — "Turtles" sitting beside
+  // "Tracker" rather than inside it, with nothing on the page saying they were
+  // related. The sidebar and the portfolio both already know better.
+  const [folders, setFolders] = useState<
+    { id: string; name: string; parent_id: string | null; project_ids: string[] }[]
+  >([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -53,7 +59,10 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
     service
       .getFolders(workspaceSlug.toString())
       .then((found) => {
-        if (!cancelled) setFolders(found.map((f) => ({ id: f.id, name: f.name, project_ids: f.project_ids })));
+        if (!cancelled)
+          setFolders(
+            found.map((f) => ({ id: f.id, name: f.name, parent_id: f.parent_id, project_ids: f.project_ids }))
+          );
         return undefined;
       })
       .catch(() => undefined);
@@ -70,6 +79,24 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
   }, [workspaceSlug]);
 
   const groups = useMemo(() => {
+    const byId = new Map(folders.map((f) => [f.id, f]));
+
+    /** "Tracker / Turtles" rather than a bare "Turtles". The sections here are a
+     *  flat list — a table cannot indent inside itself and stay readable — so the
+     *  hierarchy is carried in the heading, the same way the portfolio swimlanes
+     *  do it. A parent that has gone missing ends the walk instead of hanging it. */
+    const pathOf = (folderId: string): string => {
+      const parts: string[] = [];
+      let cursor = byId.get(folderId);
+      let hops = 0;
+      while (cursor && hops < 64) {
+        parts.unshift(cursor.name);
+        cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
+        hops += 1;
+      }
+      return parts.join(" / ");
+    };
+
     const byProject = new Map<string, { id: string; name: string }>();
     for (const folder of folders) for (const id of folder.project_ids) byProject.set(id, folder);
 
@@ -79,11 +106,13 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
       const key = folder?.id ?? UNFILED;
       const bucket = buckets.get(key);
       if (bucket) bucket.ids.push(id);
-      else buckets.set(key, { name: folder?.name ?? "Not in a mission", ids: [id] });
+      else buckets.set(key, { name: folder ? pathOf(folder.id) : "Not in a mission", ids: [id] });
     }
 
     // Named folders first, alphabetically; the unfiled bucket last, because it is
-    // a residue rather than a mission.
+    // a residue rather than a mission. Sorting the PATH rather than the name is
+    // what puts a subfolder's section directly under its parent's instead of
+    // wherever its own initial happens to fall.
     const named = [...buckets.entries()].filter(([key]) => key !== UNFILED);
     named.sort((a, b) => a[1].name.localeCompare(b[1].name));
     const unfiled = buckets.get(UNFILED);
@@ -140,7 +169,9 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
     if (!name?.trim()) return;
     try {
       const created = await service.createFolder(workspaceSlug.toString(), name.trim());
-      setFolders((current) => [...current, { id: created.id, name: created.name, project_ids: [] }]);
+      // Top level: this button creates a mission, and the endpoint is called
+      // without a parent. Nesting one is the sidebar tree's job.
+      setFolders((current) => [...current, { id: created.id, name: created.name, parent_id: null, project_ids: [] }]);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't create the mission" });
     }

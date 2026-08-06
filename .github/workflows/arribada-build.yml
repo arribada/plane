@@ -59,8 +59,8 @@ jobs:
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
-          if [ "$N" -lt 11 ]; then
-            echo "::error::only $N web tests collected, expected at least 11 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          if [ "$N" -lt 24 ]; then
+            echo "::error::only $N web tests collected, expected at least 24 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
           pnpm turbo run test --filter=web
@@ -143,8 +143,8 @@ jobs:
               # turning the one failure this guard exists for into a bare exit 1.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 203 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 203 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 210 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 210 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

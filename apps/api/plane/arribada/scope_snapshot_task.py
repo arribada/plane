@@ -19,13 +19,17 @@ so rather than drawing a line through days it has no figure for.
 
 from celery import shared_task
 
+from plane.arribada.task_safety import BASE, RETRY_POLICY
 from plane.db.models import Cycle, Issue
 from plane.utils.exception_logger import log_exception
 
 
-@shared_task
-def cycle_scope_snapshot():
-    """One row per running cycle, for today. Idempotent."""
+@shared_task(**BASE, **RETRY_POLICY)
+def cycle_scope_snapshot(self):
+    """One row per running cycle, for today. Idempotent.
+
+    `self` is here because RETRY_POLICY sets `bind=True`; beat still passes no arguments.
+    """
     from django.db.models import Count, Q
     from django.utils import timezone
 

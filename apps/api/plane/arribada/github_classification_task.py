@@ -43,6 +43,8 @@ from celery import shared_task
 from django.utils import timezone
 from django.utils.html import escape
 
+from plane.arribada.task_safety import BASE, RETRY_POLICY, report_task_failure
+
 TRIAGE_SENDER = "in_app:github_triage"
 DIGEST_SENDER = "in_app:github_triage_digest"
 
@@ -62,8 +64,9 @@ def _repo_key(text):
     return m.group(1).lower().rstrip("/").removesuffix(".git")
 
 
-@shared_task
-def github_classification_warnings():
+@shared_task(**BASE, **RETRY_POLICY)
+def github_classification_warnings(self):
+    # `self` is here because RETRY_POLICY sets bind=True; beat passes no arguments.
     from plane.db.models import Notification, Project, WorkspaceMember
     from plane.arribada.models import GithubIssue
     from plane.arribada.github_sync_task import _repo_claims
@@ -169,6 +172,28 @@ def github_classification_warnings():
         return list(query.values_list("member_id", flat=True))
 
     created = 0
+    failed = 0
+
+    def _guard(what, fn):
+        """Run one unit of notifying, and let the rest of the run survive it.
+
+        This task had no try/except at all. It runs once a day, so a single repo whose
+        claiming project has been deleted between the query above and the write below —
+        or one receiver id that no longer resolves — did not delay the warnings, it
+        cancelled them for every workspace, silently, until somebody noticed the queue
+        growing with nobody being told about it.
+        """
+        nonlocal failed
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            report_task_failure(
+                "plane.arribada.github_classification_task.github_classification_warnings",
+                exc,
+                note=f"{what} skipped; the rest of the run continued",
+            )
+            return 0
 
     for workspace_id, repos in contested.items():
         for repo, count in repos.items():
@@ -192,13 +217,18 @@ def github_classification_warnings():
             # a repo, and an unheard warning is the bug being fixed.
             receivers = leads or _members(workspace_id, admins_only=True)
             for uid in receivers:
-                created += _notify_once(
-                    uid,
-                    workspace_id,
-                    TRIAGE_SENDER,
-                    title,
-                    body,
-                    {"repo": repo, "count": count, "projects": names},
+                # `_guard` calls the lambda immediately, so the closure reads this
+                # iteration's values — no late-binding trap to defend against.
+                created += _guard(
+                    f"contested warning for {repo}",
+                    lambda: _notify_once(
+                        uid,
+                        workspace_id,
+                        TRIAGE_SENDER,
+                        title,
+                        body,
+                        {"repo": repo, "count": count, "projects": names},
+                    ),
                 )
 
     for workspace_id, count in unclaimed.items():
@@ -208,12 +238,16 @@ def github_classification_warnings():
             f"link the repository or file them from the triage queue.</p>"
         )
         for uid in _members(workspace_id):
-            created += _notify_once(
-                uid, workspace_id, DIGEST_SENDER, title, body, {"count": count}, dedupe_on_title=False
+            created += _guard(
+                f"digest for workspace {workspace_id}",
+                lambda: _notify_once(
+                    uid, workspace_id, DIGEST_SENDER, title, body, {"count": count}, dedupe_on_title=False
+                ),
             )
 
     return {
         "notifications": created,
         "contested": sum(sum(r.values()) for r in contested.values()),
         "unclaimed": sum(unclaimed.values()),
+        "failed": failed,
     }

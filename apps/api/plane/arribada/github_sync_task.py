@@ -37,7 +37,15 @@ import requests
 from celery import shared_task
 from django.utils import timezone
 
+from plane.arribada.task_safety import BASE, HTTP_RETRY_POLICY, task_lock
+
 GITHUB_API = "https://api.github.com"
+
+# Slightly under the every-30-minutes cadence, so a run that overruns holds the lock right up
+# to the moment its successor is due and no further. Paired with `expire_seconds` on the beat
+# entry in plane/celery.py: expiry stops a backlog being delivered, the lock stops whatever
+# does get delivered from running twice at once.
+SYNC_LOCK_SECONDS = 25 * 60
 
 
 def _repo_claims():
@@ -619,8 +627,12 @@ def _reconcile_closed(pat, workspace_id, repo, open_numbers, budget, cache):
 # that did not exist, and "Sync now" raised AttributeError. Nothing errored at
 # import, `manage.py check` stayed clean, and GitHub ingestion silently stopped.
 # Add helpers ABOVE the decorator, never between it and its def.
-@shared_task
-def github_plane_sync():
+#
+# That rule is why the registered task now lives at the BOTTOM of this file: the sync had to
+# be wrapped in a lock, and the alternative was to re-indent 250 lines under a `with`.
+def _github_plane_sync():
+    """The sync itself. `github_plane_sync` at the end of this file is the registered task
+    and wraps this in a Redis lock."""
     from plane.db.models import Issue, IssueAssignee, Project, State, WorkspaceMember
 
     pat = os.environ.get("GITHUB_PAT")
@@ -892,3 +904,28 @@ def github_plane_sync():
         "skipped_partial_fetch": sorted(partial_fetch),
         "at": str(timezone.now()),
     }
+
+
+# The decorator must sit DIRECTLY on this function. Twice a helper was inserted at this
+# anchor and landed between the two, so @shared_task decorated the helper instead — celery
+# never registered the task, beat scheduled a name that did not exist, and "Sync now" raised
+# AttributeError. Nothing errored at import and `manage.py check` stayed clean.
+# Add helpers ABOVE this comment, never between it and the def.
+@shared_task(**BASE, **HTTP_RETRY_POLICY)
+def github_plane_sync(self):
+    """One sync at a time, forkwide.
+
+    The body is check-then-act from end to end — "is there already a work item for this
+    GitHub id?" then `Issue.objects.create` — and there is no unique constraint underneath
+    it. Two concurrent runs both read "no" and both create, so one GitHub issue becomes two
+    work items in the project, which someone then has to notice and unpick.
+
+    Concurrency was not hypothetical: with nothing expiring the messages, a broker outage
+    ended with every missed 30-minute tick delivered at once into four prefork children.
+    """
+    with task_lock("github_plane_sync", SYNC_LOCK_SECONDS) as held:
+        if not held:
+            # `skipped` is the key the "Sync now" view reads as "nothing to do", which is the
+            # honest answer: a sync IS running, and starting a second one is the bug.
+            return {"skipped": "another github_plane_sync run is already in progress"}
+        return _github_plane_sync()

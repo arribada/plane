@@ -182,9 +182,43 @@ SITE_ID = 1
 AUTH_USER_MODEL = "db.User"
 
 # Database
+#
+# CONN_MAX_AGE and CONN_HEALTH_CHECKS are set TOGETHER, on purpose, and must stay that way.
+#
+# dj_database_url.config() defaults conn_max_age=0, so Django opened a fresh connection for
+# EVERY request and closed it at the end. Measured on the production droplet: 22.1 ms median
+# to connect, against 0.24 ms on a reused one — a fixed toll on every single request,
+# including the ones that then do 0.2 ms of actual query work.
+#
+# The trap: raising CONN_MAX_AGE alone is worse than leaving it at 0. A persistent connection
+# outlives a Postgres restart (or a failover, or an idle-timeout kill on the server side) as a
+# dead socket that Django will happily hand to the next request, which then dies with
+# "server closed the connection unexpectedly" — once per stale connection in the pool, in a
+# burst, exactly when the database has just come back and everyone is retrying.
+# CONN_HEALTH_CHECKS=True makes Django ping the connection at the start of each request and
+# transparently reconnect if it is dead. That is the ONLY thing that makes CONN_MAX_AGE safe.
+# The current accidental config (0/False) avoids the stale-connection failure by paying the
+# connect cost every time; keeping only half of this change would buy the cost back AND
+# introduce the failure.
+#
+# Cost of persistence: each gunicorn worker process now holds a connection open for
+# DB_CONN_MAX_AGE seconds instead of returning it after each request. See the GUNICORN_WORKERS
+# note in ROLLBACK.md / docs — do NOT raise the worker count on the back of this change
+# without a connection pooler in front of Postgres.
+#
+# These two are plain module-level helpers, not Django settings: Django only reads
+# CONN_MAX_AGE / CONN_HEALTH_CHECKS from inside each DATABASES[alias] dict, so they are
+# applied to every alias below rather than set once at the top level.
+DB_CONN_MAX_AGE = int(os.environ.get("CONN_MAX_AGE", 60))
+DB_CONN_HEALTH_CHECKS = os.environ.get("CONN_HEALTH_CHECKS", "1") == "1"
+
 if bool(os.environ.get("DATABASE_URL")):
     # Parse database configuration from $DATABASE_URL
-    DATABASES = {"default": dj_database_url.config()}
+    DATABASES = {
+        "default": dj_database_url.config(
+            conn_max_age=DB_CONN_MAX_AGE, conn_health_checks=DB_CONN_HEALTH_CHECKS
+        )
+    }
 else:
     DATABASES = {
         "default": {
@@ -194,6 +228,8 @@ else:
             "PASSWORD": os.environ.get("POSTGRES_PASSWORD"),
             "HOST": os.environ.get("POSTGRES_HOST"),
             "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
     }
 
@@ -201,7 +237,11 @@ else:
 if os.environ.get("ENABLE_READ_REPLICA", "0") == "1":
     if bool(os.environ.get("DATABASE_READ_REPLICA_URL")):
         # Parse database configuration from $DATABASE_URL
-        DATABASES["replica"] = dj_database_url.parse(os.environ.get("DATABASE_READ_REPLICA_URL"))
+        DATABASES["replica"] = dj_database_url.parse(
+            os.environ.get("DATABASE_READ_REPLICA_URL"),
+            conn_max_age=DB_CONN_MAX_AGE,
+            conn_health_checks=DB_CONN_HEALTH_CHECKS,
+        )
     else:
         DATABASES["replica"] = {
             "ENGINE": "django.db.backends.postgresql",
@@ -210,6 +250,8 @@ if os.environ.get("ENABLE_READ_REPLICA", "0") == "1":
             "PASSWORD": os.environ.get("POSTGRES_READ_REPLICA_PASSWORD"),
             "HOST": os.environ.get("POSTGRES_READ_REPLICA_HOST"),
             "PORT": os.environ.get("POSTGRES_READ_REPLICA_PORT", "5432"),
+            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
 
     # Database Routers
@@ -222,13 +264,45 @@ if os.environ.get("ENABLE_READ_REPLICA", "0") == "1":
 REDIS_URL = os.environ.get("REDIS_URL")
 REDIS_SSL = REDIS_URL and "rediss" in REDIS_URL
 
+# The cache is an OPTIMISATION, and it is now configured to fail like one.
+#
+# django_redis defaults IGNORE_EXCEPTIONS to False, which means a cache call RAISES when the
+# Redis/Valkey server is unreachable. That turned a cache outage into a total outage:
+#   * REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] contains AnonRateThrottle, so EVERY
+#     unauthenticated request performs a cache read before the view is even entered;
+#   * GET /api/instances/ is wrapped in @cache_response (license/api/views/instance.py), and
+#     that endpoint is the first call the web app makes on boot.
+# So with Postgres perfectly healthy and only Valkey down, the app shell 500s on bootstrap,
+# the UI never renders, and sign-in is unreachable — nobody can even get far enough to see
+# a degraded page.
+#
+# With IGNORE_EXCEPTIONS a failed read returns None (cache miss -> compute it), a failed
+# write is dropped, and the site serves slower but correct pages. LOG_IGNORED_EXCEPTIONS
+# keeps the failure visible in the logs instead of silently swallowing it.
+#
+# SOCKET_TIMEOUT / SOCKET_CONNECT_TIMEOUT close the other half of the hole: without them
+# redis-py blocks indefinitely, so a HUNG Valkey (reachable TCP, no reply — swapping, an
+# fsync stall, a half-open NAT conn) pins a gunicorn worker thread forever and the pool
+# drains one request at a time. A refused connection fails fast on its own; a hung one does
+# not, and only a timeout turns it back into an exception IGNORE_EXCEPTIONS can absorb.
+#
+# NOT affected by this: sessions. SESSION_ENGINE is "plane.db.models.session", a subclass of
+# django.contrib.sessions.backends.db — sessions live in the `sessions` table and never touch
+# Redis, so no one is logged out by a cache outage or by this change.
+_REDIS_CACHE_OPTIONS = {
+    "CLIENT_CLASS": "django_redis.client.DefaultClient",
+    "IGNORE_EXCEPTIONS": True,
+    "SOCKET_CONNECT_TIMEOUT": float(os.environ.get("REDIS_SOCKET_CONNECT_TIMEOUT", 2)),
+    "SOCKET_TIMEOUT": float(os.environ.get("REDIS_SOCKET_TIMEOUT", 2)),
+}
+
 if REDIS_SSL:
     CACHES = {
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": REDIS_URL,
             "OPTIONS": {
-                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                **_REDIS_CACHE_OPTIONS,
                 "CONNECTION_POOL_KWARGS": {"ssl_cert_reqs": False},
             },
         }
@@ -238,9 +312,13 @@ else:
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": REDIS_URL,
-            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+            "OPTIONS": dict(_REDIS_CACHE_OPTIONS),
         }
     }
+
+# An ignored exception that leaves no trace is indistinguishable from a cache that is simply
+# cold. Log it, so "the site got slow at 03:00" has an answer in the logs.
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
 # Password validations
 AUTH_PASSWORD_VALIDATORS = [

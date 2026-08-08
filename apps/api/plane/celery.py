@@ -77,23 +77,49 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.exporter_expired_task.delete_old_s3_link",
         "schedule": crontab(hour=3, minute=45),  # UTC 03:45
     },
+    # ---------------------------------------------------------------- Arribada tasks
+    #
+    # `expire_seconds`, NOT `expires`. This instance runs django_celery_beat's
+    # DatabaseScheduler (see beat_scheduler at the bottom of this file), and its
+    # ModelEntry._unpack_options accepts exactly queue / exchange / routing_key /
+    # priority / headers / expire_seconds. Anything else lands in **kwargs and is
+    # DISCARDED IN SILENCE — the schedule would look correct in this file and set no
+    # expiry at all, which is the same class of bug as a @shared_task on the wrong def.
+    #
+    # Why expiry matters here: nothing expired before, so a broker or worker outage ended
+    # with every missed tick delivered at once into four prefork children. Each value below
+    # is under its own interval, so a backlog collapses to one useful run instead of a
+    # stampede. Retries, locks and the rest of the policy are in
+    # plane/arribada/task_safety.py.
     "arribada-cycle-scope-snapshot": {
         "task": "plane.arribada.scope_snapshot_task.cycle_scope_snapshot",
         # 23:50 UTC: the last moment that is still today for the team, so the row
         # records the day as it ended rather than as it started.
         "schedule": crontab(hour=23, minute=50),
+        # An hour. The row is keyed on today's date, so a delivery that arrives after
+        # midnight would stamp the wrong day — better not to run at all.
+        "options": {"expire_seconds": 3600},
     },
     "arribada-due-date-reminders": {
         "task": "plane.arribada.reminder_task.due_date_reminder",
         "schedule": crontab(hour=6, minute=0),  # UTC 06:00 daily
+        # Four hours: a reminder that lands mid-morning is still the morning's reminder;
+        # one that lands at midnight is noise, and the 20h dedup would suppress the next
+        # day's real one.
+        "options": {"expire_seconds": 4 * 3600},
     },
     "arribada-github-classification-warnings": {
         "task": "plane.arribada.github_classification_task.github_classification_warnings",
         "schedule": crontab(hour=6, minute=30),  # UTC 06:30 daily
+        "options": {"expire_seconds": 4 * 3600},
     },
     "arribada-github-plane-sync": {
         "task": "plane.arribada.github_sync_task.github_plane_sync",
         "schedule": crontab(minute="*/30"),  # every 30 min — no-op until GITHUB_PAT is set
+        # Under the 30-minute interval, so a queued backlog drops rather than replaying
+        # hours of identical syncs. The task also takes a Redis lock, because expiry alone
+        # does not stop two live deliveries overlapping.
+        "options": {"expire_seconds": 25 * 60},
     },
     "arribada-notification-forward": {
         "task": "plane.arribada.notify_forward.forward_notifications",
@@ -101,6 +127,9 @@ app.conf.beat_schedule = {
         # already holds, so overlap is the point: a missed tick costs a delay, not a
         # notification. No-op until ARRIBADA_NOTIFY_URL and _SECRET are set.
         "schedule": crontab(minute="*/10"),
+        # Nine minutes. The window is 45 minutes wide, so a stale delivery can only
+        # re-send what the next fresh run will send anyway.
+        "options": {"expire_seconds": 9 * 60},
     },
 }
 

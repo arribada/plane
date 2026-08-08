@@ -25,6 +25,8 @@ from celery import shared_task
 from django.utils import timezone
 from django.utils.html import strip_tags
 
+from plane.arribada.task_safety import BASE, HTTP_RETRY_POLICY, task_lock
+
 # How far back each run looks. Comfortably wider than the every-10-minutes cadence so
 # a missed tick, a restart or a slow queue still gets picked up next time.
 WINDOW_MINUTES = 45
@@ -146,12 +148,28 @@ def _activity_sentence(payload, row):
     return sentence
 
 
-@shared_task
-def forward_notifications():
-    """Send the last window's unread Plane notifications to the dashboard."""
+@shared_task(**BASE, **HTTP_RETRY_POLICY)
+def forward_notifications(self):
+    """Send the last window's unread Plane notifications to the dashboard.
+
+    `self` is here because HTTP_RETRY_POLICY sets bind=True; beat passes no arguments.
+    """
     if not is_enabled():
         return "disabled"
 
+    # Overlapping runs are not a correctness problem — the dashboard dedupes on
+    # `external_id` — but they are pure waste: two runs of the same 45-minute window post
+    # the same up to 20 000 items twice, at 15 s a request, and the second run's only
+    # possible outcome is `duplicates`. After an outage beat delivers every missed
+    # ten-minute tick at once, which is exactly when the far side can least afford it.
+    with task_lock("forward_notifications", 9 * 60) as held:
+        if not held:
+            return "another forward_notifications run is already in progress"
+        return _forward_notifications()
+
+
+def _forward_notifications():
+    """The forwarding itself, so the task above can hold a lock without re-indenting it."""
     # Imported here, not at module load, so registering the task never touches the
     # model registry before it is ready.
     from plane.db.models import Notification

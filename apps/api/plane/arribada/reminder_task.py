@@ -16,6 +16,7 @@ from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
 
+from plane.arribada.task_safety import BASE, HTTP_RETRY_POLICY, report_task_failure
 from plane.arribada.zulip_notify import (
     is_enabled as zulip_enabled,
     post_to_stream as zulip_post,
@@ -42,8 +43,10 @@ def _summary_line(issue, label):
     return f"{issue.project.name} · {ref} — {when}{tail}"
 
 
-@shared_task
-def due_date_reminder():
+@shared_task(**BASE, **HTTP_RETRY_POLICY)
+def due_date_reminder(self):
+    # `self` is here because HTTP_RETRY_POLICY sets bind=True; beat passes no arguments.
+    #
     # imported here (not at module load) so registering the task in apps.ready()
     # never touches the model registry before it is ready
     from plane.db.models import Issue, IssueAssignee, Notification
@@ -77,7 +80,19 @@ def due_date_reminder():
 
     created = 0
     zulip_sent = 0
-    for issue in issues:
+
+    def _remind(issue):
+        """Everything this task does for ONE work item.
+
+        A function rather than the loop body it used to be, so the loop below can put a
+        try/except around it. There was no guard of any kind here: one work item with a
+        null project, a deleted workspace or an assignee row pointing at a removed user
+        raised out of the whole task, and the reminders for every item after it in the
+        list — this runs once a day, so those were not late, they never happened. Only
+        `cycle_scope_snapshot` guarded per item; this one and the GitHub warnings had
+        nothing.
+        """
+        nonlocal created, zulip_sent
         if issue.target_date < today:
             label = "overdue"
         elif issue.target_date == today:
@@ -153,4 +168,18 @@ def due_date_reminder():
                         zulip_sent += 1
                 posted_to_chat = True
 
-    return {"reminders": created, "zulip": zulip_sent}
+    failed = 0
+    for issue in issues:
+        try:
+            _remind(issue)
+        except Exception as exc:  # noqa: BLE001
+            # One bad work item must not cost everyone else the day's reminders. Reported
+            # rather than swallowed, so the item that keeps failing is nameable.
+            failed += 1
+            report_task_failure(
+                "plane.arribada.reminder_task.due_date_reminder",
+                exc,
+                note=f"work item `{issue.id}` skipped; the rest of the run continued",
+            )
+
+    return {"reminders": created, "zulip": zulip_sent, "failed": failed}

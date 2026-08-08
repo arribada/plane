@@ -64,7 +64,11 @@ def invalidate_cache_directly(path=None, url_params=False, user=True, request=No
     key = generate_cache_key(custom_path, auth_header)
 
     if multiple:
-        cache.delete_many(keys=cache.keys(f"*{key}*"))
+        # `or []`: with IGNORE_EXCEPTIONS on (see CACHES in settings/common.py) a failed
+        # cache.keys() returns None rather than raising, and delete_many(None) then dies on
+        # a TypeError that IGNORE_EXCEPTIONS does not catch — turning the cache outage this
+        # setting exists to survive back into a 500, on a write endpoint.
+        cache.delete_many(keys=cache.keys(f"*{key}*") or [])
     else:
         cache.delete(key)
 

@@ -25,7 +25,18 @@ env:
   REGISTRY: ghcr.io
   OWNER: arribada
   # `+` is valid semver build metadata but ILLEGAL in a Docker tag — never use it.
-  TAG: ${{ inputs.tag || 'v1.3.1-arribada.1' }}
+  #
+  # The fallback is the COMMIT, not a fixed string. It used to be
+  # `inputs.tag || 'v1.3.1-arribada.1'`, so every plain push to arribada/main rebuilt and
+  # OVERWROTE `v1.3.1-arribada.1`. A tag therefore did not identify a build: the droplet has
+  # `v1.3.1-arribada.5` dated 2026-08-05 (five days after `.4`), and `.77`, `.78`, `.79` and
+  # `.80` are all one image id. Nothing on the machine could answer "which commit is this?",
+  # which is the first question a rollback asks.
+  #
+  # `github.sha` is unique per commit and never collides, so a push always produces a new,
+  # attributable tag; a deliberate release still passes `tag:` by hand. Paired with the OCI
+  # labels below, so `docker inspect` answers the same question offline.
+  TAG: ${{ inputs.tag || github.sha }}
 
 jobs:
   typecheck:
@@ -191,6 +202,14 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-backend:${{ env.TAG }}
           cache-from: type=gha
+          # So `docker inspect <image>` answers "what is this?" without a tag to trust.
+          # Every backend image on the droplet today has `Labels: null`, which is why the
+          # two rollback-* images had to be identified by hand.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/arribada/plane
+            org.opencontainers.image.version=${{ env.TAG }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
 
   web:
     name: web (plane-frontend)
@@ -224,6 +243,12 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Same reason as the backend: the tar the droplet loads carries its commit, so
+          # `docker inspect` on the served image identifies it without trusting the tag.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/arribada/plane
+            org.opencontainers.image.version=${{ env.TAG }}
 
       - name: Compress image tar
         run: gzip -c /tmp/frontend-image.tar > frontend-image.tgz && ls -lh frontend-image.tgz

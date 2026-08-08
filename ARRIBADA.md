@@ -124,6 +124,15 @@ A migration that is written but not registered in the graph typecheck-passes and
 silently skipped. And a hand-written `AlterField` that disagrees with its model leaves the
 graph permanently dirty, so every later `makemigrations` wants to correct it. (`7682930249`)
 
+**A `RunPython` in this graph may not be reversible, and two of them are not.** `0038` and
+`0014` both delete rows and both reverse to a no-op — `0038` says so in its own docstring,
+and there is no dump from before `0014` anywhere. Before deploying anything that touches
+`apps/api/plane/arribada/migrations/`, run
+`git diff --name-only <deployed>..HEAD -- apps/api/plane/arribada/migrations/ | xargs -r grep -l RunPython`;
+any output means you must take a pre-deploy dump first
+(`/opt/arribada-platform/tools/plane-predeploy-dump.sh`). Full procedure, including what
+"code back, database forward" costs you: **[`ROLLBACK.md`](ROLLBACK.md)**.
+
 **Production has run unpushed code before.** The `ProjectAffineDoc` → `ProjectWikiDoc`
 rename and its migration `0009` were already applied in prod while absent from git;
 deploying the branch as it stood would have pointed code at a dropped table. To detect it:
@@ -197,6 +206,19 @@ Postgres (`pytest.ini` uses `--reuse-db --nomigrations`).
 | `arribada-github-plane-sync`              | every 30 min (no-op without `GITHUB_PAT`)              |
 | `arribada-notification-forward`           | every 10 min, re-sending a 45-min window               |
 
+All five take their retry policy from `plane/arribada/task_safety.py` — `bind=True`,
+`autoretry_for`, `acks_late`, `reject_on_worker_lost`, and an `ArribadaTask` base whose
+`on_failure` reports to `log_exception` **and** Zulip. Two of them take a Redis lock.
+Two things to know before editing that file:
+
+- **`expire_seconds`, never `expires`.** Beat runs `django_celery_beat`'s DatabaseScheduler,
+  whose `ModelEntry._unpack_options` accepts `queue / exchange / routing_key / priority /
+headers / expire_seconds` and drops everything else into `**kwargs` **in silence**. An
+  entry spelled `expires` looks right in `celery.py` and sets no expiry at all.
+- **`acks_late=True` is only safe because all five are idempotent** (`update_or_create` on
+  the snapshot, a 20-hour dedup window on both notification tasks, `external_id` dedup on the
+  forwarder). Do not copy the policy onto a task that appends.
+
 ---
 
 ## Feature areas
@@ -266,11 +288,15 @@ plan; provider and key per workspace (`WorkspaceAiSettings`).
 ## Configuration
 
 All read directly via `os.environ` inside the app — nothing arribada-specific is in
-`plane/settings/`.
+`plane/settings/`, with the three infrastructure knobs noted below as the exception:
+`CONN_MAX_AGE` / `CONN_HEALTH_CHECKS` (must be set together — see the comment in
+`plane/settings/common.py`) and `REDIS_SOCKET_TIMEOUT` / `REDIS_SOCKET_CONNECT_TIMEOUT`.
+Their defaults are correct; they exist so a bad day can be tuned without a rebuild.
 
 | Env var(s)                                                                                 | Enables                                                                                                     | Without it                                                                      |
 | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `GITHUB_PAT` (+ `GITHUB_SYNC_REPOS`)                                                       | GitHub sync. `GITHUB_SYNC_REPOS` **adds to** the repos mapped on `ProjectWikiDoc`, it does not replace them | sync is a silent no-op                                                          |
+| `ARRIBADA_TASK_ALERT_STREAM` / `_TOPIC`                                                    | Where a dead scheduled task is reported (reuses the `ARRIBADA_ZULIP_*` bot)                                 | defaults to stream `alerts`, topic `plane tasks`                                |
 | `ARRIBADA_NOTIFY_URL` + `ARRIBADA_NOTIFY_SECRET`                                           | Forwarding Plane notifications to the dashboard bell                                                        | no-op                                                                           |
 | `HUB_LINKS_SECRET`                                                                         | `hub-projects` and `team-sync` (server-to-server, `X-Hub-Secret`)                                           | endpoints answer 503 `not_configured`                                           |
 | `ARRIBADA_AI_API_KEY` (or `GROQ_API_KEY`), `ARRIBADA_AI_PROVIDER` / `_BASE_URL` / `_MODEL` | AI assistant, deploy-wide. Falls back to the workspace row, then Plane instance config                      | assistant unavailable                                                           |
@@ -286,6 +312,19 @@ droplet has ~3.8 GB free next to a live Postgres, so the OOM killer would take o
 production rather than the build. The backend image is pushed to
 `ghcr.io/arribada/plane-backend:$TAG`; the web image is `workflow_dispatch` only (30-40 min)
 and ships as a gzipped tar artifact.
+
+> ⚠️ **That backend push does not work.** `ghcr.io/arribada/plane-backend` holds **zero**
+> images — the credential 403s, which is why the deploy script judges the _web_ job's
+> conclusion and ignores the run's, and why the backend is in practice built on the droplet
+> by `/opt/plane-fork/build-be.sh`. Every backend image that exists, **including both
+> rollback targets**, lives only in that droplet's `/var/lib/docker`. See
+> [`ROLLBACK.md`](ROLLBACK.md).
+
+`TAG` defaults to `github.sha`, not to a fixed string. It used to default to
+`v1.3.1-arribada.1`, so any plain push overwrote that tag and a tag identified nothing — the
+droplet has `.5` dated five days after `.4`, and `.77`–`.80` sharing one image id. Both build
+steps also stamp `org.opencontainers.image.revision`, so `docker inspect` answers "which
+commit is this?" without trusting a tag.
 
 Four guards, each earned:
 

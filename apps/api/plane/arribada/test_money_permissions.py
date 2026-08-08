@@ -60,6 +60,8 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from plane.app.permissions import ROLE
+from plane.arribada.models import ProjectSchedule, ProjectTeamMember
+from plane.arribada.serializers import MONEY_FIELDS, ProjectScheduleSerializer
 from plane.arribada.views import MONEY_ROLES, VIEWER_ROLES
 from plane.db.models import Issue, Project, ProjectMember, User, Workspace, WorkspaceMember
 
@@ -115,9 +117,11 @@ def money_world(db):
     """
     # `username` is unique and has no default — two users created without one
     # collide on the empty string rather than on anything meaningful.
+    #
+    # No passwords: `force_authenticate` bypasses password checking entirely, and
+    # Django's PBKDF2 default is several hundred thousand iterations — six users a
+    # fixture across thirty tests was minutes of hashing per run to prove nothing.
     owner = User.objects.create(email="owner@plane.so", username="money-owner", first_name="Owner")
-    owner.set_password("x")
-    owner.save()
     workspace = Workspace.objects.create(name="Money WS", owner=owner, slug="money-ws")
     WorkspaceMember.objects.create(workspace=workspace, member=owner, role=ROLE.ADMIN.value)
 
@@ -135,8 +139,6 @@ def money_world(db):
     )
     for label, workspace_role, project_role in cast:
         user = User.objects.create(email=f"{label}@plane.so", username=f"money-{label}", first_name=label.title())
-        user.set_password("x")
-        user.save()
         WorkspaceMember.objects.create(workspace=workspace, member=user, role=workspace_role)
         if project_role is not None:
             ProjectMember.objects.create(project=project, workspace=workspace, member=user, role=project_role)
@@ -350,3 +352,268 @@ def test_the_two_role_sets_have_not_been_collapsed_into_one():
     assert ROLE.GUEST in VIEWER_ROLES
     assert ROLE.GUEST not in MONEY_ROLES
     assert ROLE.ADMIN in MONEY_ROLES and ROLE.MEMBER in MONEY_ROLES
+
+
+# --- the fifth door: the budget that is not on a route called "budget" -------
+#
+# Everything above enumerates routes by hand, and that is exactly how this one
+# stayed open. `budget_amount` and `budget_currency` live on the project SCHEDULE
+# row — there is nowhere else for a project's single settings row to put them —
+# so they were served by GET /schedule/ at VIEWER_ROLES and rewritten by PATCH
+# /schedule/ on the dates' permissions. The list above was written from the URLs
+# with "budget" in them, and this URL says "schedule".
+#
+# `test_project_role_boundary.py` walks the URLconf so the LEVEL can never be
+# wrong again. It cannot know that two columns of one serializer answer to a
+# different audience from the other seven, which is what these tests are for.
+
+
+def test_the_allocation_does_not_leave_through_the_schedule(money_world):
+    """A guest reads the plan. The allocation is not the plan."""
+    kwargs = money_world["kwargs"]
+    url = reverse(
+        "arribada-project-schedule",
+        kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]},
+    )
+
+    served = money_world["clients"]["member"].get(url)
+    assert served.status_code == 200
+    assert "budget_amount" in served.data, (
+        "the allocation has disappeared for the people who run the project — the strip is "
+        "conditional on the caller's role, not unconditional."
+    )
+
+    leaked = money_world["clients"]["guest"].get(url)
+    assert leaked.status_code == 200, (
+        "the schedule itself must still answer a guest: the dates, the lock flags and the "
+        "delivery-floor switch are the plan they were invited to follow."
+    )
+    for field in MONEY_FIELDS:
+        assert field not in leaked.data, (
+            f"a project GUEST read {field} from the schedule (value {leaked.data.get(field)!r}). "
+            "It is the same figure ProjectBudgetEndpoint serves behind MONEY_ROLES."
+        )
+
+
+def test_the_same_leak_at_the_role_the_first_fix_tested_wrongly(money_world):
+    """Workspace MEMBER, project GUEST — the account the whole exercise is about."""
+    kwargs = money_world["kwargs"]
+    url = reverse(
+        "arribada-project-schedule",
+        kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]},
+    )
+    response = money_world["clients"]["ws_member_project_guest"].get(url)
+    assert response.status_code == 200
+    assert "budget_amount" not in response.data
+
+
+def test_only_the_lead_rewrites_what_the_project_was_given_to_spend(money_world):
+    """Writing the allocation is the lead's, because spending against it is.
+
+    `_lead_guard` protects the expense sheet and the purchase decision that
+    creates an expense. The ceiling those are read against sat behind no guard at
+    all: PATCH /schedule/ took `budget_amount` off the body through a serializer
+    that had it writable, so any member could raise the limit and make the guard
+    on the sheet decorative. The client has always gated the field on exactly
+    this — `canEdit = canApprove` in budget-block.tsx.
+    """
+    kwargs = money_world["kwargs"]
+    project = Project.objects.get(id=kwargs["project_id"])
+    # An explicit lead, so `_lead_guard` is answering about a job rather than
+    # falling through to "this project has nobody, let an admin decide".
+    project.project_lead = User.objects.get(email="owner@plane.so")
+    project.save(update_fields=["project_lead"])
+
+    url = reverse(
+        "arribada-project-schedule",
+        kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]},
+    )
+
+    refused = money_world["clients"]["member"].patch(url, {"budget_amount": 999999}, format="json")
+    assert refused.status_code == 403, (
+        f"a project MEMBER rewrote the allocation (got {refused.status_code}). "
+        "It is the ceiling the expense sheet is read against, and the sheet is lead-only."
+    )
+    assert ProjectSchedule.objects.get(project_id=project.id).budget_amount is None
+
+    # The dates on the same row are NOT the lead's, and must not become so —
+    # locking the whole endpoint would be a plausible fix and a bad one.
+    dates = money_world["clients"]["member"].patch(url, {"start_date": "2026-01-01"}, format="json")
+    assert dates.status_code == 200, (
+        f"a project MEMBER can no longer set the project's dates (got {dates.status_code}). "
+        "Only the two money columns moved behind the lead guard."
+    )
+
+
+def test_the_allocation_cannot_be_written_through_the_serializer_at_all(money_world):
+    """Belt and braces, and the reason the lock is on the serializer.
+
+    A handler check protects one handler. `read_only_fields` protects the next
+    view somebody writes that pipes a request body through this serializer —
+    which is how the field came to be writable in the first place, since nobody
+    ever decided that it should be.
+    """
+    schedule, _ = ProjectSchedule.objects.get_or_create(
+        project_id=money_world["kwargs"]["project_id"]
+    )
+    serializer = ProjectScheduleSerializer(
+        schedule, data={"budget_amount": 500, "budget_currency": "USD"}, partial=True
+    )
+    assert serializer.is_valid(), serializer.errors
+    serializer.save()
+    schedule.refresh_from_db()
+    assert schedule.budget_amount is None, "ProjectScheduleSerializer still writes the allocation"
+
+
+# --- and the way in to the figure, one step further back --------------------
+
+
+@pytest.mark.parametrize(
+    "name,body,what",
+    [
+        ("arribada-issue-effort", {"days": 999}, "the person-days labour cost is multiplied by"),
+        ("arribada-issue-role", {"role": "embedded firmware"}, "the discipline the rate keys on"),
+    ],
+)
+def test_a_project_guest_cannot_move_the_multiplicands_of_labour_cost(name, body, what, money_world):
+    """403 on GET /budget/ is not much use if the inputs are open.
+
+    `_labour_cost` multiplies an item's days by its discipline's hourly rate. Both
+    were written on `[ROLE.ADMIN, ROLE.MEMBER]` at level="WORKSPACE", so the guest
+    correctly refused the budget could still POST `{"days": 999}` and inflate the
+    figure in the funder's printed annex. They now take MONEY_ROLES.
+    """
+    kwargs = money_world["kwargs"]
+    url = reverse(name, kwargs={key: kwargs[key] for key in ("slug", "project_id", "issue_id")})
+    response = money_world["clients"]["ws_member_project_guest"].post(url, body, format="json")
+    assert response.status_code == 403, f"a project GUEST set {what} (got {response.status_code})."
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [("arribada-issue-effort", {"days": 3}), ("arribada-issue-role", {"role": "firmware"})],
+)
+def test_a_project_member_still_estimates_their_own_work(name, body, money_world):
+    """Estimating is what the team does all day; only the guest was the problem."""
+    kwargs = money_world["kwargs"]
+    url = reverse(name, kwargs={key: kwargs[key] for key in ("slug", "project_id", "issue_id")})
+    assert money_world["clients"]["member"].post(url, body, format="json").status_code == 200
+
+
+def test_reading_an_estimate_is_still_a_guest_facing_answer(money_world):
+    """Deliberately NOT moved, and worth saying so.
+
+    A number of days is not an amount, and without the rate card — MONEY_ROLES,
+    workspace-scoped — it cannot be turned into one. A guest reading the plan is
+    entitled to know how big the work is. They are not entitled to change it.
+    """
+    kwargs = money_world["kwargs"]
+    url = reverse(
+        "arribada-issue-effort",
+        kwargs={key: kwargs[key] for key in ("slug", "project_id", "issue_id")},
+    )
+    assert money_world["clients"]["guest"].get(url).status_code == 200
+
+
+# --- and the shortest path to spending the money: become the lead -----------
+
+
+def test_the_roster_cannot_be_used_to_appoint_its_own_lead(money_world):
+    """`is_lead` came straight off the request body, and `_is_project_lead` reads it.
+
+    That made one PUT the whole distance between an ordinary member and approving
+    spend — every `_lead_guard` in this file asks a question this handler let the
+    caller answer about themselves. It is worse than escalation because the
+    handler is a full replace: the same request demotes the incumbent and deletes
+    everyone left off the list.
+    """
+    kwargs = money_world["kwargs"]
+    project = Project.objects.get(id=kwargs["project_id"])
+    owner = User.objects.get(email="owner@plane.so")
+    project.project_lead = owner
+    project.save(update_fields=["project_lead"])
+    ProjectTeamMember.objects.create(
+        project=project, name="Owner", email="owner@plane.so", is_lead=True
+    )
+
+    url = reverse(
+        "arribada-project-team", kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]}
+    )
+    coup = {"team": [{"name": "Member", "email": "member@plane.so", "is_lead": True}]}
+
+    refused = money_world["clients"]["member"].put(url, coup, format="json")
+    assert refused.status_code == 403, (
+        f"a project MEMBER made themselves the lead (got {refused.status_code}), which is the "
+        "role _lead_guard checks before approving a purchase into ProjectExpense."
+    )
+    assert not ProjectTeamMember.objects.filter(project=project, email="member@plane.so").exists()
+    # The guard returns before the transaction, so the roster it would have
+    # replaced is still there. A refusal that had already deleted the incumbent
+    # would be the same attack with an error message.
+    assert ProjectTeamMember.objects.filter(project=project, is_lead=True).count() == 1
+
+
+def test_an_ordinary_roster_edit_is_still_an_ordinary_thing_to_do(money_world, settings):
+    """Adding a person, fixing an address, recording a discipline — no permission.
+
+    Guarding the whole handler would have been the easy fix and the wrong one:
+    the roster is how work gets routed to disciplines, and a roster only the lead
+    can touch is a roster that goes stale.
+    """
+    # `settings`: a successful roster edit ends in `_materialise_issue_roles`,
+    # which builds notification links through `base_host` — and that raises
+    # ImproperlyConfigured rather than returning None when neither APP_BASE_URL
+    # nor WEB_URL is set, which is the case under the test settings. Nothing to
+    # do with permissions; it is simply that no test had ever driven this handler
+    # all the way through before, so the 500 had nowhere to show up.
+    settings.WEB_URL = "https://plane.test"
+
+    kwargs = money_world["kwargs"]
+    project = Project.objects.get(id=kwargs["project_id"])
+    project.project_lead = User.objects.get(email="owner@plane.so")
+    project.save(update_fields=["project_lead"])
+
+    url = reverse(
+        "arribada-project-team", kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]}
+    )
+    response = money_world["clients"]["member"].put(
+        url,
+        {"team": [{"name": "Ruby", "email": "ruby@plane.so", "roles": ["embedded firmware"]}]},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    assert ProjectTeamMember.objects.filter(project=project, email="ruby@plane.so").exists()
+
+
+def test_the_lead_appoints_the_lead(money_world, settings):
+    """The half that is easy to lose: somebody has to be able to hand it over.
+
+    The lead here is a workspace ADMIN who is only a GUEST on this project, which
+    makes the test do double duty: the roster PUT is decorated `[ADMIN, MEMBER]`
+    at level="PROJECT", so reaching the lead guard at all depends on upstream's
+    workspace-admin fall-through. If that were ever dropped, the person who runs
+    the organisation could not hand over a project they own.
+    """
+    # `settings`: a successful roster edit ends in `_materialise_issue_roles`,
+    # which builds notification links through `base_host` — and that raises
+    # ImproperlyConfigured rather than returning None when neither APP_BASE_URL
+    # nor WEB_URL is set, which is the case under the test settings. Nothing to
+    # do with permissions; it is simply that no test had ever driven this handler
+    # all the way through before, so the 500 had nowhere to show up.
+    settings.WEB_URL = "https://plane.test"
+
+    kwargs = money_world["kwargs"]
+    project = Project.objects.get(id=kwargs["project_id"])
+    project.project_lead = User.objects.get(email="ws_admin_project_guest@plane.so")
+    project.save(update_fields=["project_lead"])
+
+    url = reverse(
+        "arribada-project-team", kwargs={"slug": kwargs["slug"], "project_id": kwargs["project_id"]}
+    )
+    response = money_world["clients"]["ws_admin_project_guest"].put(
+        url,
+        {"team": [{"name": "Member", "email": "member@plane.so", "is_lead": True}]},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    assert ProjectTeamMember.objects.get(project=project, email="member@plane.so").is_lead

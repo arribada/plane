@@ -63,7 +63,7 @@ from .rate_presets import (
     preset_payload,
 )
 from .scheduling import build_edges, cascade, critical_path, slack_for_issues
-from .serializers import ProjectScheduleSerializer
+from .serializers import MONEY_FIELDS, ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 
@@ -81,34 +81,54 @@ VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 # close all of them.
 MONEY_ROLES = [ROLE.ADMIN, ROLE.MEMBER]
 
-# MONEY_ROLES GOES WITH level="PROJECT", and that pairing is the whole rule.
+# THE RULE: a route that names a project decides on the caller's role IN THAT
+# PROJECT. `level="PROJECT"`, on every method, read and write alike.
 #
-# Everything else in this app runs at level="WORKSPACE" and scopes itself with
-# `_visible_projects`, which asks only "is the caller a member of this project at
-# all". That split is fine while the role list is VIEWER_ROLES, because all three
-# roles are on it and the role question has no answer to get wrong. It is not
-# fine for money: at level="WORKSPACE" the role that gets tested is the caller's
-# WORKSPACE role, so somebody who is MEMBER of the workspace and GUEST of *this
-# project* — the funder given a normal seat because they also work here, or
-# anybody demoted on one project — passed the check and read the budget. The
-# client had already hidden it from them, which is not a permission.
+# This started as a rule about money and it was never a rule about money. At
+# level="WORKSPACE" the role `allow_permission` tests is the caller's WORKSPACE
+# role, and the app then scopes itself with `_visible_projects`, which asks only
+# "is the caller a member of this project at all" — a question a GUEST answers
+# yes to. So the one person who matters — workspace MEMBER, project GUEST: the
+# funder given an ordinary seat because they also work here, or anybody demoted
+# on the one project they are not supposed to steer — was tested as a MEMBER on
+# every endpoint in this file.
 #
-# level="PROJECT" reads the project role instead, and it is upstream Plane's own
-# idiom rather than something invented here: `allow_permission` falls through to
-# an explicit second branch that admits a WORKSPACE ADMIN whatever their project
-# role, so an admin is never locked out of a project they are on. See
-# plane/app/permissions/base.py.
+# The first fix argued that was harmless "while the role list is VIEWER_ROLES,
+# because all three roles are on it and the role question has no answer to get
+# wrong". That is true, and it is true only of reads. Every write here sits on
+# `[ROLE.ADMIN, ROLE.MEMBER]`, where the role question does have an answer to get
+# wrong, and it was getting it wrong on roughly thirty endpoints: a project guest
+# could rewrite every date in the project, delete the baseline that records what
+# was promised to a funder, replace the roster, and inflate the days that the
+# printed cost annex multiplies by an hourly rate.
+#
+# So the level is now a property of the ROUTE, not of the handler's role list.
+# If the URL says `<uuid:project_id>`, the decorator asks the project. There is
+# no endpoint-by-endpoint judgement left to make and therefore none to get wrong,
+# and `test_project_role_boundary.py` walks the URLconf and asserts it, so the
+# next endpoint added is covered before anybody thinks about it.
+#
+# level="PROJECT" is upstream Plane's own idiom rather than something invented
+# here: `allow_permission` falls through to an explicit second branch that admits
+# a WORKSPACE ADMIN whatever their project role, so an admin is never locked out
+# of a project they are on. See plane/app/permissions/base.py.
 #
 # What it does NOT admit is a workspace admin who is not on the project at all —
 # and that costs nothing, because `_visible_projects` already refused that caller
 # with a 404 before any of this. Nobody who was being served stops being served;
-# the denial just moves one line earlier and says 403. Project scoping is a
-# property of the whole fork, not a rule about money: the same admin cannot read
-# that project's schedule or work items either. test_money_permissions.py pins
-# both halves.
+# on the reads the denial just moves one line earlier and says 403 instead of
+# 404. Project scoping is a property of the whole fork: the same admin cannot
+# read that project's schedule or work items either.
 #
-# Two money endpoints stay at level="WORKSPACE" because they have no project to
-# scope to — see WorkspaceRoleRatesEndpoint and WorkspaceMyApprovalsEndpoint.
+# TWO PLACES THE DECORATOR CANNOT REACH, both of which then belong to the view:
+#
+# 1. A workspace route with no project in the URL. `level="PROJECT"` reads
+#    `kwargs["project_id"]` and would KeyError. The rate card and my-approvals
+#    are genuinely workspace facts and stay at level="WORKSPACE" deliberately.
+# 2. A project id taken from the request BODY — adopt-issues, the GitHub filing
+#    endpoints, folder assignment. The decorator never sees it, so the view
+#    scopes it itself: `_visible_projects` to read, `_writable_projects` to
+#    write. The second exists precisely because the first admits guests.
 
 # Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
 GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
@@ -137,12 +157,67 @@ def _project_graph(project_id, slug):
 
 
 def _visible_projects(request, slug):
-    """Projects of the workspace the requesting user is an active member of."""
+    """Projects of the workspace the requesting user is an active member of.
+
+    Any role, GUEST included — this answers "may they SEE it". For anything that
+    writes, use `_writable_projects` instead.
+    """
     return Project.objects.filter(
         workspace__slug=slug,
         project_projectmember__member=request.user,
         project_projectmember__is_active=True,
     )
+
+
+def _is_workspace_admin(user, slug):
+    return WorkspaceMember.objects.filter(
+        member=user, workspace__slug=slug, role=ROLE.ADMIN.value, is_active=True
+    ).exists()
+
+
+def _writable_projects(request, slug):
+    """Projects of the workspace the caller may CHANGE. Same answer as the
+    decorator, for the ids the decorator never sees.
+
+    `allow_permission([ADMIN, MEMBER], level="PROJECT")` covers a project named in
+    the URL. It cannot cover one named in the request body — adopt-issues, the
+    GitHub filing endpoints, folder assignment — and those were all scoped with
+    `_visible_projects`, which admits a GUEST. So a guest on a project could pass
+    its id in a body and have work items created in it, or its backlog closed.
+    This asks the same two questions the decorator asks, in the same order:
+
+    - an active ProjectMember whose role is MEMBER or above, or
+    - a workspace ADMIN who is on the project at all (upstream's fall-through).
+
+    Both conditions on ONE `.filter()` call on purpose: split across two, Django
+    joins the membership table twice and would match a project where *some* row is
+    active and *some other* row is a member.
+    """
+    if _is_workspace_admin(request.user, slug):
+        return _visible_projects(request, slug)
+    return Project.objects.filter(
+        workspace__slug=slug,
+        project_projectmember__member=request.user,
+        project_projectmember__is_active=True,
+        project_projectmember__role__gte=ROLE.MEMBER.value,
+    )
+
+
+def _has_project_role(user, slug, project_id, roles):
+    """Whether `user` would pass `allow_permission(roles, level="PROJECT")` here.
+
+    For the one case a decorator cannot express: a single response carrying
+    fields with two different audiences. The project schedule is the example —
+    its dates are a guest's to read and the allocation beside them is not, and
+    they arrive from the same row through the same serializer.
+    """
+    values = [role.value if isinstance(role, ROLE) else role for role in roles]
+    on_project = ProjectMember.objects.filter(
+        member=user, workspace__slug=slug, project_id=project_id, is_active=True
+    )
+    if on_project.filter(role__in=values).exists():
+        return True
+    return on_project.exists() and _is_workspace_admin(user, slug)
 
 
 _GH_URL_RE = re.compile(r"https?://github\.com/[^\s\"'<>)]+", re.IGNORECASE)
@@ -543,7 +618,7 @@ class PortfolioItemsEndpoint(BaseAPIView):
     these views collapse, so the client never has to fetch what it does not show.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response(
@@ -597,7 +672,7 @@ class ProjectRelationsEndpoint(BaseAPIView):
     needs them all at once to draw arrows, so this returns the whole project set.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -619,7 +694,7 @@ class IssueArtifactsEndpoint(BaseAPIView):
     devices is exactly the drift a review catches.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -652,7 +727,7 @@ class IssueArtifactsEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -700,7 +775,7 @@ class IssueArtifactsEndpoint(BaseAPIView):
             status=status.HTTP_201_CREATED,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def delete(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -829,7 +904,7 @@ class ProjectMilestonesEndpoint(BaseAPIView):
     chart needs every bar's answer before it can draw any of them.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -872,7 +947,7 @@ class ProjectMilestonesEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         """Mark or unmark one item, or rename what a funder reads.
 
@@ -942,7 +1017,7 @@ class ProjectProgressEndpoint(BaseAPIView):
     not per issue.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -987,7 +1062,7 @@ class ProjectBaselineEndpoint(BaseAPIView):
     entire point.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1037,7 +1112,7 @@ class ProjectBaselineEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1087,7 +1162,7 @@ class ProjectBaselineEndpoint(BaseAPIView):
             status=status.HTTP_201_CREATED,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def delete(self, request, slug, project_id):
         """Remove one snapshot. Named in the body so a mis-click cannot wipe a plan."""
         if not _visible_projects(request, slug).filter(id=project_id).exists():
@@ -1108,7 +1183,7 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
     Returns the list of rescheduled issues so the UI can report the count.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1161,7 +1236,7 @@ class ProjectCriticalPathEndpoint(BaseAPIView):
     contradict each other.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1232,7 +1307,7 @@ class WorkspaceCriticalPathEndpoint(BaseAPIView):
 class ProjectWikiDocEndpoint(BaseAPIView):
     """Read or set the wiki doc a project links to (private deep link)."""
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1251,7 +1326,7 @@ class ProjectWikiDocEndpoint(BaseAPIView):
             )
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def put(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1309,7 +1384,7 @@ def _serialize_status(u):
 class ProjectStatusEndpoint(BaseAPIView):
     """Asana-style project status log: GET the recent updates, POST a new one."""
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1318,7 +1393,7 @@ class ProjectStatusEndpoint(BaseAPIView):
         ).select_related("created_by")[:30]
         return Response([_serialize_status(u) for u in updates], status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         st = (request.data.get("status") or ProjectStatusUpdate.ON_TRACK).strip()
         if st not in {c[0] for c in ProjectStatusUpdate.STATUS_CHOICES}:
@@ -1359,7 +1434,7 @@ class ProjectTemplateCloneEndpoint(BaseAPIView):
     Assignees, labels and estimates are intentionally not copied (a template is a
     plan, not an assignment). The source project is never modified."""
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         name = (request.data.get("name") or "").strip()
         identifier = (request.data.get("identifier") or "").strip().upper()
@@ -1732,7 +1807,7 @@ class IssueAllocationEndpoint(BaseAPIView):
     and only the person doing it can say what fraction of them it is.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1750,7 +1825,7 @@ class IssueAllocationEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1849,7 +1924,14 @@ class AdoptIssuesEndpoint(BaseAPIView):
         target_project_id = request.data.get("target_project_id")
         if not source_ids or not target_project_id:
             return Response({"error": "source_issue_ids and target_project_id required"}, status=status.HTTP_400_BAD_REQUEST)
-        target = _visible_projects(request, slug).filter(id=target_project_id).first()
+        # Both ends are WRITES and both ends come from the body, which is exactly
+        # what the decorator cannot reach: this route has no project in its URL,
+        # so `level="PROJECT"` has nothing to read and the caller's WORKSPACE role
+        # was the only role tested. Scoped through `_visible_projects`, a guest on
+        # a project could name it as the source and have its backlog copied out
+        # and every named item marked completed — an uncapped, body-supplied list
+        # of ids, against a project they were invited to watch.
+        target = _writable_projects(request, slug).filter(id=target_project_id).first()
         if not target:
             return Response({"error": "target project not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1865,16 +1947,19 @@ class AdoptIssuesEndpoint(BaseAPIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-        visible = _visible_projects(request, slug)
+        # The source list is capped as well as scoped. It was neither: a single
+        # request could name the whole of a backlog and close all of it, and the
+        # loop below writes a row per item.
+        writable = _writable_projects(request, slug)
         adopted = []
-        for sid in source_ids:
+        for sid in _uuid_list(source_ids)[:200]:
             # A malformed request could list the parent itself as a source; adopting it
             # would nest a self-copy and (worse) mark the intended container completed.
             if parent and str(sid) == str(parent.id):
                 continue
             # Scope sources to the caller's own projects — both the copy (read) and the
-            # completed-state write must stay inside projects they're a member of.
-            src = Issue.issue_objects.filter(project__in=visible, id=sid).first()
+            # completed-state write must stay inside projects they can WRITE to.
+            src = Issue.issue_objects.filter(project__in=writable, id=sid).first()
             if not src:
                 continue
             # save() assigns sequence_id + the target project's default state
@@ -2053,7 +2138,10 @@ class GithubInboxEndpoint(BaseAPIView):
         if not ids:
             return Response({"error": "ids required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        project = _visible_projects(request, slug).filter(id=project_id).first()
+        # A body-supplied project id that this call CREATES WORK ITEMS IN, on a
+        # route with no project in its URL — so `_writable_projects`, which asks
+        # the role question the decorator could not.
+        project = _writable_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         parent = Issue.issue_objects.filter(project=project, id=parent_id).first() if parent_id else None
@@ -2346,8 +2434,17 @@ class ProjectFoldersEndpoint(BaseAPIView):
         workspace = Workspace.objects.filter(slug=slug).first()
         if not workspace:
             return Response({"error": "workspace not found"}, status=status.HTTP_404_NOT_FOUND)
-        parent_id = request.data.get("parent_id")
-        folder = ProjectFolder.objects.create(workspace=workspace, name=name, parent_id=parent_id or None)
+        # `parent_id` is a body id, so the decorator never saw it and the URL does
+        # not scope it. It went to the column unchecked, which meant a member of
+        # ANY workspace could hang a folder under a folder in a workspace they
+        # have no seat in — the sibling PATCH and assign handlers both look their
+        # folder up with `workspace__slug=slug` and this one did not. It also
+        # produced a tree whose two halves belong to different workspaces, which
+        # is what the promote-on-delete below then has to walk.
+        parent_id = request.data.get("parent_id") or None
+        if parent_id and not ProjectFolder.objects.filter(workspace=workspace, id=parent_id).exists():
+            return Response({"error": "parent folder not found"}, status=status.HTTP_404_NOT_FOUND)
+        folder = ProjectFolder.objects.create(workspace=workspace, name=name, parent_id=parent_id)
         return Response({"id": str(folder.id), "name": folder.name}, status=status.HTTP_201_CREATED)
 
 
@@ -2419,9 +2516,24 @@ class ProjectFolderDetailEndpoint(BaseAPIView):
         # — a filing tool that destroys filing nobody asked it to destroy. The
         # children move up one level instead; deleting a folder removes only the
         # folder, exactly as it already promises for the projects inside.
-        promoted = ProjectFolder.objects.filter(parent_id=folder.id).update(
-            parent_id=folder.parent_id
-        )
+        #
+        # Scoped to this workspace, because promotion re-files a folder under a
+        # folder in THIS one: until the POST above started checking `parent_id`,
+        # a folder in another workspace could be parented here, and an unscoped
+        # `.update()` would move it somewhere its own members cannot see.
+        promoted = ProjectFolder.objects.filter(
+            workspace__slug=slug, parent_id=folder.id
+        ).update(parent_id=folder.parent_id)
+        # And a foreign child cannot simply be left, either — `parent` is
+        # on_delete=CASCADE, so skipping it would DELETE another workspace's
+        # folder and everything under it because somebody tidied up in this one.
+        # Detached to its own root instead: nothing destroyed, nothing filed
+        # across the boundary. Only reachable for rows the unvalidated POST has
+        # already created in production, which is why it is a cleanup and not a
+        # branch anyone should be able to reach again.
+        ProjectFolder.objects.filter(parent_id=folder.id).exclude(
+            workspace__slug=slug
+        ).update(parent_id=None)
         folder.delete()
         return Response({"deleted": True, "promoted": promoted}, status=status.HTTP_200_OK)
 
@@ -2435,7 +2547,11 @@ class ProjectFolderAssignEndpoint(BaseAPIView):
         folder_id = request.data.get("folder_id")
         if not project_id:
             return Response({"error": "project_id required"}, status=status.HTTP_400_BAD_REQUEST)
-        if not _visible_projects(request, slug).filter(id=project_id).exists():
+        # `_writable_projects`, not `_visible_projects`: filing somebody's project
+        # into a folder is a change to the shared sidebar every member of the
+        # workspace reads, and a guest was invited to follow one project rather
+        # than to rearrange the cabinet it sits in.
+        if not _writable_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         if not folder_id:
             ProjectFolderItem.objects.filter(project_id=project_id).delete()
@@ -2449,20 +2565,42 @@ class ProjectFolderAssignEndpoint(BaseAPIView):
 
 
 class ProjectScheduleEndpoint(BaseAPIView):
-    """Read or set a project's planned range."""
+    """Read or set a project's planned range — and, on the same row, its budget.
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    ONE ROW, TWO AUDIENCES, and that is the whole difficulty here. The dates, the
+    lock flags and the delivery-floor switch are a guest's to read: they are the
+    plan, and a funder invited to follow the project is being shown the plan. The
+    allocation sitting in the next two columns is the same figure
+    ProjectBudgetEndpoint serves behind MONEY_ROLES, and it was leaving through
+    this door in both directions — read by any guest, and rewritten by anybody who
+    could set a date. It never appeared in the money route list because the money
+    route list was written by hand, from the URLs that have "budget" in them.
+
+    A decorator asks one question, so the split is made in the handler: the money
+    columns are stripped from the read for anyone outside MONEY_ROLES, and written
+    only by the lead — the same person who signs off an expense line, which is
+    what an allocation is the ceiling for. `MONEY_FIELDS` is imported rather than
+    re-listed so a third money column added to the model lands under the rule by
+    naming, not by somebody noticing.
+    """
+
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response(
                 {"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND
             )
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
-        return Response(
-            ProjectScheduleSerializer(schedule).data, status=status.HTTP_200_OK
-        )
+        data = ProjectScheduleSerializer(schedule).data
+        if not _has_project_role(request.user, slug, project_id, MONEY_ROLES):
+            # Absent, not nulled. A null would read as "nobody has set a budget",
+            # which is a claim about the project rather than about the caller —
+            # and the client renders that state with an inviting "set one" button.
+            for field in MONEY_FIELDS:
+                data.pop(field, None)
+        return Response(data, status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def patch(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response(
@@ -2478,6 +2616,49 @@ class ProjectScheduleEndpoint(BaseAPIView):
             if denied:
                 return denied
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
+
+        # The allocation, if this request is touching it. Same guard as the
+        # expense sheet, and for the same reason: the sheet is what gets spent
+        # and this is the ceiling it is read against, so letting a member raise
+        # the ceiling would make the guard on the sheet decorative. The client
+        # already gates the field on exactly this (`canEdit = canApprove` in
+        # budget-block.tsx) — this is the half that is a permission.
+        money = [field for field in MONEY_FIELDS if field in payload]
+        if money:
+            denied = _lead_guard(request, project_id)
+            if denied:
+                return denied
+        # Both money columns are validated BEFORE anything is written. The
+        # serializer no longer looks at them, so leaving it until afterwards would
+        # reject a bad amount only once the dates beside it had already been saved.
+        amount = None
+        if "budget_amount" in payload:
+            raw = payload.get("budget_amount")
+            if raw in (None, ""):
+                # Clearing is a real answer: "nobody has said" is what the budget
+                # view reports differently from an allocation of zero.
+                amount = None
+            else:
+                try:
+                    amount = round(float(raw), 2)
+                except (TypeError, ValueError):
+                    return Response(
+                        {"budget_amount": "A budget must be a number."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if amount < 0:
+                    return Response(
+                        {"budget_amount": "A budget cannot be negative."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if amount >= 10**10:
+                    # The column is DecimalField(max_digits=12, decimal_places=2),
+                    # so anything larger raises at the database rather than here.
+                    return Response(
+                        {"budget_amount": "That is larger than a budget this can hold."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+        currency = None
         if "budget_currency" in payload:
             # Nothing validated this before, because no UI had ever sent it. A typo
             # here is silent and expensive: the budget view only counts figures
@@ -2501,12 +2682,23 @@ class ProjectScheduleEndpoint(BaseAPIView):
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            payload = {**payload, "budget_currency": wanted}
+            currency = wanted
+
         serializer = ProjectScheduleSerializer(schedule, data=payload, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+
+        if money:
+            if "budget_amount" in payload:
+                schedule.budget_amount = amount
+            if currency is not None:
+                schedule.budget_currency = currency
+            schedule.save(update_fields=[*money, "updated_at"])
+        # Re-serialized rather than returned from `serializer.data`, which was
+        # rendered before the money columns were written and would answer the
+        # caller with the allocation they just replaced.
+        return Response(ProjectScheduleSerializer(schedule).data, status=status.HTTP_200_OK)
 
 
 class ProjectTeamEndpoint(BaseAPIView):
@@ -2517,7 +2709,7 @@ class ProjectTeamEndpoint(BaseAPIView):
     planning assistant send firmware work to the firmware engineer.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -2529,7 +2721,7 @@ class ProjectTeamEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def put(self, request, slug, project_id):
         from plane.utils.host import base_host
 
@@ -2587,6 +2779,11 @@ class ProjectTeamEndpoint(BaseAPIView):
         by_email = _users_by_email(slug, [c["email"] for c in cleaned if c["email"]])
 
         existing = list(ProjectTeamMember.objects.filter(project_id=project_id))
+        # Snapshotted HERE, before the resolution loop below writes the incoming
+        # `is_lead` onto these very objects — `resolved` reuses them, so reading
+        # this set afterwards would be reading the payload back to itself and the
+        # guard would never fire.
+        current_leads = {str(r.id) for r in existing if r.is_lead}
         by_id = {str(r.id): r for r in existing}
         by_row_email = {r.email.lower(): r for r in existing if r.email}
         # Name matching only ever claims a row that has no address yet. A row that
@@ -2618,6 +2815,39 @@ class ProjectTeamEndpoint(BaseAPIView):
             row.member_id = member_id or None
             resolved.append(row)
             keep.add(str(row.id))
+
+        # WHO LEADS IS NOT A ROSTER FIELD, whatever the shape of the payload says.
+        #
+        # `is_lead` came straight off the body, and `_is_project_lead` consults
+        # exactly that flag — so one PUT to this endpoint was the whole distance
+        # between an ordinary member and approving spend: `_lead_guard` protects
+        # the expense sheet, the allocation and the procurement decision that
+        # creates a ProjectExpense, and every one of them asks a question this
+        # handler let the caller answer about themselves. Worse than escalation,
+        # because the handler is a full replace: the same request demoted the
+        # incumbent lead and could delete the rest of the roster with them.
+        #
+        # So a request that would CHANGE the lead set has to come from the lead.
+        # Comparing sets rather than counting flags: what matters is whether the
+        # people leading afterwards are the people leading now, and a full replace
+        # can swap them without changing the number. Rows created in this request
+        # already carry an id (the model's default is uuid4, assigned at
+        # construction), so a newly-added lead is an id nobody currently holds and
+        # reads as a change, which is what it is.
+        #
+        # A roster edit that leaves the lead set alone stays open to any member —
+        # adding a person, fixing an address and recording a discipline are the
+        # everyday uses and none of them are a permission.
+        #
+        # `_lead_guard` admits a workspace admin on a project that has NO lead
+        # (see `_is_project_lead`), which is what keeps a first lead appointable.
+        # A plain member cannot appoint themselves onto a leaderless project — on
+        # such a project a workspace admin can already approve spending, so that
+        # is the same door, not a new one.
+        if current_leads != {str(row.id) for row in resolved if row.is_lead}:
+            denied = _lead_guard(request, project_id)
+            if denied:
+                return denied
 
         try:
             with transaction.atomic():
@@ -2663,7 +2893,7 @@ class ProjectOverviewEndpoint(BaseAPIView):
     in the UI, in the Team-Hub and in any future digest.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         from plane.db.models import Cycle, Module, ProjectPage
 
@@ -3043,7 +3273,7 @@ class ProjectAiDraftItemEndpoint(BaseAPIView):
     would match nobody and silently lose the assignment.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -3178,7 +3408,7 @@ class ProjectAiPlanEndpoint(BaseAPIView):
         "state__group",
     )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from .ai import chat_json, resolve_config
 
@@ -3481,7 +3711,7 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
     is work waiting for the person who will do it.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from plane.bgtasks.issue_activities_task import issue_activity
         from plane.utils.host import base_host
@@ -3758,7 +3988,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         '"days":5,"after":["hw.bringup"]}],"notes":"one short paragraph"}'
     )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from .blueprints import (
             TASK_BY_KEY,
@@ -4087,7 +4317,7 @@ class ProjectAiDraftEndpoint(BaseAPIView):
         '"reason":"one short sentence"}'
     )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from .ai import chat_json, resolve_config
         from .blueprints import add_working_days, next_working_day
@@ -4279,7 +4509,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
     subscription and the notification. An assignment nobody is told about is not one.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from plane.bgtasks.issue_activities_task import issue_activity
         from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
@@ -6563,7 +6793,7 @@ def _public_link_json(link):
 class ProjectPublicTimelineEndpoint(BaseAPIView):
     """Create, read and revoke one project's public schedule link."""
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -6582,7 +6812,7 @@ class ProjectPublicTimelineEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -6619,7 +6849,7 @@ class ProjectPublicTimelineEndpoint(BaseAPIView):
             return Response(_public_link_json(existing), status=status.HTTP_200_OK)
         return Response(_public_link_json(link), status=status.HTTP_201_CREATED)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def delete(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -6733,7 +6963,7 @@ class ProjectAiSprintTasksEndpoint(BaseAPIView):
     human's Create makes anything.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -6841,9 +7071,18 @@ class IssueEffortEndpoint(BaseAPIView):
     the caller decides — the same contract every assistant surface here follows,
     because a bar that silently changed length the moment somebody recorded an
     estimate is a bar nobody trusts afterwards.
+
+    MONEY_ROLES on the WRITE, and only on the write. Days are one of the two
+    numbers labour cost is made of — `_labour_cost` multiplies them by the
+    discipline's hourly rate — so a guest 403'd from the budget who could POST
+    `{"days": 999}` was still moving the figure in the funder's printed annex, one
+    step further back. The READ stays VIEWER_ROLES: an estimate on its own is not
+    an amount, and without the rate card (MONEY_ROLES, workspace-scoped) it cannot
+    be turned into one. A guest reading the plan is entitled to know how big the
+    work is; they are not entitled to change it.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -6881,7 +7120,7 @@ class IssueEffortEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7131,7 +7370,7 @@ class GithubSyncNowEndpoint(BaseAPIView):
     three things that go wrong and the three things they need to see.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
@@ -7518,9 +7757,14 @@ class IssueRoleEndpoint(BaseAPIView):
     - Setting an ASSIGNEE adopts their role, but only when they hold exactly one
       and the item has none. Somebody who wears three hats has not told you which
       one this task is.
+
+    MONEY_ROLES on the WRITE, for the same reason as IssueEffortEndpoint: the
+    discipline is the key `_labour_cost` looks the hourly rate up by, so setting
+    it is the other lever on what the project is reported to cost. Reading it
+    stays VIEWER_ROLES — a word like "embedded firmware" is not a rate.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7552,7 +7796,7 @@ class IssueRoleEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7866,7 +8110,7 @@ class ProjectIssueOrdersEndpoint(BaseAPIView):
     a fourth sort mode the rest of the product knows nothing about.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7888,7 +8132,7 @@ class ProjectIssueOrdersEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7931,7 +8175,7 @@ class ProjectIssueOrdersEndpoint(BaseAPIView):
 class ProjectIssueOrderDetailEndpoint(BaseAPIView):
     """Restore a saved arrangement (POST), or forget it (DELETE)."""
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id, order_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7943,7 +8187,7 @@ class ProjectIssueOrderDetailEndpoint(BaseAPIView):
             {"applied": applied, "saved": len(row.issue_ids or [])}, status=status.HTTP_200_OK
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def delete(self, request, slug, project_id, order_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -7961,7 +8205,7 @@ class ProjectIssueOrderApplyEndpoint(BaseAPIView):
     to scramble the board.
     """
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8078,8 +8322,14 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
         if not isinstance(entries, list):
             return Response({"error": "items must be a list"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Two different questions, deliberately two different querysets. Filing
+        # CREATES a work item in the named project, so the destination has to be
+        # one the caller may write to — the project id arrives in each entry's
+        # body and no decorator ever sees it. The checklist owner below is only
+        # POINTED AT, so it stays scoped to what they can see.
+        writable = _writable_projects(request, slug)
         visible = _visible_projects(request, slug)
-        allowed_projects = {str(p) for p in visible.values_list("id", flat=True)}
+        allowed_projects = {str(p) for p in writable.values_list("id", flat=True)}
         filed, skipped = 0, 0
 
         for entry in entries[:200]:
@@ -8093,7 +8343,7 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
             if not row or project_id not in allowed_projects:
                 skipped += 1
                 continue
-            project = visible.filter(id=project_id).first()
+            project = writable.filter(id=project_id).first()
 
             checklist_owner = None
             # `parent_issue_id` is the name this field had while grouping was
@@ -8215,8 +8465,16 @@ class WorkspaceGithubRepoClaimEndpoint(BaseAPIView):
         if not repo or "/" not in repo:
             return Response({"error": "repo required, as owner/name"}, status=status.HTTP_400_BAD_REQUEST)
 
-        visible = _visible_projects(request, slug)
-        winner = visible.filter(id=project_id).first() if _uuid_list([project_id]) else None
+        # `_writable_projects` on BOTH sides. This endpoint's own docstring says
+        # it edits another project's configuration; the queryset it did that
+        # through was `_visible_projects`, which answers yes for a guest. So a
+        # guest could hand a repo to a project and strip the link from every other
+        # project they happened to be a guest of, which routes that team's issues
+        # into somebody else's board. The `untouched` report keeps its meaning:
+        # anything the caller may not write to is named back to them rather than
+        # silently skipped, which is why it is the same queryset in both places.
+        writable = _writable_projects(request, slug)
+        winner = writable.filter(id=project_id).first() if _uuid_list([project_id]) else None
         if not winner:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -8227,10 +8485,10 @@ class WorkspaceGithubRepoClaimEndpoint(BaseAPIView):
                 continue
             if str(doc.project_id) == str(winner.id):
                 continue
-            # Claimed by something the caller cannot see. Refusing the whole
-            # request would be worse — the visible half is still worth settling —
+            # Claimed by something the caller may not edit. Refusing the whole
+            # request would be worse — the half they own is still worth settling —
             # but saying nothing would leave them believing it was settled.
-            if not visible.filter(id=doc.project_id).exists():
+            if not writable.filter(id=doc.project_id).exists():
                 untouched.append({"id": str(doc.project_id), "name": doc.project.name})
                 continue
             doc.github_repo_urls = [url for url in urls if _repo_key_for(url) != repo]
@@ -8277,7 +8535,7 @@ class IssueChecklistEndpoint(BaseAPIView):
     a stored flag beside a state is two answers to one question.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id, issue_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8314,7 +8572,7 @@ class IssueChecklistEndpoint(BaseAPIView):
             )
         return Response({"items": items}, status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id, issue_id):
         """Put a work item on the checklist, or create one and put it there.
 
@@ -8378,7 +8636,7 @@ class IssueChecklistEndpoint(BaseAPIView):
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def delete(self, request, slug, project_id, issue_id):
         """Take a work item off the checklist. The work item itself survives —
         removing a line from a list is not deleting the work it named."""
@@ -8405,7 +8663,7 @@ class ProjectChecklistSummaryEndpoint(BaseAPIView):
     payload grow with the project rather than with the feature.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8512,7 +8770,7 @@ class ProjectDisciplinesEndpoint(BaseAPIView):
     inventing one, and the gap is the thing worth recording.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8524,7 +8782,7 @@ class ProjectDisciplinesEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8550,7 +8808,7 @@ class ProjectAssigneeGapEndpoint(BaseAPIView):
     way round.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8594,7 +8852,7 @@ class ProjectAssigneeGapEndpoint(BaseAPIView):
 
         return Response({"items": items, "members": _assignable_members(project_id)}, status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8642,7 +8900,7 @@ class ProjectUndatedGapEndpoint(BaseAPIView):
     usually a confirmation rather than a decision.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8679,7 +8937,7 @@ class ProjectUndatedGapEndpoint(BaseAPIView):
             )
         return Response({"items": items}, status=status.HTTP_200_OK)
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8724,7 +8982,7 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
     onto items that have nobody.
     """
 
-    @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
+    @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -8757,7 +9015,7 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
             status=status.HTTP_200_OK,
         )
 
-    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="WORKSPACE")
+    @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)

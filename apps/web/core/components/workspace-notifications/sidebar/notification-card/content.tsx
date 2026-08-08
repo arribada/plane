@@ -173,7 +173,12 @@ export function NotificationContent({
    * cleared by clicking teaches people to mark the whole inbox read.
    */
   if (!activity) {
-    const body = notification.message_html || notification.message || "";
+    // `message` is a JSONField server-side and the reminder task puts a dict in
+    // it ({reminder, target_date, project, state}), not a sentence. Handing a
+    // non-string to dangerouslySetInnerHTML paints the literal text
+    // "[object Object]" into the inbox, so only a string is ever a body.
+    const candidate = notification.message_html || notification.message;
+    const body = typeof candidate === "string" ? candidate : "";
     return (
       <>
         {notification.title && <span className="font-medium text-primary">{notification.title} </span>}

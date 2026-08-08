@@ -19,7 +19,7 @@ import json
 import os
 from datetime import timedelta
 from html import unescape
-from urllib import error, request
+from urllib import error, parse, request
 
 from celery import shared_task
 from django.utils import timezone
@@ -28,8 +28,19 @@ from django.utils.html import strip_tags
 # How far back each run looks. Comfortably wider than the every-10-minutes cadence so
 # a missed tick, a restart or a slow queue still gets picked up next time.
 WINDOW_MINUTES = 45
+# The dashboard's envelope cap, not a preference: `notificationIngest.ts` validates
+# `items` with `.max(200)` and a 201st item 400s the WHOLE payload, so raising this
+# does not deliver more — it delivers nothing. More than 200 is sent as more posts.
 MAX_BATCH = 200
+# A bound on one run, so a backlog cannot turn a ten-minute task into an hour of
+# HTTP. Twenty thousand notifications in one 45-minute window is not a queue, it is
+# an incident, and the log line below says so.
+MAX_BATCHES = 100
 TIMEOUT_SECONDS = 15
+
+# The two senders that raise a triage warning. Neither carries a work item — that
+# is the whole complaint — so neither can be deep-linked the usual way.
+TRIAGE_SENDERS = ("in_app:github_triage", "in_app:github_triage_digest")
 
 
 def is_enabled():
@@ -40,13 +51,49 @@ def _plain_text(value):
     """Flatten Plane's stored HTML into the sentence a person would read."""
     if not isinstance(value, str) or not value.strip():
         return ""
-    # unescape after stripping: the tags go first, then &#x27; becomes an apostrophe
-    # rather than surviving into the bell as mojibake.
-    return " ".join(unescape(strip_tags(value)).split())
+    # Unescape FIRST, then strip. The other order is what this used to do and it
+    # is an escaping bug wearing a comment: `&lt;script&gt;` survives strip_tags
+    # untouched (there is no tag there yet), and unescape then turns it back into
+    # live markup on its way to a bell that renders HTML. Decoding before
+    # stripping means whatever the entities decode to is a tag by the time
+    # strip_tags looks at it.
+    return " ".join(strip_tags(unescape(value)).split())
+
+
+class _RefuseRedirect(request.HTTPRedirectHandler):
+    """Follow nothing.
+
+    urllib's default opener replays the request at the Location it is given —
+    headers and all, `X-Notify-Secret` included, to whatever host that names —
+    and downgrades the POST to a GET on a 301/302/303 while it is at it. So an
+    attacker (or a stale reverse-proxy rule) who can answer with a 302 both
+    harvests the shared secret and makes the delivery look like it happened.
+    A redirect from our own dashboard is a misconfiguration; raising is right.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = request.build_opener(_RefuseRedirect)
+
+
+def _checked_url():
+    url = os.environ["ARRIBADA_NOTIFY_URL"].rstrip("/")
+    parts = parse.urlsplit(url)
+    if parts.scheme == "https":
+        return url
+    # http is allowed to the loopback only, which is how the dashboard is reached
+    # from a compose network in development. Anywhere else it would put the shared
+    # secret on the wire in clear.
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "http" and host in ("localhost", "127.0.0.1", "::1"):
+        return url
+    raise ValueError(f"ARRIBADA_NOTIFY_URL must be https (got {parts.scheme or 'no'}://{host or '?'})")
 
 
 def _post(items):
-    url = os.environ["ARRIBADA_NOTIFY_URL"].rstrip("/")
+    url = _checked_url()
     payload = json.dumps({"items": items}).encode("utf-8")
     req = request.Request(
         url,
@@ -57,8 +104,46 @@ def _post(items):
         },
         method="POST",
     )
-    with request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
+    with _opener.open(req, timeout=TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _activity_sentence(payload, row):
+    """A sentence, out of the pieces upstream leaves lying next to each other.
+
+    Upstream never writes `message_html` for an issue-activity notification — it
+    stays the model default `<p></p>` — and `message` is null, so the only thing
+    left to fall back on is `title`, which holds the ACTIVITY FRAGMENT and
+    nothing else: "updated the state to", trailing space included. The dashboard
+    bell showed exactly that, a sentence cut off before the only word that
+    mattered. The word is sitting in `data.issue_activity.new_value`.
+    """
+    activity = payload.get("issue_activity")
+    if not isinstance(activity, dict):
+        return ""
+    fragment = (row.title or "").strip()
+
+    def _value(key):
+        raw = activity.get(key)
+        # Upstream str()s everything into this dict, so an absent value arrives as
+        # the four characters "None" rather than as null.
+        if not isinstance(raw, str) or raw in ("", "None"):
+            return ""
+        return _plain_text(raw) if "<" in raw else " ".join(raw.split())
+
+    value = _value("new_value") or _value("old_value")
+    if not value and activity.get("field") == "state":
+        issue = payload.get("issue")
+        value = (issue or {}).get("state_name") or "" if isinstance(issue, dict) else ""
+
+    actor = ""
+    if row.triggered_by:
+        actor = (row.triggered_by.display_name or row.triggered_by.first_name or "").strip()
+
+    sentence = " ".join(part for part in (actor, fragment, value) if part)
+    if sentence and sentence[-1] not in ".!?":
+        sentence += "."
+    return sentence
 
 
 @shared_task
@@ -78,8 +163,15 @@ def forward_notifications():
         # dashboard account and never will, so forwarding theirs buys nothing but
         # a longer batch and a list of "unknown recipients" on the far side.
         .exclude(receiver__is_bot=True)
-        .select_related("receiver", "project", "workspace")
-        .order_by("created_at")[:MAX_BATCH]
+        .select_related("receiver", "project", "workspace", "triggered_by")
+        # The whole window, chunked below, NOT the first MAX_BATCH of it. The
+        # single-slice version starved: past 200 unread in a window every run
+        # re-sent the same oldest 200 — already receipted, so `duplicates=200`,
+        # which reads exactly like healthy idling — and the newest never went at
+        # all, then fell out of the window and were lost. The 06:00 reminder and
+        # the 06:30 digest land in the same 45 minutes, so the threshold is
+        # reachable by design rather than by accident.
+        .order_by("created_at")[: MAX_BATCH * MAX_BATCHES]
     )
     if not rows:
         return "nothing to forward"
@@ -113,6 +205,8 @@ def forward_notifications():
         if not body and isinstance(row.message, str):
             body = row.message.strip()
         if not body:
+            body = _activity_sentence(payload, row)
+        if not body:
             body = (row.title or "").strip()
 
         item = {
@@ -130,25 +224,46 @@ def forward_notifications():
         # OMITTED rather than sent as null: the receiving schema treats an absent
         # url as "none given", and a null used to fail validation for the whole
         # batch — which silently dropped every notification alongside it.
+        slug = row.workspace.slug if row.workspace else None
         issue_id = issue.get("id") or (str(row.entity_identifier) if row.entity_identifier else None)
-        if web_url and issue_id and row.project_id and row.workspace_id:
-            slug = row.workspace.slug if row.workspace else None
-            if slug:
-                item["url"] = f"{web_url}/{slug}/projects/{row.project_id}/issues/{issue_id}"
+        if web_url and issue_id and row.project_id and row.workspace_id and slug:
+            item["url"] = f"{web_url}/{slug}/projects/{row.project_id}/issues/{issue_id}"
+        elif web_url and slug and row.sender in TRIAGE_SENDERS:
+            # The triage warnings have no project and no work item, so the branch
+            # above can never fire for them — and a notification with no url makes
+            # the dashboard fall through to /messages, a page that has nothing to
+            # do with GitHub. The queue itself is the thing to open: it is where
+            # the complaint is answered.
+            item["url"] = f"{web_url}/{slug}/github-triage"
 
         items.append(item)
 
     if not items:
         return "nothing to forward"
 
-    try:
-        result = _post(items)
-    except (error.URLError, error.HTTPError, TimeoutError, ValueError) as exc:
-        # Never raise: the next run re-sends the same window, so a dashboard that is
-        # down for twenty minutes costs nothing but a delay.
-        return f"forward failed: {exc}"
+    # One POST per MAX_BATCH. The cap is the receiver's, not ours — see MAX_BATCH.
+    sent = 0
+    created = 0
+    duplicates = 0
+    unknown = 0
+    for start in range(0, len(items), MAX_BATCH):
+        chunk = items[start : start + MAX_BATCH]
+        try:
+            result = _post(chunk)
+        except (error.URLError, error.HTTPError, TimeoutError, ValueError) as exc:
+            # Never raise: the next run re-sends the same window, so a dashboard that is
+            # down for twenty minutes costs nothing but a delay. Stopping rather than
+            # continuing, because the usual reason a chunk fails is that the far side is
+            # down — and firing the rest at it would only lengthen the outage.
+            return f"forward failed after {sent}: {exc}"
+        sent += len(chunk)
+        created += result.get("created") or 0
+        duplicates += result.get("duplicates") or 0
+        unknown += len(result.get("unknownRecipients") or [])
 
-    return (
-        f"sent={len(items)} created={result.get('created')} "
-        f"duplicates={result.get('duplicates')} unknown={len(result.get('unknownRecipients') or [])}"
-    )
+    # `pending` is the tell this log line was missing. `sent=200 duplicates=200`
+    # was indistinguishable from a healthy idle run, which is how the starvation
+    # went unnoticed; a non-zero pending says out loud that the window held more
+    # than one run is willing to carry.
+    pending = "" if len(rows) < MAX_BATCH * MAX_BATCHES else f" pending=truncated-at-{MAX_BATCH * MAX_BATCHES}"
+    return f"sent={sent} created={created} duplicates={duplicates} unknown={unknown}{pending}"

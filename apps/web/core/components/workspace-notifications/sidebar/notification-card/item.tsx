@@ -40,6 +40,7 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
   const issueId = notification?.data?.issue?.id || undefined;
   const workspace = getWorkspaceBySlug(workspaceSlug);
 
+  const notificationIssue = notification?.data?.issue;
   const notificationField = notification?.data?.issue_activity?.field || undefined;
   // Whether there is anything at all to render. A notification sent by something
   // other than the issue-activity pipeline — the fork's own deadline reminders,
@@ -50,29 +51,47 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
   const hasBody = !!notificationField || !!notification?.title || !!notification?.message_html;
   const notificationTriggeredBy = notification.triggered_by_details || undefined;
 
-  const handleNotificationIssuePeekOverview = async () => {
-    if (workspaceSlug && projectId && issueId && !isSnoozeStateModalOpen && !customSnoozeModal) {
-      setPeekIssue(undefined);
-      setCurrentSelectedNotificationId(notificationId);
+  /**
+   * Clicking a notification does three things, and they used to be one `if`.
+   *
+   * The guard required `projectId && issueId`, and `issueId` is
+   * `data.issue.id` — a field no notification this fork raises has ever
+   * carried. So a click on an overdue reminder or a GitHub triage warning did
+   * nothing at all: it did not select the row, it did not open the pane, and it
+   * did not mark the thing read. The badge counted notifications that could not
+   * be cleared by reading them, which is what teaches people to mark the whole
+   * inbox read without looking.
+   *
+   * Selecting and marking read are true of every notification. Only the PEEK —
+   * opening a work item in place — needs a work item to open, so only the peek
+   * is still gated on one. When there is nothing to peek, the pane falls to this
+   * fork's own detail panel, which renders what the notification actually holds.
+   */
+  const handleNotificationClick = async () => {
+    if (!workspaceSlug || isSnoozeStateModalOpen || customSnoozeModal) return;
 
-      // make the notification as read
-      if (notification.read_at === null) {
-        try {
-          await markNotificationAsRead(workspaceSlug);
-        } catch (error) {
-          console.error(error);
-        }
-      }
+    setPeekIssue(undefined);
+    setCurrentSelectedNotificationId(notificationId);
 
-      if (notification?.is_inbox_issue === false) {
-        if (!getIsIssuePeeked(issueId)) {
-          setPeekIssue({ workspaceSlug, projectId, issueId });
-        }
+    // mark the notification as read
+    if (notification.read_at === null) {
+      try {
+        await markNotificationAsRead(workspaceSlug);
+      } catch (error) {
+        console.error(error);
       }
+    }
+
+    if (projectId && issueId && notification?.is_inbox_issue === false && !getIsIssuePeeked(issueId)) {
+      setPeekIssue({ workspaceSlug, projectId, issueId });
     }
   };
 
-  if (!workspaceSlug || !notificationId || !notification?.id || !hasBody || !workspace?.id || !projectId) return <></>;
+  // `projectId` is deliberately NOT required here. Both GitHub triage
+  // notifications are raised with `project=None` — there is no project yet, that
+  // is the entire complaint — and this returned an empty fragment for them, so
+  // they rendered as nothing while still counting toward the unread badge.
+  if (!workspaceSlug || !notificationId || !notification?.id || !hasBody || !workspace?.id) return <></>;
 
   return (
     <Row
@@ -83,7 +102,7 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
           "bg-accent-primary/5": notification.read_at === null,
         }
       )}
-      onClick={handleNotificationIssuePeekOverview}
+      onClick={handleNotificationClick}
     >
       {notification.read_at === null && (
         <div className="absolute top-[50%] left-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-primary" />
@@ -109,7 +128,7 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
                 notification={notification}
                 workspaceId={workspace.id}
                 workspaceSlug={workspaceSlug}
-                projectId={projectId}
+                projectId={projectId ?? ""}
               />
             </div>
             <NotificationOption
@@ -123,9 +142,17 @@ export const NotificationItem = observer(function NotificationItem(props: TNotif
           </div>
 
           <div className="relative flex items-center gap-3 text-caption-sm-regular text-secondary">
+            {/* Both halves are conditional. This line used to interpolate
+                `identifier`-`sequence_id` unconditionally, so a notification with
+                no `data` — every one this fork raises — rendered its subtitle as
+                a bare hyphen under the title. */}
             <div className="line-clamp-1 w-full truncate overflow-hidden break-words whitespace-normal">
-              {notification?.data?.issue?.identifier}-{notification?.data?.issue?.sequence_id}&nbsp;
-              {notification?.data?.issue?.name}
+              {notificationIssue?.identifier && notificationIssue?.sequence_id !== undefined && (
+                <>
+                  {notificationIssue.identifier}-{notificationIssue.sequence_id}&nbsp;
+                </>
+              )}
+              {notificationIssue?.name}
             </div>
             <div className="flex-shrink-0">
               {notification?.snoozed_till ? (

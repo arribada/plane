@@ -23,6 +23,25 @@ from plane.arribada.zulip_notify import (
 )
 
 
+def _summary_line(issue, label):
+    """`Sea Turtle Tag · TAG-42 — overdue since 1 Aug (In progress)`.
+
+    Project, work item and status, in that order, because that is the order a
+    person triages in: whose is it, which one, how bad. Rendered as TEXT by the
+    notification card — never as HTML — so a work item named `<img onerror=…>`
+    is a work item with a silly name and nothing more.
+    """
+    ref = f"{issue.project.identifier}-{issue.sequence_id}"
+    if label == "overdue":
+        # `%-d` is glibc-only and this has to survive a non-Linux test runner.
+        when = f"overdue since {issue.target_date.day} {issue.target_date:%b}"
+    else:
+        when = label
+    state = issue.state.name if issue.state_id else None
+    tail = f" ({state})" if state else ""
+    return f"{issue.project.name} · {ref} — {when}{tail}"
+
+
 @shared_task
 def due_date_reminder():
     # imported here (not at module load) so registering the task in apps.ready()
@@ -37,7 +56,10 @@ def due_date_reminder():
     issues = list(
         Issue.issue_objects.filter(target_date__isnull=False, target_date__lte=tomorrow, deleted_at__isnull=True)
         .exclude(state__group__in=["completed", "cancelled"])
-        .select_related("project", "project__workspace")
+        # `state` is joined for the summary line, not for the filter above: the
+        # notification names the column the work item is sitting in, and reading
+        # it lazily would be one extra query per assignee per day.
+        .select_related("project", "project__workspace", "state")
     )
 
     # Map each project -> its Zulip stream id, but only when chat posting is enabled and
@@ -63,6 +85,30 @@ def due_date_reminder():
         else:
             label = "due tomorrow"
 
+        # What the card actually has to say: which project, which work item, what
+        # state it is in. All four were already in hand here and none of them were
+        # used — the title was "{issue.name} is overdue" and the body was the same
+        # sentence again in bold, so the card said one thing twice and named
+        # neither the project nor the column the item is sitting in.
+        summary = _summary_line(issue, label)
+        # `data.issue` is what the sidebar's second line reads. Left null before,
+        # so every reminder rendered its subtitle as a bare hyphen: the component
+        # interpolates `identifier`-`sequence_id` unconditionally.
+        #
+        # `id` is deliberately ABSENT. Plane treats `data.issue.id` as "peek this
+        # work item in the pane", which needs project-member permissions loaded
+        # and gives no room for anything the reminder itself says. Without it the
+        # pane falls to this fork's own detail panel, which shows the summary and
+        # links out to the work item via `entity_identifier` — set below.
+        issue_data = {
+            "issue": {
+                "name": issue.name,
+                "identifier": issue.project.identifier,
+                "sequence_id": issue.sequence_id,
+                "state_name": issue.state.name if issue.state_id else None,
+            }
+        }
+
         posted_to_chat = False
         for uid in IssueAssignee.objects.filter(issue=issue).values_list("assignee_id", flat=True):
             already = Notification.objects.filter(
@@ -80,9 +126,20 @@ def due_date_reminder():
                 receiver_id=uid,
                 entity_identifier=issue.id,
                 entity_name="issue",
-                title=f"{issue.name} is {label}",
-                message={"reminder": label, "target_date": str(issue.target_date)},
-                message_html=f"<p><b>{issue.name}</b> is {label} — due {issue.target_date}.</p>",
+                title=summary,
+                data=issue_data,
+                message={
+                    "reminder": label,
+                    "target_date": str(issue.target_date),
+                    "project": issue.project.name,
+                    "state": issue.state.name if issue.state_id else None,
+                },
+                # Empty on purpose, and this is the fix for a stored XSS as much as
+                # for the duplicated sentence. The body used to interpolate
+                # `issue.name` — user-editable text — straight into HTML that the
+                # inbox renders with dangerouslySetInnerHTML. Nothing left to
+                # escape is better than something escaped correctly today.
+                message_html="",
             )
             created += 1
             # First fresh notification for this issue in the 20h window => post one channel

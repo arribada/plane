@@ -24,11 +24,16 @@
 # its next run, and warning about them would invite somebody to do by hand what
 # already happens on its own.
 #
-# Deduped on receiver + sender + title within 20 hours, so a re-run inside the
-# day is silent. Neither notification carries an entity_identifier: there is no
-# work item yet — that is precisely what is being complained about — and the
-# notification pane opens the triage list for this sender rather than trying to
-# peek a work item that does not exist.
+# Deduped within 20 hours, so a re-run inside the day is silent. The contested
+# warning keys on the title, which names a repo and is stable; the digest keys on
+# the sender alone, because ITS title carries a count and 7 → 8 unclassified is
+# the same complaint with a bigger number — keying on it re-notified every active
+# member several times a morning.
+#
+# Neither notification carries an entity_identifier: there is no work item yet —
+# that is precisely what is being complained about — and the notification pane
+# opens the triage list for this sender rather than trying to peek a work item
+# that does not exist.
 
 import re
 from collections import defaultdict
@@ -36,6 +41,7 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.utils import timezone
+from django.utils.html import escape
 
 TRIAGE_SENDER = "in_app:github_triage"
 DIGEST_SENDER = "in_app:github_triage_digest"
@@ -79,18 +85,26 @@ def github_classification_warnings():
         for repo, owners in _repo_claims().items()
     }
 
-    def _notify_once(receiver_id, workspace_id, sender, title, html, message):
-        """One notification per receiver per title per day.
+    def _notify_once(receiver_id, workspace_id, sender, title, html, message, dedupe_on_title=True):
+        """One notification per receiver per day, at the grain given.
 
-        Deduped on the title rather than on entity_identifier because there is no
-        entity: the whole complaint is that no work item exists yet. The title
-        names the repo, which is exactly the grain a person wants to be nagged at.
+        There is no entity to dedupe on — the whole complaint is that no work item
+        exists yet — so the key is the sender plus, optionally, the title.
+
+        `dedupe_on_title=False` exists because the digest's title carries a COUNT:
+        "7 unclassified GitHub tasks". A title-keyed dedup treats 7→8 as something
+        new and re-notifies every active member of the workspace, inside the same
+        twenty hours the window was supposed to cover. One sync that captures a
+        handful of issues over a morning is a handful of digests. The sender is
+        the stable key: there is one digest, it is worth one ping a day, and the
+        number it quotes is not a different subject.
         """
         if not receiver_id or not workspace_id:
             return 0
-        if Notification.objects.filter(
-            receiver_id=receiver_id, sender=sender, title=title, created_at__gte=since
-        ).exists():
+        already = Notification.objects.filter(receiver_id=receiver_id, sender=sender, created_at__gte=since)
+        if dedupe_on_title:
+            already = already.filter(title=title)
+        if already.exists():
             return 0
         Notification.objects.create(
             workspace_id=workspace_id,
@@ -161,9 +175,14 @@ def github_classification_warnings():
             owners = _owners(workspace_id, repo)
             names = sorted(projects[pid]["name"] for pid in owners)
             title = f"{repo} is claimed by {len(owners)} projects"
+            # `repo` comes from a GitHub URL and the names are whatever somebody
+            # typed into the project title field — both user-editable, both
+            # interpolated raw into HTML the inbox renders with
+            # dangerouslySetInnerHTML. This was only ever invisible because these
+            # rows did not render at all; making them render makes it live.
             body = (
-                f"<p><b>{count}</b> GitHub issue(s) from <b>{repo}</b> cannot be routed: "
-                f"{', '.join(names)} all claim it. Settle the repository and they file themselves.</p>"
+                f"<p><b>{count}</b> GitHub issue(s) from <b>{escape(repo)}</b> cannot be routed: "
+                f"{escape(', '.join(names))} all claim it. Settle the repository and they file themselves.</p>"
             )
             leads = [projects[pid]["project_lead_id"] for pid in owners if projects[pid]["project_lead_id"]]
             # No lead on any of the claiming projects is the normal case on this
@@ -190,7 +209,7 @@ def github_classification_warnings():
         )
         for uid in _members(workspace_id):
             created += _notify_once(
-                uid, workspace_id, DIGEST_SENDER, title, body, {"count": count}
+                uid, workspace_id, DIGEST_SENDER, title, body, {"count": count}, dedupe_on_title=False
             )
 
     return {

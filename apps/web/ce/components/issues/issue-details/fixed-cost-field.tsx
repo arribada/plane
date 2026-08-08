@@ -37,6 +37,7 @@ import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/prop
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TIssueFixedCost } from "@/plane-web/types/arribada";
 
@@ -73,6 +74,11 @@ export const IssueFixedCostField = observer(function IssueFixedCostField(props: 
   const { updateIssue } = useIssueDetail();
   const [state, setState] = useState<TIssueFixedCost | null>(null);
   const [busy, setBusy] = useState(false);
+  // A supplier's invoice that will not load is the one thing on this panel whose
+  // absence is read as a fact: the docstring above says so — an item showing no
+  // effort, no cost and no explanation leaves "it is free" as the only available
+  // conclusion. A failed request must not be allowed to make that argument.
+  const [failure, setFailure] = useState<string | null>(null);
 
   // The load is keyed on the item, and a panel switched between two work items
   // reuses the component — so a reply that arrives after the switch must not
@@ -83,10 +89,17 @@ export const IssueFixedCostField = observer(function IssueFixedCostField(props: 
     const load = async () => {
       try {
         const data = await service.getIssueFixedCost(workspaceSlug, projectId, issueId);
-        if (live.current) setState(data);
-      } catch {
-        // A field that will not load must not break the panel it sits in.
-        if (live.current) setState(null);
+        if (live.current) {
+          setState(data);
+          setFailure(null);
+        }
+      } catch (error) {
+        // A field that will not load must not break the panel it sits in — nor
+        // disappear from it without a word.
+        if (live.current) {
+          setState(null);
+          setFailure(apiErrorMessage(error, "The supplier cost could not be read."));
+        }
       }
     };
     if (workspaceSlug && projectId && issueId) void load();
@@ -96,6 +109,15 @@ export const IssueFixedCostField = observer(function IssueFixedCostField(props: 
   }, [workspaceSlug, projectId, issueId]);
 
   const recorded = !!state && state.expense_id != null && state.total != null;
+
+  if (failure)
+    return (
+      <SidebarPropertyListItem icon={Banknote} label="Supplier cost">
+        <p role="alert" className="py-1 text-11 text-danger-primary">
+          Couldn&apos;t load it. {failure} Do not read this item as costing nothing — check the Finance page.
+        </p>
+      </SidebarPropertyListItem>
+    );
 
   // Nothing recorded and nothing to suggest is nothing to say. The row used to
   // render an em dash and an "Add a fixed cost" button; with the button gone, an

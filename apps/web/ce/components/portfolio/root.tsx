@@ -107,6 +107,28 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
     <>
       <div className="flex h-full w-full flex-col">
         <PortfolioToolbar />
+        {/* An empty portfolio and a portfolio that could not be read draw the
+            same blank board. Only one of them is a statement about the work, so
+            the other has to say so before anybody reads the emptiness as news. */}
+        {portfolio.loadFailed && (
+          <div
+            role="alert"
+            className="flex flex-shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-danger-strong/40 px-4 py-2 text-12"
+          >
+            <span className="text-secondary">
+              <span className="font-medium text-primary">This board could not be loaded.</span> Nothing below is a
+              statement about your projects — an empty timeline here means the request failed, not that there is no
+              work.
+            </span>
+            <button
+              type="button"
+              onClick={() => workspaceSlug && void portfolio.fetchPortfolio(workspaceSlug.toString())}
+              className="text-accent-primary hover:underline"
+            >
+              Try again
+            </button>
+          </div>
+        )}
         <div className="relative flex-grow overflow-hidden">
           <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.PROJECT}>
             <GanttChartRoot

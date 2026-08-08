@@ -33,6 +33,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useProject } from "@/hooks/store/use-project";
 import { useAppRouter } from "@/hooks/use-app-router";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 type TFolder = { id: string; name: string; parent_id: string | null; sort_order: number; project_ids: string[] };
@@ -181,20 +182,40 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
     return map;
   }, [folders, byId]);
 
+  /** The three folder writes, all of which were a bare `await` with no catch —
+   *  in the very file whose drop handler grew one, for the very bug that catch
+   *  was added for. A rejected create left the prompt's answer nowhere and the
+   *  sidebar exactly as it was. */
   const createFolder = async (parentId: string | null) => {
     if (!ws) return;
     const name = window.prompt(parentId ? "Name the subfolder" : "Folder name");
     if (!name?.trim()) return;
-    await service.createFolder(ws, name.trim(), parentId);
-    if (parentId) setOpen((prev) => new Set(prev).add(parentId));
-    refetch();
+    try {
+      await service.createFolder(ws, name.trim(), parentId);
+      if (parentId) setOpen((prev) => new Set(prev).add(parentId));
+      refetch();
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: parentId ? "Couldn't create that subfolder" : "Couldn't create that folder",
+        message: apiErrorMessage(error, "Nothing was created."),
+      });
+    }
   };
   const rename = async (f: TFolder) => {
     if (!ws) return;
     const name = window.prompt("Rename folder", f.name);
     if (!name?.trim()) return;
-    await service.renameFolder(ws, f.id, name.trim());
-    refetch();
+    try {
+      await service.renameFolder(ws, f.id, name.trim());
+      refetch();
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't rename that folder",
+        message: apiErrorMessage(error, `It is still called "${f.name}".`),
+      });
+    }
   };
   const del = async (f: TFolder) => {
     const hasChildren = (childrenOf.get(f.id) ?? []).length > 0;
@@ -202,8 +223,16 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
       ? `Delete folder "${f.name}"? Its subfolders move up a level; no project is deleted.`
       : `Delete folder "${f.name}"? Projects inside are not deleted.`;
     if (!ws || !window.confirm(warning)) return;
-    await service.deleteFolder(ws, f.id);
-    refetch();
+    try {
+      await service.deleteFolder(ws, f.id);
+      refetch();
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't delete that folder",
+        message: apiErrorMessage(error, "It is still there."),
+      });
+    }
   };
   const assign = async (projectId: string, folderId: string | null) => {
     if (!ws) return;
@@ -221,7 +250,7 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't move that project",
-        message: (error as { error?: string })?.error ?? "It stayed where it was.",
+        message: apiErrorMessage(error, "It stayed where it was."),
       });
     }
   };
@@ -235,7 +264,7 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't move that folder",
-        message: (error as { error?: string })?.error ?? "It stayed where it was.",
+        message: apiErrorMessage(error, "It stayed where it was."),
       });
     }
   };

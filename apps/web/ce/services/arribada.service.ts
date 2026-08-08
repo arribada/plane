@@ -6,6 +6,7 @@
 
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
+import { rethrow } from "./api-error";
 import type {
   TAiDraft,
   TAiPlan,
@@ -58,9 +59,7 @@ export class ArribadaService extends APIService {
       params: { include_archived: includeArchived },
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getProjectItems(workspaceSlug: string, projectId: string, undatedOnly = false): Promise<TPortfolioItem[]> {
@@ -68,9 +67,7 @@ export class ArribadaService extends APIService {
       params: { undated: undatedOnly },
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // All planning relations (finish_before/start_before/blocked_by) of a project's
@@ -91,9 +88,7 @@ export class ArribadaService extends APIService {
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/artifacts/`)
       .then((r) => r?.data?.artifacts ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** The server guesses the kind from the host and refuses anything not http(s). */
@@ -115,9 +110,7 @@ export class ArribadaService extends APIService {
       label,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async removeIssueArtifact(workspaceSlug: string, projectId: string, issueId: string, id: string): Promise<unknown> {
@@ -125,9 +118,7 @@ export class ArribadaService extends APIService {
       id,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Propose a work item's fields from its title. Writes nothing. */
@@ -145,9 +136,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-draft-item/`, { title })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Every marked deliverable across the workspace, soonest first (Home widget). */
@@ -165,9 +154,7 @@ export class ArribadaService extends APIService {
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/deliverables/`)
       .then((r) => r?.data?.deliverables ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Purchase requests waiting on THIS user's decision, across every project. */
@@ -187,9 +174,7 @@ export class ArribadaService extends APIService {
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-approvals/`)
       .then((r) => r?.data?.requests ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Which of a project's work items are deliverables. Whole project in one call. */
@@ -212,9 +197,7 @@ export class ArribadaService extends APIService {
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/milestones/`)
       .then((r) => r?.data?.milestones ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -241,26 +224,20 @@ export class ArribadaService extends APIService {
       ...(label === undefined ? {} : { label }),
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getProjectRelations(workspaceSlug: string, projectId: string): Promise<TIssueRelationEdge[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/relations/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Per-issue completion % for the whole project, in one call, to fill gantt bars.
   async getProjectProgress(workspaceSlug: string, projectId: string): Promise<{ issue_id: string; percent: number }[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/progress/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Frozen baseline dates of a project's issues (ghost bars behind the live ones).
@@ -288,9 +265,7 @@ export class ArribadaService extends APIService {
       }`
     )
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Freeze the current dates of every issue in the project as the new baseline.
@@ -298,9 +273,7 @@ export class ArribadaService extends APIService {
   async deleteBaseline(workspaceSlug: string, projectId: string, id: string): Promise<unknown> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, { id })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Freezes the current dates as a NEW snapshot. Never overwrites one. */
@@ -311,18 +284,14 @@ export class ArribadaService extends APIService {
   ): Promise<{ id: string; name: string; captured: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/baseline/`, { name })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Forward-cascade the project's dates along dependencies (respect links). Writes.
   async autoSchedule(workspaceSlug: string, projectId: string): Promise<{ rescheduled: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/auto-schedule/`, {})
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Issue ids on the project's critical (longest-duration) dependency chain.
@@ -334,18 +303,14 @@ export class ArribadaService extends APIService {
   ): Promise<{ issue_ids: string[]; slack?: Record<string, { free: number; total: number; critical: boolean }> }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/critical-path/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // A project's documentation pointers: wiki doc + Google Drive URL.
   async getWikiDoc(workspaceSlug: string, projectId: string): Promise<TProjectDocs> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-doc/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Partial update: only the keys you pass are changed (each link edits independently).
@@ -362,9 +327,7 @@ export class ArribadaService extends APIService {
   ): Promise<TProjectDocs> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-doc/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Adopt work items into another project — lossless copy + relates_to link back.
@@ -383,9 +346,7 @@ export class ArribadaService extends APIService {
       ...(targetParentId ? { target_parent_id: targetParentId } : {}),
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Captured GitHub issues nobody has filed or dismissed, for the "link GitHub
@@ -393,9 +354,7 @@ export class ArribadaService extends APIService {
   async listGithubInbox(workspaceSlug: string): Promise<TGithubInboxItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** File picked inbox issues as sub-issues of one work item. There is nothing to
@@ -413,9 +372,7 @@ export class ArribadaService extends APIService {
       parent_issue_id: parentIssueId,
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Per-person workload across the workspace.
@@ -433,9 +390,7 @@ export class ArribadaService extends APIService {
   > {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/workload/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Clone a project (template) into a new one: copies states, work items, parent
@@ -453,9 +408,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${sourceProjectId}/clone/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Program-level critical path + cross-project dependency edges across visible projects.
@@ -465,27 +418,21 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/critical-path/`)
       .then((response) => response?.data ?? { issue_ids: [], edges: [] })
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Latest status update per project across the workspace (portfolio pills).
   async getWorkspaceStatuses(workspaceSlug: string): Promise<Record<string, TProjectStatusUpdate>> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/project-statuses/`)
       .then((response) => response?.data ?? {})
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Recent status updates for one project.
   async getProjectStatuses(workspaceSlug: string, projectId: string): Promise<TProjectStatusUpdate[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/status/`)
       .then((response) => response?.data ?? [])
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Post a new status update on a project.
@@ -496,18 +443,14 @@ export class ArribadaService extends APIService {
   ): Promise<TProjectStatusUpdate> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/status/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // The requesting user's open assigned work items (Home 'My tasks' widget).
   async getMyWork(workspaceSlug: string): Promise<TMyWorkItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/my-work/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Every dated work item assigned to one user, across every project the caller can
@@ -516,9 +459,7 @@ export class ArribadaService extends APIService {
   async getUserTimeline(workspaceSlug: string, userId: string): Promise<TUserTimeline> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/users/${userId}/timeline/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Shared project folders (sidebar grouping).
@@ -527,9 +468,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ id: string; name: string; parent_id: string | null; sort_order: number; project_ids: string[] }[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/project-folders/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async createFolder(
@@ -542,9 +481,7 @@ export class ArribadaService extends APIService {
       parent_id: parentId ?? null,
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Re-parent a folder; null puts it back at the top level. The server refuses a
@@ -554,25 +491,19 @@ export class ArribadaService extends APIService {
       parent_id: parentId,
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async renameFolder(workspaceSlug: string, folderId: string, name: string): Promise<unknown> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/project-folders/${folderId}/`, { name })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async deleteFolder(workspaceSlug: string, folderId: string): Promise<unknown> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/project-folders/${folderId}/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async assignProjectToFolder(workspaceSlug: string, projectId: string, folderId: string | null): Promise<unknown> {
@@ -581,9 +512,7 @@ export class ArribadaService extends APIService {
       folder_id: folderId,
     })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Everything the project Overview page shows, in one call (counts, cycles,
@@ -591,9 +520,7 @@ export class ArribadaService extends APIService {
   async getProjectOverview(workspaceSlug: string, projectId: string): Promise<TProjectOverview> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/overview/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Who works on this project and on what — the discipline roster, which is not
@@ -601,9 +528,7 @@ export class ArribadaService extends APIService {
   async getProjectTeam(workspaceSlug: string, projectId: string): Promise<TProjectTeamResponse> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Full replace of the roster: whatever is not in `team` is dropped.
@@ -621,18 +546,14 @@ export class ArribadaService extends APIService {
   ): Promise<TProjectTeamResponse> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`, { team })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Which LLM the planning assistant uses. The key is never returned.
   async getAiSettings(workspaceSlug: string): Promise<TAiSettings> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/ai-settings/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Pass api_key: "__unchanged__" to save the model/provider without retyping the key.
@@ -642,9 +563,7 @@ export class ArribadaService extends APIService {
   ): Promise<TAiSettings> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/ai-settings/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Ask the model to place work items and pick an owner for each. Without
@@ -664,9 +583,7 @@ export class ArribadaService extends APIService {
   ): Promise<TAiPlan> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-plan/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Write an approved set of dates — and owners, when the row carries any —
@@ -679,9 +596,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ applied: number; rejected: string[]; assigned?: number; assignees_rejected?: string[] }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/apply-plan/`, { issues })
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // The generic V-cycle catalogue the setup wizard ticks through. Served rather
@@ -690,9 +605,7 @@ export class ArribadaService extends APIService {
   async getTaskBlueprints(workspaceSlug: string): Promise<TBlueprintCatalogue> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/task-blueprints/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Turn the wizard's answers into a dated, owned, sprint-cut plan. Writes
@@ -733,9 +646,7 @@ export class ArribadaService extends APIService {
   ): Promise<TSetupPlan> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-plan/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Write an approved plan: work items, their dependencies, the discipline each
@@ -753,9 +664,7 @@ export class ArribadaService extends APIService {
   ): Promise<TSetupApplyResult> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/setup-apply/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Finish a work item from its title: description, effort, discipline and whoever
@@ -767,9 +676,7 @@ export class ArribadaService extends APIService {
   ): Promise<TAiDraft> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-draft/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // Empty a project, one category at a time. `confirm` must be the project
@@ -790,17 +697,13 @@ export class ArribadaService extends APIService {
   ): Promise<{ removed: Record<string, number> }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/clean/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getSchedule(workspaceSlug: string, projectId: string): Promise<TProjectSchedule> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async updateSchedule(
@@ -824,9 +727,7 @@ export class ArribadaService extends APIService {
   ): Promise<TProjectSchedule> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/schedule/`, data)
       .then((response) => response?.data)
-      .catch((error) => {
-        throw error?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   // --- cost -----------------------------------------------------------------
@@ -847,25 +748,19 @@ export class ArribadaService extends APIService {
       `/api/arribada/workspaces/${workspaceSlug}/calendar/${country ? `?country=${encodeURIComponent(country)}` : ""}`
     )
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async addNonWorkingDay(workspaceSlug: string, data: { date: string; name?: string }): Promise<TNonWorkingDay> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/calendar/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async removeNonWorkingDay(workspaceSlug: string, date: string): Promise<{ deleted: boolean }> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/calendar/?date=${encodeURIComponent(date)}`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -880,17 +775,13 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/role-rates/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getCurrencySettings(workspaceSlug: string): Promise<TCurrencySettings> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/currency/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Workspace admin only, the same gate the hourly rates sit behind. */
@@ -900,33 +791,25 @@ export class ArribadaService extends APIService {
   ): Promise<TCurrencySettings> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/currency/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async saveRoleRates(workspaceSlug: string, rates: TRoleRate[]): Promise<{ rates: TRoleRate[] }> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/role-rates/`, { rates })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getExpenses(workspaceSlug: string, projectId: string): Promise<{ expenses: TProjectExpense[] }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async addExpense(workspaceSlug: string, projectId: string, data: Partial<TProjectExpense>): Promise<TProjectExpense> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async updateExpense(
@@ -937,17 +820,13 @@ export class ArribadaService extends APIService {
   ): Promise<TProjectExpense> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/${expenseId}/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async deleteExpense(workspaceSlug: string, projectId: string, expenseId: string): Promise<{ deleted: boolean }> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/expenses/${expenseId}/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -959,9 +838,7 @@ export class ArribadaService extends APIService {
     const query = display ? `?display=${encodeURIComponent(display)}` : "";
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/budget/${query}`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async getProcurement(
@@ -970,9 +847,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ requests: TProcurementRequest[]; can_approve: boolean }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async requestPurchase(
@@ -982,9 +857,7 @@ export class ArribadaService extends APIService {
   ): Promise<TProcurementRequest> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** The purchasing record past the money decision: ordered, expected, arrived. */
@@ -1003,9 +876,7 @@ export class ArribadaService extends APIService {
   ): Promise<TProcurementRequest> {
     return this.patch(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/${requestId}/`, data)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Lead only. Approving is what writes the expense line. */
@@ -1021,17 +892,13 @@ export class ArribadaService extends APIService {
       note,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async withdrawPurchase(workspaceSlug: string, projectId: string, requestId: string): Promise<{ deleted: boolean }> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/procurement/${requestId}/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1054,9 +921,7 @@ export class ArribadaService extends APIService {
       },
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1074,9 +939,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ name: string; role: string; estimate_days: number }[]> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/ai-sprint-tasks/`, data)
       .then((r) => r?.data?.tasks ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1088,9 +951,7 @@ export class ArribadaService extends APIService {
   async getIssueEffort(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueEffort> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/effort/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async setIssueEffort(
@@ -1103,9 +964,7 @@ export class ArribadaService extends APIService {
       days,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1120,9 +979,7 @@ export class ArribadaService extends APIService {
   async getIssueFixedCost(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueFixedCost> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/fixed-cost/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1136,9 +993,7 @@ export class ArribadaService extends APIService {
   async getIssueChecklist(workspaceSlug: string, projectId: string, issueId: string): Promise<TIssueChecklistItem[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/checklist/`)
       .then((r) => r?.data?.items ?? [])
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1154,9 +1009,7 @@ export class ArribadaService extends APIService {
   async getChecklistSummary(workspaceSlug: string, projectId: string): Promise<Record<string, TIssueChecklistSummary>> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/checklist-summary/`)
       .then((r) => r?.data?.summaries ?? {})
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1175,9 +1028,7 @@ export class ArribadaService extends APIService {
       payload
     )
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Takes the LINE off the list. The work item it named goes on existing. */
@@ -1191,9 +1042,7 @@ export class ArribadaService extends APIService {
       id,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** What it actually took. Sent on its own, so the estimate is left alone. */
@@ -1207,9 +1056,7 @@ export class ArribadaService extends APIService {
       actual_days: actualDays,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1253,9 +1100,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/github-sync/`, {})
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Which discipline a work item belongs to, and the ones this project offers. */
@@ -1266,9 +1111,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ role: string | null; options: string[] }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/role/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1286,9 +1129,7 @@ export class ArribadaService extends APIService {
       role,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Dated items with no discipline, plus what each one's assignee implies. */
@@ -1308,9 +1149,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/discipline-gap/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** {issue id: discipline}. Applies the same auto-assign rule as the single field. */
@@ -1323,9 +1162,7 @@ export class ArribadaService extends APIService {
       assignments,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Named arrangements of a project's work items. Plane keeps one manual order
@@ -1336,9 +1173,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ orders: { id: string; name: string; count: number; updated_at: string | null }[] }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Saves the sequence the client is showing, because what is on screen is what
@@ -1354,9 +1189,7 @@ export class ArribadaService extends APIService {
       issue_ids: issueIds,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Restores a saved arrangement by rewriting sort_order to match it. */
@@ -1367,17 +1200,13 @@ export class ArribadaService extends APIService {
   ): Promise<{ applied: number; saved: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/${orderId}/`, {})
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async deleteIssueOrder(workspaceSlug: string, projectId: string, orderId: string): Promise<unknown> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/orders/${orderId}/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Freezes an exact sequence as the manual order — used when somebody drags a
@@ -1388,9 +1217,7 @@ export class ArribadaService extends APIService {
       issue_ids: issueIds,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** What the router could not decide: repos several projects claim, and repos
@@ -1415,9 +1242,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-triage-queue/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** File a batch. `checklist_owner_id` puts the new work items on an existing
@@ -1429,9 +1254,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ filed: number; skipped: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-triage-queue/`, { items })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Settle a contested repository for good: the named project keeps it, every
@@ -1457,9 +1280,7 @@ export class ArribadaService extends APIService {
       project_id: projectId,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** The rows somebody decided were nothing. Kept, never deleted — the archive
@@ -1476,9 +1297,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Take rows off the queue without filing them anywhere. The sync reads the
@@ -1486,18 +1305,14 @@ export class ArribadaService extends APIService {
   async dismissGithubTriage(workspaceSlug: string, ids: string[]): Promise<{ dismissed: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`, { ids })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Put dismissed rows back in the queue, undecided again. */
   async restoreGithubTriage(workspaceSlug: string, ids: string[]): Promise<{ restored: number }> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/github-triage-archive/`, { ids })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** The GitHub inbox items no project claims, and where they could be filed.
@@ -1509,9 +1324,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-unclassified/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Everyone this workspace knows about, for the roster's name field. Built from
@@ -1522,9 +1335,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ people: { name: string; email: string; roles: string[]; member_id: string | null }[]; total: number }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/directory/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Add a discipline this project needs. Deliberately does not require a holder:
@@ -1536,9 +1347,7 @@ export class ArribadaService extends APIService {
   ): Promise<{ name: string; options: string[] }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/disciplines/`, { name })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Open work items with nobody on them, and who could take them. */
@@ -1559,9 +1368,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/assignee-gap/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** {issue id: user id}. */
@@ -1574,9 +1381,7 @@ export class ArribadaService extends APIService {
       assignments,
     })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Work items missing a start or an end, with a span suggested from effort. */
@@ -1597,9 +1402,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/undated-gap/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** {issue id: {start_date, target_date}}. `rejected` counts spans that ended
@@ -1611,17 +1414,17 @@ export class ArribadaService extends APIService {
   ): Promise<{ written: number; rejected: number }> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/undated-gap/`, { dates })
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /** Why the GitHub inbox is still full, split by what you can actually do.
    *
    *  `tracked` is how many GitHub issues this workspace has ever captured, and it
-   *  is the difference between "nothing is stuck" and "nothing is known". The
-   *  catch below returns null for it on purpose: a failed request must not let
-   *  the widget announce the happy path. */
+   *  is the difference between "nothing is stuck" and "nothing is known" — which
+   *  is a distinction only a request that SUCCEEDED can draw. This used to answer
+   *  a failure with an empty result carrying `tracked: null`, borrowing the
+   *  never-synced wording for an outage; the widget has an error state now, so
+   *  the failure travels. */
   async getGithubInboxGap(workspaceSlug: string): Promise<{
     unclaimed: { repo: string; count: number; synced: boolean }[];
     contested: { repo: string; count: number; projects: string[] }[];
@@ -1631,7 +1434,7 @@ export class ArribadaService extends APIService {
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/github-inbox-gap/`)
       .then((r) => r?.data)
-      .catch(() => ({ unclaimed: [], contested: [], total: 0, tracked: null }));
+      .catch(rethrow);
   }
 
   // --- Public project timeline -----------------------------------------------
@@ -1639,9 +1442,7 @@ export class ArribadaService extends APIService {
   async getPublicTimelineState(workspaceSlug: string, projectId: string): Promise<TPublicTimelineState> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   /**
@@ -1651,36 +1452,40 @@ export class ArribadaService extends APIService {
   async publishTimeline(workspaceSlug: string, projectId: string): Promise<TPublicTimelineLink> {
     return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`, {})
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
   async revokeTimeline(workspaceSlug: string, projectId: string): Promise<unknown> {
     return this.delete(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/public-timeline/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response?.data;
-      });
+      .catch(rethrow);
   }
 
+  /**
+   * Every schedule in this workspace that is readable without a login.
+   *
+   * This answered a failure with an empty list, and the modal above it renders an
+   * empty list as "Nothing is published. No project schedule in this workspace
+   * can be read without an account." — a categorical claim about what is exposed
+   * outside the login, made from a swallowed error. A list nobody could fetch is
+   * not a list of nothing.
+   */
   async getWorkspacePublicTimelines(workspaceSlug: string): Promise<TWorkspacePublicTimeline[]> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/public-timelines/`)
       .then((r) => r?.data?.links ?? [])
-      .catch(() => []);
+      .catch(rethrow);
   }
 
   /**
    * Read with no account. The anchor is the only credential, so nothing else is
-   * passed. The whole response is rethrown rather than `.data`: the page has to
-   * tell 404 (never existed) from 410 (revoked), and only the status says which.
+   * passed. The page has to tell 404 (never existed) from 410 (revoked) from a
+   * 500 or a dropped connection, and only the status says which — `rethrow`
+   * carries it, along with whether anything answered at all.
    */
   async getPublicTimeline(anchor: string): Promise<TPublicTimeline> {
     return this.get(`/api/arribada/public/timeline/${anchor}/`)
       .then((r) => r?.data)
-      .catch((e) => {
-        throw e?.response;
-      });
+      .catch(rethrow);
   }
 }
 

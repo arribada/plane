@@ -19,7 +19,8 @@ import { observer } from "mobx-react";
 import { ChevronDown, Lock, LockOpen } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
-import type { TPlanLock } from "./use-plan-lock";
+import { apiErrorMessage, apiErrorStatus } from "@/plane-web/services/api-error";
+import type { TPlanLock, TPlanLockWrite } from "./use-plan-lock";
 
 const REFUSED = "Only the project lead can change this.";
 
@@ -27,12 +28,28 @@ export const GanttLockButton = observer(function GanttLockButton({ lock }: { loc
   const [open, setOpen] = useState(false);
   if (!lock.loaded) return null;
 
-  const guard = async (run: () => Promise<boolean>, verb: string) => {
-    if (!(await run())) {
-      // The server refuses anyone but the lead, and that is the likely reason —
-      // saying so beats a generic failure the reader cannot act on.
-      setToast({ type: TOAST_TYPE.ERROR, title: `Couldn't ${verb}`, message: REFUSED });
-    }
+  /**
+   * Say what actually happened.
+   *
+   * This announced "Only the project lead can change this." for EVERY failure,
+   * because a rejected write and a dropped connection arrived here as the same
+   * bare `false`. A lead on bad wifi was told they were not the lead — about a
+   * lock whose entire premise is that it applies to the lead too, so the message
+   * was not merely wrong, it contradicted the feature. Only the statuses that
+   * mean "you may not" get the permission wording now.
+   */
+  const guard = async (run: () => Promise<TPlanLockWrite>, verb: string) => {
+    const result = await run();
+    if (result.ok) return;
+    const status = apiErrorStatus(result.error);
+    setToast({
+      type: TOAST_TYPE.ERROR,
+      title: `Couldn't ${verb}`,
+      message:
+        status === 403 || status === 401
+          ? REFUSED
+          : apiErrorMessage(result.error, "The setting was left as it was. Try again."),
+    });
   };
 
   return (

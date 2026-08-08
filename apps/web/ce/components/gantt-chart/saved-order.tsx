@@ -25,6 +25,7 @@ import type { EIssuesStoreType } from "@plane/types";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useIssuesActions } from "@/hooks/use-issues-actions";
 import { useLightDismiss } from "@/plane-web/components/common/use-light-dismiss";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -113,7 +114,7 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't restore it",
-        message: (error as { error?: string })?.error ?? "The order was left as it was.",
+        message: apiErrorMessage(error, "The order was left as it was."),
       });
     } finally {
       setBusy(false);
@@ -122,8 +123,19 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
 
   const forget = async (order: TOrder) => {
     if (!window.confirm(`Forget "${order.name}"? The work items keep their current order.`)) return;
-    await service.deleteIssueOrder(slug, pid, order.id);
-    refetch();
+    try {
+      await service.deleteIssueOrder(slug, pid, order.id);
+      refetch();
+    } catch (error) {
+      // The refetch redraws the list from the server, so a rejected delete left
+      // the row exactly where it was and nothing said why — which reads as the
+      // menu ignoring the click.
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't forget it",
+        message: apiErrorMessage(error, `"${order.name}" is still saved.`),
+      });
+    }
   };
 
   return (

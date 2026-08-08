@@ -22,6 +22,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TIssueEffort } from "@/plane-web/types/arribada";
 
@@ -40,6 +41,11 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
   const [state, setState] = useState<TIssueEffort | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // Why there is no field. `state === null` used to mean both "still loading" and
+  // "the load failed", and both rendered nothing at all — so an item whose effort
+  // could not be read was indistinguishable from one that has no effort field,
+  // and the number somebody typed last week looked like it had never been saved.
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceSlug || !projectId || !issueId) return;
@@ -49,9 +55,13 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
         const data = await service.getIssueEffort(workspaceSlug, projectId, issueId);
         if (!live) return;
         setState(data);
+        setFailure(null);
         setDraft(data.days == null ? "" : String(data.days));
-      } catch {
-        if (live) setState(null);
+      } catch (error) {
+        if (live) {
+          setState(null);
+          setFailure(apiErrorMessage(error, "The estimate could not be read."));
+        }
       }
     };
     void load();
@@ -81,9 +91,22 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
       const parsed = trimmed === "" ? null : Number(trimmed);
       if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) return;
       if (parsed === saved) return;
-      // Fire and forget: the panel is already going away, so there is nobody left
-      // to show a toast to. Losing the number silently is the worse of the two.
-      void service.setIssueEffort(workspaceSlug, projectId, issueId, parsed).catch(() => undefined);
+      // Fired after the panel has gone, and REPORTED when it fails. The toast
+      // store is app-level, not inside this modal, so it outlives the unmount —
+      // which is the whole reason the old `.catch(() => undefined)` was wrong.
+      // This flush exists because closing the panel used to throw the number
+      // away; a flush that can throw the number away silently reproduces the
+      // exact complaint it was written to answer, and the docstring above
+      // describes what people said about it: "the effort reset itself".
+      void service.setIssueEffort(workspaceSlug, projectId, issueId, parsed).catch((error: unknown) => {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "The effort you typed was not saved",
+          message: `${apiErrorMessage(error, "The panel closed before it could be written.")} It was ${
+            parsed === null ? "cleared" : `${parsed} person-days`
+          } — reopen the item and type it again.`,
+        });
+      });
     },
     [workspaceSlug, projectId, issueId]
   );
@@ -107,7 +130,7 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't save the effort",
-        message: (error as { error?: string })?.error ?? "It was not changed.",
+        message: apiErrorMessage(error, "It was not changed."),
       });
       setDraft(state?.days == null ? "" : String(state.days));
     } finally {
@@ -134,6 +157,15 @@ export const IssueEffortField = observer(function IssueEffortField(props: Props)
       setBusy(false);
     }
   };
+
+  if (failure)
+    return (
+      <SidebarPropertyListItem icon={Gauge} label="Effort">
+        <p role="alert" className="py-1 text-11 text-danger-primary">
+          Couldn&apos;t load it. {failure} This item may well have an estimate — reopen the panel.
+        </p>
+      </SidebarPropertyListItem>
+    );
 
   if (!state) return null;
 

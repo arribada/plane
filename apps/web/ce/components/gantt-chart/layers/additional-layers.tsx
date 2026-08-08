@@ -66,6 +66,11 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           return undefined;
         })
         .catch(() => {
+          // No ghosts to draw. This is an SVG overlay with nowhere to put a
+          // sentence, so the reporting is delegated to BaselinePicker beside the
+          // chart: it makes the same request, and when it fails it renders a
+          // "Baselines unavailable" chip that says the ghost bars are missing for
+          // that reason rather than because nothing was ever frozen.
           if (!cancelled) setBaseline({});
         });
     }

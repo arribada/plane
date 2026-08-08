@@ -59,8 +59,8 @@ jobs:
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
-          if [ "$N" -lt 24 ]; then
-            echo "::error::only $N web tests collected, expected at least 24 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          if [ "$N" -lt 75 ]; then
+            echo "::error::only $N web tests collected, expected at least 75 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
           pnpm turbo run test --filter=web
@@ -71,6 +71,32 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    # THE TESTS BELOW NEVER RAN. `DATABASE_URL` pointed at 127.0.0.1 with nothing
+    # listening on it, so every test carrying the `db` fixture — most of the suite
+    # — errored on connect, and the only thing the job actually verified was that
+    # pytest could still COLLECT them. The floor was guarding a count, not a
+    # result, which is why a security fix could ship with five holes open and a
+    # green tick beside it.
+    #
+    # `ports:` publishes the service on the runner's own host, which is what makes
+    # it reachable from the `docker run` steps below: those containers are not on
+    # the job's service network, so they join the host's namespace instead.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane
+          POSTGRES_DB: plane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -122,15 +148,22 @@ jobs:
         # a deployable artifact. The image carries production deps only, so the
         # throwaway container installs the repo's pinned test tools itself.
         #
-        # The floor is not decoration. pytest.ini collects `test_*.py`, and these
-        # files were once named `tests_*.py`: `pytest plane/arribada/` collected
-        # ZERO and a naive job would have gone green while testing nothing. Exit
-        # code 5 catches losing them ALL; the floor catches losing SOME. Raise it
-        # when you add tests.
+        # `--network host` and a real DATABASE_URL: this reaches the `postgres`
+        # service declared on the job. Before, the suite pointed at a port with
+        # nothing behind it and roughly fifty tests errored on every single run —
+        # the permission rules in this app all live in a decorator that queries
+        # WorkspaceMember and ProjectMember, so a suite without a database was
+        # asserting nothing about the thing most worth asserting.
+        #
+        # The floor is not decoration either. pytest.ini collects `test_*.py`, and
+        # these files were once named `tests_*.py`: `pytest plane/arribada/`
+        # collected ZERO and a naive job would have gone green while testing
+        # nothing. Exit code 5 catches losing them ALL; the floor catches losing
+        # SOME. Raise it when you add tests.
         run: |
-          docker run --rm \
+          docker run --rm --network host \
             -e DJANGO_SETTINGS_MODULE=plane.settings.test -e SECRET_KEY=ci \
-            -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/d \
+            -e DATABASE_URL=postgresql://plane:plane@127.0.0.1:5432/plane \
             -e REDIS_URL=redis://127.0.0.1:6379/ \
             -e AMQP_URL=amqp://guest:guest@127.0.0.1:5672/ \
             plane-backend:candidate \
@@ -143,8 +176,8 @@ jobs:
               # turning the one failure this guard exists for into a bare exit 1.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 210 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 210 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 440 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 440 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

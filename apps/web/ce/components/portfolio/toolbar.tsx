@@ -58,6 +58,24 @@ const PRIORITIES: { value: string; label: string }[] = [
 
 type TMenu = "projects" | "filter" | "display" | "actions" | "undated";
 
+/**
+ * The projects a batch left behind, named.
+ *
+ * By NAME rather than by id: a toast that says four uuids were not reflowed
+ * tells a planner nothing they can act on. The index is the link — `allSettled`
+ * answers in the order it was given, so outcome N belongs to id N.
+ */
+const failedProjects = (
+  outcomes: PromiseSettledResult<unknown>[],
+  ids: string[],
+  lookup: { getProject: (id: string) => { name: string } | undefined }
+): string[] =>
+  outcomes.flatMap((outcome, index) => {
+    if (outcome.status !== "rejected") return [];
+    const id = ids[index] ?? "";
+    return [lookup.getProject(id)?.name ?? id];
+  });
+
 const triggerBtn = "flex items-center gap-1.5 rounded border border-subtle px-2 py-1 hover:bg-layer-1";
 const menuRow =
   "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-13 hover:bg-layer-2 disabled:opacity-50";
@@ -117,10 +135,28 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
 
     setCapturing(true);
     try {
-      await Promise.all(
+      // allSettled, not all: `all` abandons the remaining projects the moment one
+      // rejects, so a snapshot named for the whole scope silently covered some
+      // unknown prefix of it. And with no catch at all, a baseline that captured
+      // three projects out of nine reported the same as one that captured nine.
+      const outcomes = await Promise.allSettled(
         portfolio.scopedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id, name.trim()))
       );
-      setCapturedAt(new Date().toLocaleTimeString());
+      const failed = failedProjects(outcomes, portfolio.scopedProjectIds, portfolio);
+      if (failed.length === 0) {
+        setCapturedAt(new Date().toLocaleTimeString());
+        setToast({
+          type: TOAST_TYPE.SUCCESS,
+          title: `"${name.trim()}" captured`,
+          message: `${count} project${count === 1 ? "" : "s"} snapshotted.`,
+        });
+      } else {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: `Only ${count - failed.length} of ${count} were snapshotted`,
+          message: `"${name.trim()}" does not cover ${failed.join(", ")}. Run it again — snapshots are additive, so nothing is overwritten.`,
+        });
+      }
     } finally {
       setCapturing(false);
     }
@@ -129,11 +165,32 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const reflow = async () => {
     if (!workspaceSlug || reflowing) return;
     setReflowing(true);
+    const scope = portfolio.scopedProjectIds;
     try {
-      const results = await Promise.all(
-        portfolio.scopedProjectIds.map((id) => service.autoSchedule(workspaceSlug.toString(), id))
+      // This auto-schedules EVERY project in scope. A partial failure moves some
+      // projects' dates and leaves others alone, which is the one outcome a
+      // planner must never have to guess at — so the projects that were not
+      // reflowed are named.
+      const outcomes = await Promise.allSettled(scope.map((id) => service.autoSchedule(workspaceSlug.toString(), id)));
+      const moved = outcomes.reduce(
+        (sum, outcome) => sum + (outcome.status === "fulfilled" ? (outcome.value?.rescheduled ?? 0) : 0),
+        0
       );
-      setReflowResult(results.reduce((sum, r) => sum + (r?.rescheduled ?? 0), 0));
+      setReflowResult(moved);
+      const failed = failedProjects(outcomes, scope, portfolio);
+      setToast(
+        failed.length === 0
+          ? {
+              type: TOAST_TYPE.SUCCESS,
+              title: moved > 0 ? `Moved ${moved} work item${moved === 1 ? "" : "s"}` : "Nothing needed moving",
+              message: `Across ${scope.length} project${scope.length === 1 ? "" : "s"}.`,
+            }
+          : {
+              type: TOAST_TYPE.ERROR,
+              title: `${failed.length} of ${scope.length} project${scope.length === 1 ? "" : "s"} were not reflowed`,
+              message: `${failed.join(", ")} kept their dates. ${moved} work item${moved === 1 ? " was" : "s were"} moved elsewhere.`,
+            }
+      );
       await portfolio.fetchPortfolio(workspaceSlug.toString());
     } finally {
       setReflowing(false);
@@ -365,6 +422,13 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   </span>
                   Group by folder
                 </button>
+                {/* Grouping by folders that could not be read draws every project
+                    ungrouped — indistinguishable from a workspace that has none. */}
+                {portfolio.foldersFailed && (
+                  <p className="px-1.5 pt-1 text-11 text-danger-primary">
+                    The folders could not be loaded, so grouping has nothing to group by. Reload to try again.
+                  </p>
+                )}
               </div>
             </div>
           </>
@@ -443,7 +507,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 disabled={reflowing}
                 onClick={() => {
                   close();
-                  reflow();
+                  void reflow();
                 }}
                 title="Push any task that starts before its dependencies allow (respects links, weekends)"
                 className={menuRow}
@@ -456,7 +520,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 disabled={capturing}
                 onClick={() => {
                   close();
-                  captureBaselines();
+                  void captureBaselines();
                 }}
                 title="Freeze the current dates as a new named snapshot. Earlier baselines are kept."
                 className={menuRow}

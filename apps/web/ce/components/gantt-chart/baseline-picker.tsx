@@ -21,6 +21,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -37,6 +38,7 @@ export const BaselinePicker = observer(function BaselinePicker() {
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
   const [snapshots, setSnapshots] = useState<TSnapshot[] | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const slug = workspaceSlug?.toString();
@@ -47,8 +49,15 @@ export const BaselinePicker = observer(function BaselinePicker() {
     try {
       const payload = await service.getBaseline(slug, pid);
       setSnapshots(payload?.baselines ?? []);
-    } catch {
+      setFailure(null);
+    } catch (error) {
+      // An empty list hides the picker entirely and leaves only the capture
+      // button — which reads as "this project has never been baselined", on the
+      // one control a lead uses to answer "what did we commit to". Same request
+      // the ghost-bar overlay makes, so this chip is what reports both: when it
+      // fails there are no ghost bars behind the live ones either.
       setSnapshots([]);
+      setFailure(apiErrorMessage(error, "The snapshots could not be read."));
     }
   };
 
@@ -58,6 +67,19 @@ export const BaselinePicker = observer(function BaselinePicker() {
   }, [slug, pid]);
 
   if (!slug || !pid || snapshots === null) return null;
+
+  if (failure)
+    return (
+      <button
+        type="button"
+        onClick={() => void load()}
+        title={`${failure} The ghost bars behind the plan are missing for the same reason. Click to try again.`}
+        className="flex items-center gap-1 rounded border border-danger-strong/40 px-1.5 py-1 text-11 text-danger-primary"
+      >
+        <Flag className="size-3" />
+        Baselines unavailable
+      </button>
+    );
 
   const capture = async () => {
     const name = window.prompt(
@@ -78,8 +100,12 @@ export const BaselinePicker = observer(function BaselinePicker() {
         title: `Froze ${created.captured} work ${created.captured === 1 ? "item" : "items"}`,
         message: "Nothing was overwritten — earlier baselines are still there to compare against.",
       });
-    } catch {
-      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't capture that", message: "No snapshot was taken." });
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't capture that",
+        message: apiErrorMessage(error, "No snapshot was taken."),
+      });
     } finally {
       setBusy(false);
     }
@@ -91,8 +117,12 @@ export const BaselinePicker = observer(function BaselinePicker() {
       await service.deleteBaseline(slug, pid, snapshot.id);
       if (store.selectedBaselineId === snapshot.id) store.setSelectedBaselineId("");
       await load();
-    } catch {
-      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't delete that", message: "It is still there." });
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't delete that",
+        message: apiErrorMessage(error, "It is still there."),
+      });
     }
   };
 

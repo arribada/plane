@@ -28,21 +28,25 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOT_DROP, resolveDrop, SidebarProjectFolders } from "./project-folders";
 
-const { getFolders, assignProjectToFolder, moveFolder, setToast } = vi.hoisted(() => ({
-  getFolders: vi.fn(),
-  assignProjectToFolder: vi.fn(),
-  moveFolder: vi.fn(),
-  setToast: vi.fn(),
-}));
+const { getFolders, assignProjectToFolder, moveFolder, createFolder, renameFolder, deleteFolder, setToast } =
+  vi.hoisted(() => ({
+    getFolders: vi.fn(),
+    assignProjectToFolder: vi.fn(),
+    moveFolder: vi.fn(),
+    createFolder: vi.fn(),
+    renameFolder: vi.fn(),
+    deleteFolder: vi.fn(),
+    setToast: vi.fn(),
+  }));
 
 vi.mock("@/plane-web/services/arribada.service", () => ({
   ArribadaService: class {
     getFolders = getFolders;
     assignProjectToFolder = assignProjectToFolder;
     moveFolder = moveFolder;
-    createFolder = vi.fn();
-    renameFolder = vi.fn();
-    deleteFolder = vi.fn();
+    createFolder = createFolder;
+    renameFolder = renameFolder;
+    deleteFolder = deleteFolder;
   },
 }));
 vi.mock("@plane/propel/toast", () => ({ TOAST_TYPE: { ERROR: "error", SUCCESS: "success" }, setToast }));
@@ -73,10 +77,16 @@ const TREE = () => [
 
 beforeEach(() => {
   // `restoreMocks` in vitest.config.ts strips implementations between tests, so
-  // these are stated per test rather than at the module top.
+  // these are stated per test rather than at the module top. It does NOT clear
+  // the call history of a `vi.hoisted` mock — which is how a test asserting that
+  // NOTHING was reported reads the four toasts raised by the tests before it.
+  vi.clearAllMocks();
   getFolders.mockResolvedValue(TREE());
   assignProjectToFolder.mockResolvedValue({});
   moveFolder.mockResolvedValue({});
+  createFolder.mockResolvedValue({});
+  renameFolder.mockResolvedValue({});
+  deleteFolder.mockResolvedValue({});
 });
 
 /** A stand-in for the real thing, which jsdom does not implement. Only `setData`
@@ -157,6 +167,89 @@ describe("SidebarProjectFolders drops", () => {
     dragOnto(rowFor("Turtles"), rowFor("Field ops"));
 
     await waitFor(() => expect(moveFolder).toHaveBeenCalledWith("arribada", "turtles", "ops"));
+  });
+});
+
+/**
+ * The other three writes in this file.
+ *
+ * The commit that added a `catch` to `assign` — for the drop bug the tests above
+ * pin — walked straight past `createFolder`, `rename` and `del`, which were bare
+ * `await`s with no error path at all. Same file, same service, same silence: a
+ * rejected create left the name somebody had just typed nowhere at all, and the
+ * sidebar redrew exactly as it was.
+ *
+ * Every test here fails against pre-fix HEAD, where nothing is reported.
+ */
+describe("SidebarProjectFolders writes", () => {
+  const answerPrompt = (value: string | null) => vi.spyOn(window, "prompt").mockReturnValue(value);
+
+  it("says so when a folder could not be created", async () => {
+    const user = userEvent.setup();
+    answerPrompt("Marine");
+    createFolder.mockRejectedValue({ status: 400, offline: false, error: "A folder by that name exists." });
+    render(<SidebarProjectFolders />);
+
+    await user.click(await screen.findByRole("button", { name: "New folder" }));
+
+    await waitFor(() =>
+      expect(setToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "error", message: "A folder by that name exists." })
+      )
+    );
+  });
+
+  it("says so when a subfolder could not be created", async () => {
+    const user = userEvent.setup();
+    answerPrompt("Hawksbill");
+    createFolder.mockRejectedValue({ offline: true, status: undefined });
+    render(<SidebarProjectFolders />);
+
+    await user.click((await screen.findAllByRole("button", { name: "New subfolder" }))[0] as HTMLElement);
+
+    await waitFor(() => expect(setToast).toHaveBeenCalledWith(expect.objectContaining({ type: "error" })));
+    expect(JSON.stringify(setToast.mock.calls.at(-1))).toMatch(/offline/i);
+  });
+
+  it("says so when a rename was refused", async () => {
+    const user = userEvent.setup();
+    answerPrompt("Trackers");
+    renameFolder.mockRejectedValue({ status: 403, offline: false });
+    render(<SidebarProjectFolders />);
+
+    await user.click((await screen.findAllByRole("button", { name: "Rename" }))[0] as HTMLElement);
+
+    // Naming what the folder is still called, because the row on screen already
+    // shows the old name and looks like the rename simply did not register.
+    await waitFor(() =>
+      expect(setToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "error", message: 'It is still called "Tracker".' })
+      )
+    );
+  });
+
+  it("says so when a delete was refused", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    deleteFolder.mockRejectedValue({ status: 500, offline: false });
+    render(<SidebarProjectFolders />);
+
+    await user.click((await screen.findAllByRole("button", { name: "Delete folder" }))[0] as HTMLElement);
+
+    await waitFor(() =>
+      expect(setToast).toHaveBeenCalledWith(expect.objectContaining({ type: "error", message: "It is still there." }))
+    );
+  });
+
+  it("stays quiet when the write goes through", async () => {
+    const user = userEvent.setup();
+    answerPrompt("Marine");
+    render(<SidebarProjectFolders />);
+
+    await user.click(await screen.findByRole("button", { name: "New folder" }));
+
+    await waitFor(() => expect(createFolder).toHaveBeenCalledWith("arribada", "Marine", null));
+    expect(setToast).not.toHaveBeenCalled();
   });
 });
 

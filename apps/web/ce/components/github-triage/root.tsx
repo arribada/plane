@@ -39,6 +39,7 @@ import type { ISearchIssueResponse } from "@plane/types";
 import { AlertModalCore } from "@plane/ui";
 import { cn } from "@plane/utils";
 import { ExistingIssuesListModal } from "@/components/core/modals/existing-issues-list-modal";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -93,6 +94,12 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
   // the only thing that knows them.
   const [settling, setSettling] = useState<TQueueItem | null>(null);
   const [settlingBusy, setSettlingBusy] = useState(false);
+  // Why the queue could not be read. Separate from `items === null` (loading) and
+  // from `items.length === 0` (genuinely nothing waiting): the empty state here
+  // makes a claim about every issue the sync has ever seen, and a failed request
+  // has seen none of them.
+  const [failure, setFailure] = useState<string | null>(null);
+  const [archiveFailed, setArchiveFailed] = useState(false);
 
   const slug = workspaceSlug?.toString();
 
@@ -102,11 +109,15 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
       .getGithubTriageArchive(slug)
       .then((data) => {
         setArchived(data.items);
+        setArchiveFailed(false);
         return undefined;
       })
       .catch(() => {
-        // The archive is a second opinion on a page that works without it.
+        // The archive is a second opinion on a page that works without it — but a
+        // dismissed row that cannot be restored has to say so, or the archive
+        // reads as "you have never dismissed anything".
         setArchived([]);
+        setArchiveFailed(true);
         return undefined;
       });
   }, [slug]);
@@ -114,6 +125,7 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
   const load = useCallback(() => {
     if (!slug) return;
     setItems(null);
+    setFailure(null);
     service
       .getGithubTriageQueue(slug)
       .then((data) => {
@@ -133,8 +145,9 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
         }));
         return undefined;
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         setItems([]);
+        setFailure(apiErrorMessage(error, "The queue could not be read."));
         return undefined;
       });
   }, [slug]);
@@ -301,7 +314,20 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
         </p>
       </header>
 
-      {items === null ? (
+      {failure !== null ? (
+        <div
+          role="alert"
+          className="flex flex-col items-start gap-2 rounded-lg border border-danger-strong/40 bg-layer-1 px-4 py-6"
+        >
+          <p className="text-13 text-secondary">
+            <span className="font-medium text-primary">Couldn&apos;t read the triage queue.</span> {failure} This is not
+            the same as an empty queue — nothing has been checked.
+          </p>
+          <button type="button" onClick={load} className="text-12 text-accent-primary hover:underline">
+            Try again
+          </button>
+        </div>
+      ) : items === null ? (
         <p className="text-13 text-tertiary">Loading…</p>
       ) : items.length === 0 ? (
         <p className="rounded-lg border border-subtle bg-layer-1 px-4 py-6 text-13 text-tertiary">
@@ -500,6 +526,11 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
           outside the queue's own branch so it stays reachable on the day the
           queue is finally empty — which is the day somebody is most likely to
           wonder where a row went. */}
+      {archiveFailed && (
+        <p role="alert" className="mt-2 text-12 text-danger-primary">
+          The archive could not be read, so anything dismissed is not listed below. It has not been lost.
+        </p>
+      )}
       {archived.length > 0 && (
         <section className="mt-2">
           <button

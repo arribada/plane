@@ -22,6 +22,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { OverviewBudgetBlock } from "@/plane-web/components/projects/overview/budget-block";
 import { ProjectWarningsPanel } from "@/plane-web/components/projects/overview/warnings-panel";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectOverview } from "@/plane-web/types/arribada";
 
@@ -42,14 +43,26 @@ const MONEY_CODES = new Set(["no_discipline", "unheld_disciplines", "undated_ite
 export const ProjectFinanceRoot = observer(function ProjectFinanceRoot() {
   const { workspaceSlug, projectId } = useParams();
   const [warnings, setWarnings] = useState<TProjectOverview["warnings"]>([]);
+  // No warnings on screen means one of two opposite things — the figures below
+  // have nothing wrong with them, or nobody could find out. An empty panel used
+  // to be the answer to both, so a 500 rendered as "your finances are clean".
+  const [failure, setFailure] = useState<string | null>(null);
 
   const loadWarnings = useCallback(() => {
     if (!workspaceSlug || !projectId) return;
     service
       .getProjectOverview(workspaceSlug.toString(), projectId.toString())
-      .then((data) => setWarnings((data.warnings ?? []).filter((w) => MONEY_CODES.has(w.code))))
-      // A page about money must not go blank because a warnings call failed.
-      .catch(() => setWarnings([]));
+      .then((data) => {
+        setWarnings((data.warnings ?? []).filter((w) => MONEY_CODES.has(w.code)));
+        setFailure(null);
+        return undefined;
+      })
+      // A page about money must not go blank because a warnings call failed —
+      // and must not go quiet either.
+      .catch((error: unknown) => {
+        setWarnings([]);
+        setFailure(apiErrorMessage(error, "The check did not run."));
+      });
   }, [workspaceSlug, projectId]);
 
   useEffect(() => loadWarnings(), [loadWarnings]);
@@ -73,6 +86,20 @@ export const ProjectFinanceRoot = observer(function ProjectFinanceRoot() {
 
       {/* Above the figures, not below them: these are the reasons a figure is
           wrong, and reading the number first is how a wrong one gets quoted. */}
+      {failure !== null && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-danger-strong/40 px-4 py-3 text-12"
+        >
+          <span className="text-secondary">
+            <span className="font-medium text-primary">The figures below have not been checked.</span> {failure} Treat
+            the absence of warnings as unknown, not as clean.
+          </span>
+          <button type="button" onClick={loadWarnings} className="text-accent-primary hover:underline">
+            Check again
+          </button>
+        </div>
+      )}
       {warnings.length > 0 && <ProjectWarningsPanel warnings={warnings} onFixed={loadWarnings} />}
 
       {/* The block carries the allocation, the spend curve, the expense ledger,

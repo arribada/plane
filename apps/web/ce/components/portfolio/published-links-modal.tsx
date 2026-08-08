@@ -14,13 +14,21 @@
  * Only the project name, who published it and when — never the contents. And no
  * revoke button here on purpose: turning a link off belongs on the project,
  * where the person doing it can see what they are switching off.
+ *
+ * WHICH IS WHY A FAILED LOAD MUST NOT LOOK EMPTY. The service answered a failure
+ * with `[]`, so any 500, any 403, any dropped connection rendered "Nothing is
+ * published. No project schedule in this workspace can be read without an
+ * account." — a categorical statement about what is exposed outside the login,
+ * produced by a request nobody ever saw fail. An unanswered question is not an
+ * answer of "no".
  */
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { ExternalLink, Globe, X } from "lucide-react";
+import { AlertTriangle, ExternalLink, Globe, X } from "lucide-react";
 import { renderFormattedDate } from "@plane/utils";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TWorkspacePublicTimeline } from "@/plane-web/types/arribada";
 
@@ -31,6 +39,9 @@ type Props = { isOpen: boolean; onClose: () => void };
 export const PublishedLinksModal = observer(function PublishedLinksModal({ isOpen, onClose }: Props) {
   const { workspaceSlug } = useParams();
   const [links, setLinks] = useState<TWorkspacePublicTimeline[] | null>(null);
+  // Separate from `links === null`, which is "still loading". Three states, not
+  // two: nobody may be told the list is empty until it has actually been read.
+  const [failure, setFailure] = useState<string | null>(null);
 
   const slug = workspaceSlug?.toString();
 
@@ -40,9 +51,17 @@ export const PublishedLinksModal = observer(function PublishedLinksModal({ isOpe
     // Re-fetched on every open rather than cached: this list is only worth
     // anything if it is current at the moment somebody asks the question.
     setLinks(null);
+    setFailure(null);
     const load = async () => {
-      const rows = await service.getWorkspacePublicTimelines(slug);
-      if (live) setLinks(rows);
+      try {
+        const rows = await service.getWorkspacePublicTimelines(slug);
+        if (live) setLinks(rows);
+      } catch (error) {
+        if (live)
+          setFailure(
+            apiErrorMessage(error, "The workspace did not answer. Nothing here says whether anything is published.")
+          );
+      }
     };
     void load();
     return () => {
@@ -76,7 +95,15 @@ export const PublishedLinksModal = observer(function PublishedLinksModal({ isOpe
         </header>
 
         <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
-          {links === null ? (
+          {failure !== null ? (
+            <div role="alert" className="flex items-start gap-2 rounded border border-danger-strong/40 px-3 py-2">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger-primary" />
+              <p className="text-13 text-secondary">
+                <span className="font-medium text-primary">Couldn&apos;t read the published list.</span> {failure} Do
+                not read this as &ldquo;nothing is published&rdquo; — close this and open it again.
+              </p>
+            </div>
+          ) : links === null ? (
             <p className="text-13 text-tertiary">Loading…</p>
           ) : links.length === 0 ? (
             <p className="text-13 text-tertiary">

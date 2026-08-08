@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
+import { apiErrorMessage, toApiFailure } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPublicTimeline } from "@/plane-web/types/arribada";
 
@@ -42,7 +43,18 @@ const MILESTONE_LABEL: Record<string, string> = {
   review: "Review",
 };
 
-type TStatus = "loading" | "ok" | "revoked" | "missing";
+/**
+ * What the page knows about its own link.
+ *
+ * "broken" is the one that was missing, and its absence is what made this page
+ * lie to the exact reader it exists for. Only a 410 mapped to "revoked" and
+ * EVERYTHING else fell through to "missing" — so a 500, an nginx 502 or a phone
+ * losing signal told a funder holding a perfectly good link that there was
+ * nothing there and to check the address. They cannot check the address; it is
+ * correct. The three answers are genuinely different instructions: ask for a new
+ * link, check what you typed, or try again shortly.
+ */
+type TStatus = "loading" | "ok" | "revoked" | "missing" | "broken";
 
 function parse(value: string | null): number | null {
   if (!value) return null;
@@ -54,6 +66,7 @@ export function PublicTimelineRoot() {
   const { anchor } = useParams();
   const [status, setStatus] = useState<TStatus>("loading");
   const [data, setData] = useState<TPublicTimeline | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
 
   useEffect(() => {
     const key = anchor?.toString();
@@ -68,12 +81,21 @@ export function PublicTimelineRoot() {
         if (!live) return;
         setData(payload);
         setStatus("ok");
-      } catch (response) {
+      } catch (error) {
         if (!live) return;
-        // 410 means the lead turned it off; 404 means it never existed. Saying
-        // which is the difference between "ask them for a new link" and "check
-        // the address", and the reader can act on neither if both read alike.
-        setStatus((response as { status?: number } | undefined)?.status === 410 ? "revoked" : "missing");
+        // 410 means the lead turned it off; 404 means it never existed. Anything
+        // else — a 500, a proxy answering with HTML, a connection that dropped —
+        // means the link is very probably fine and the server is not. Saying
+        // which is the difference between "ask them for a new link", "check the
+        // address" and "try again in a minute", and the reader can act on none
+        // of them if all three read alike.
+        const failed = toApiFailure(error);
+        if (failed.status === 410) setStatus("revoked");
+        else if (failed.status === 404) setStatus("missing");
+        else {
+          setDetail(apiErrorMessage(error, "The server did not answer."));
+          setStatus("broken");
+        }
       }
     };
     void load();
@@ -171,6 +193,17 @@ export function PublicTimelineRoot() {
         <h1 className="text-16 font-semibold text-primary">This link has been turned off</h1>
         <p className="mt-2 text-13 text-tertiary">
           The project team revoked it. Ask them for a new one if you still need access.
+        </p>
+      </Shell>
+    );
+  }
+
+  if (status === "broken") {
+    return (
+      <Shell>
+        <h1 className="text-16 font-semibold text-primary">This schedule could not be loaded</h1>
+        <p className="mt-2 text-13 text-tertiary">
+          {detail} Your link is probably fine — this is our end. Try again in a few minutes.
         </p>
       </Shell>
     );

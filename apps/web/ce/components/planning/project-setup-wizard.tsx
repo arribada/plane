@@ -22,6 +22,7 @@ import { useParams } from "next/navigation";
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Sparkles, Users, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import { OverviewTeamBlock } from "@/plane-web/components/projects/overview/team-block";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type {
   TAiPlan,
@@ -74,9 +75,12 @@ const ROLE_SUGGESTIONS = [
   "project manager",
 ];
 
+/** The wizard's own field errors first — a rejected date range answers with the
+ *  field, not with `error` — then the shared reading, which knows a dropped
+ *  connection from a refusal. */
 const errorMessage = (e: unknown, fallback: string) => {
   const body = e as { error?: string; start_date?: string[]; target_date?: string[] };
-  return body?.error ?? body?.target_date?.[0] ?? body?.start_date?.[0] ?? fallback;
+  return body?.error ?? body?.target_date?.[0] ?? body?.start_date?.[0] ?? apiErrorMessage(e, fallback);
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -209,14 +213,26 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     setApplied(null);
     setReflowed(null);
     setAiPlan(null);
+    // The catalogue IS the scope step: without it every track grid renders empty
+    // and the wizard looks like a product with no blueprints rather than one that
+    // could not fetch them. Same for the roster — an empty team silently disables
+    // every assignment the wizard was opened to make.
     service
       .getTaskBlueprints(slug)
       .then((c) => setCatalogue(c ?? null))
-      .catch(() => setCatalogue(null));
+      .catch((e: unknown) => {
+        setCatalogue(null);
+        setError(
+          errorMessage(e, "Couldn't load the task blueprints, so there is nothing to choose from on the next step.")
+        );
+      });
     service
       .getProjectTeam(slug, projectId)
       .then((r) => setTeam(r?.team ?? []))
-      .catch(() => setTeam([]));
+      .catch((e: unknown) => {
+        setTeam([]);
+        setError(errorMessage(e, "Couldn't load this project's roster, so nothing can be assigned to anybody."));
+      });
     service
       .getSchedule(slug, projectId)
       .then((s) => {

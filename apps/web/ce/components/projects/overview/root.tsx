@@ -144,26 +144,57 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
     if (!data || !workspaceSlug || !projectId || reporting) return;
     setReporting(true);
     try {
-      const [budget, expenseRows, procurement, milestoneRows] = await Promise.all([
-        service.getBudget(workspaceSlug.toString(), projectId.toString()).catch(() => null),
-        service.getExpenses(workspaceSlug.toString(), projectId.toString()).catch(() => null),
-        service.getProcurement(workspaceSlug.toString(), projectId.toString()).catch(() => null),
-        service.getProjectMilestones(workspaceSlug.toString(), projectId.toString()).catch(() => []),
+      // allSettled, then REFUSED on any money section that failed. Three of these
+      // four calls were `.catch(() => null)`, so a 500 on the expense sheet
+      // produced a PDF with the spend blank and no mark anywhere to say a figure
+      // was missing rather than zero — a funder report that under-reports its own
+      // spend. The guard two blocks down hides this button from a guest for
+      // exactly that reason; an outage is the same hazard and was unguarded.
+      const [budget, expenseRows, procurement, milestoneRows] = await Promise.allSettled([
+        service.getBudget(workspaceSlug.toString(), projectId.toString()),
+        service.getExpenses(workspaceSlug.toString(), projectId.toString()),
+        service.getProcurement(workspaceSlug.toString(), projectId.toString()),
+        service.getProjectMilestones(workspaceSlug.toString(), projectId.toString()),
       ]);
+      const missing = (
+        [
+          ["the allocation", budget],
+          ["the expense sheet", expenseRows],
+          ["the purchase queue", procurement],
+          ["the deliverables", milestoneRows],
+        ] as const
+      )
+        .filter(([, outcome]) => outcome.status === "rejected")
+        .map(([label]) => label);
+      // Spelled out rather than driven off `missing.length`, because this is also
+      // what narrows all four to fulfilled for the reads below.
+      if (
+        budget.status === "rejected" ||
+        expenseRows.status === "rejected" ||
+        procurement.status === "rejected" ||
+        milestoneRows.status === "rejected"
+      ) {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "The report was not built",
+          message: `${missing.join(", ")} could not be read, and a funder report that silently omits them is worse than none. Nothing was downloaded.`,
+        });
+        return;
+      }
       // Ordered by the date they land on, because that is how a funder reads a
       // deliverable list. Undated ones sort last rather than being dropped: an
       // undated deliverable is a real thing to report, and hiding it is how it
       // stays undated. toSorted is ES2023 and this workspace targets below it.
-      const orderedMilestones = [...milestoneRows];
+      const orderedMilestones = [...milestoneRows.value];
       // oxlint-disable-next-line unicorn/no-array-sort -- fresh spread, nothing shared
       orderedMilestones.sort((a, b) => (a.target_date ?? "9999").localeCompare(b.target_date ?? "9999"));
 
       const { downloadFunderReport } = await import("./funder-report");
       await downloadFunderReport({
         overview: data,
-        budget,
-        expenses: expenseRows?.expenses ?? [],
-        requests: procurement?.requests ?? [],
+        budget: budget.value,
+        expenses: expenseRows.value?.expenses ?? [],
+        requests: procurement.value?.requests ?? [],
         milestones: orderedMilestones.map((m) => ({
           id: m.issue_id,
           name: m.label,

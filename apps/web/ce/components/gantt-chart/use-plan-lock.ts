@@ -19,15 +19,25 @@ import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
 
+/**
+ * What became of one of these writes.
+ *
+ * A bare `false` was the whole answer, and the button above it turned every
+ * `false` into "Only the project lead can change this." — the likely reason, and
+ * a flat lie on a dropped connection. The rejection itself has to travel so the
+ * caller can tell a refusal from an outage.
+ */
+export type TPlanLockWrite = { ok: true } | { ok: false; error: unknown };
+
 export type TPlanLock = {
   locked: boolean;
   allowEditOthers: boolean;
   allowAddItems: boolean;
   /** Null until the settings have loaded — callers must not read the flags yet. */
   loaded: boolean;
-  setLocked: (next: boolean) => Promise<boolean>;
-  setAllowEditOthers: (next: boolean) => Promise<boolean>;
-  setAllowAddItems: (next: boolean) => Promise<boolean>;
+  setLocked: (next: boolean) => Promise<TPlanLockWrite>;
+  setAllowEditOthers: (next: boolean) => Promise<TPlanLockWrite>;
+  setAllowAddItems: (next: boolean) => Promise<TPlanLockWrite>;
 };
 
 export function usePlanLock(workspaceSlug: string | undefined, projectId: string | undefined): TPlanLock {
@@ -62,18 +72,18 @@ export function usePlanLock(workspaceSlug: string | undefined, projectId: string
   }, [workspaceSlug, projectId]);
 
   const setLocked = useCallback(
-    async (next: boolean) => {
-      if (!workspaceSlug || !projectId) return false;
+    async (next: boolean): Promise<TPlanLockWrite> => {
+      if (!workspaceSlug || !projectId) return { ok: false, error: undefined };
       // Optimistic, then corrected: the toggle is the one control whose effect
       // has to be instant, and the server rejects a non-lead anyway.
       setLockedState(next);
       try {
         const saved = await service.updateSchedule(workspaceSlug, projectId, { timeline_locked: next });
         setLockedState(!!saved?.timeline_locked);
-        return true;
-      } catch {
+        return { ok: true };
+      } catch (error) {
         setLockedState(!next);
-        return false;
+        return { ok: false, error };
       }
     },
     [workspaceSlug, projectId]
@@ -86,16 +96,16 @@ export function usePlanLock(workspaceSlug: string | undefined, projectId: string
       field: "timeline_locked" | "allow_edit_others" | "allow_add_items",
       next: boolean,
       apply: (value: boolean) => void
-    ) => {
-      if (!workspaceSlug || !projectId) return false;
+    ): Promise<TPlanLockWrite> => {
+      if (!workspaceSlug || !projectId) return { ok: false, error: undefined };
       apply(next);
       try {
         const saved = await service.updateSchedule(workspaceSlug, projectId, { [field]: next });
         apply(!!(saved as Record<string, unknown>)?.[field]);
-        return true;
-      } catch {
+        return { ok: true };
+      } catch (error) {
         apply(!next);
-        return false;
+        return { ok: false, error };
       }
     },
     [workspaceSlug, projectId]

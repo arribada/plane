@@ -33,6 +33,12 @@ export interface IPortfolioStore {
   colorBy: TPortfolioColorBy;
   sortBy: TPortfolioSortBy;
   isLoading: boolean;
+  /** The board failed to load, so an empty timeline means "we don't know", not
+   *  "this workspace has no projects". The mirror of `userLoadFailed` below. */
+  loadFailed: boolean;
+  /** The folders failed to load, so "group by folder" is drawing an arrangement
+   *  it could not read rather than one that does not exist. */
+  foldersFailed: boolean;
   // computed
   allProjects: TPortfolioProject[];
   // What the timeline actually draws: displayedProjectIds narrowed to the folder in
@@ -136,6 +142,8 @@ export class PortfolioStore implements IPortfolioStore {
   preFocusSortBy: TPortfolioSortBy | null = null;
   preFocusColorBy: TPortfolioColorBy | null = null;
   isLoading = false;
+  loadFailed = false;
+  foldersFailed = false;
   folders: TFolder[] = [];
   groupByFolder = false;
   collapsedFolderIds: Set<string> = new Set();
@@ -169,6 +177,8 @@ export class PortfolioStore implements IPortfolioStore {
       colorBy: observable.ref,
       sortBy: observable.ref,
       isLoading: observable.ref,
+      loadFailed: observable.ref,
+      foldersFailed: observable.ref,
       folders: observable,
       groupByFolder: observable.ref,
       collapsedFolderIds: observable,
@@ -524,16 +534,36 @@ export class PortfolioStore implements IPortfolioStore {
     return undefined;
   });
 
+  /**
+   * The portfolio board.
+   *
+   * The per-user timeline right below this one has carried a `userLoadFailed`
+   * flag since it was written, for exactly the reason this one needed it and did
+   * not have it: the board is entered by navigating to it, so there is nobody to
+   * hand a rejection to, and an empty timeline that cannot say whether it failed
+   * or the workspace simply has no projects is the worse outcome. Without it a
+   * 500 here drew a blank planning board and left it at that.
+   */
   fetchPortfolio = async (workspaceSlug: string): Promise<void> => {
     runInAction(() => {
       this.isLoading = true;
+      this.loadFailed = false;
     });
     try {
-      const [projects, folders] = await Promise.all([
+      const [projectsOutcome, foldersOutcome] = await Promise.allSettled([
         this.service.getPortfolio(workspaceSlug),
-        this.service.getFolders(workspaceSlug).catch(() => []),
+        this.service.getFolders(workspaceSlug),
       ]);
+      // The board IS the projects: without them there is nothing to arrange.
+      if (projectsOutcome.status === "rejected") throw projectsOutcome.reason;
+      const projects = projectsOutcome.value;
+      // Folders are a way of arranging the board rather than the board itself, so
+      // one that will not load must not blank it — but "group by folder" showing
+      // every project ungrouped is indistinguishable from a workspace that has no
+      // folders, so the failure is recorded for the toolbar to say so.
+      const folders = foldersOutcome.status === "fulfilled" ? foldersOutcome.value : [];
       runInAction(() => {
+        this.foldersFailed = foldersOutcome.status === "rejected";
         this.folders = folders.map((f) => ({
           id: f.id,
           name: f.name,
@@ -555,6 +585,16 @@ export class PortfolioStore implements IPortfolioStore {
         } else {
           this.displayedProjectIds = active;
         }
+      });
+    } catch {
+      // Recorded, not rethrown, for the same reason fetchUserTimeline swallows:
+      // the caller is a useEffect on a page nobody can hand a rejection to. What
+      // it may not do is leave a board that reads as "this workspace has no
+      // projects".
+      runInAction(() => {
+        this.loadFailed = true;
+        this.projectMap = {};
+        this.displayedProjectIds = [];
       });
     } finally {
       runInAction(() => {

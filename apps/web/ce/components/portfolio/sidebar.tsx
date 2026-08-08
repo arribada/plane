@@ -37,6 +37,11 @@ let dragId: string | null = null;
 type RowProps = {
   blockId: string;
   status?: TProjectStatusUpdate;
+  /** The status fetch failed, so an absent pastille means "unknown", not "nobody
+   *  has posted an update". Carried per row rather than banner-ed at the top of
+   *  the sidebar: these rows line up one-for-one with the bars beside them, and
+   *  anything inserted above would slide the whole board out of register. */
+  statusesFailed?: boolean;
   onOpenStatus: (projectId: string) => void;
   onOpenUndated: (projectId: string) => void;
 };
@@ -44,6 +49,7 @@ type RowProps = {
 const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
   blockId,
   status,
+  statusesFailed,
   onOpenStatus,
   onOpenUndated,
 }: RowProps) {
@@ -155,7 +161,9 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
             tooltipContent={
               status
                 ? `${STATUS_META[status.status]?.label}${status.message ? ` — ${status.message}` : ""}`
-                : "Set status"
+                : statusesFailed
+                  ? "The status updates could not be loaded — this project may well have one"
+                  : "Set status"
             }
           >
             <button
@@ -166,7 +174,14 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
               {status ? (
                 <span className={cn("size-2.5 rounded-full", STATUS_META[status.status]?.dot)} />
               ) : (
-                <Signal className="size-3 text-tertiary opacity-0 group-hover:opacity-100" />
+                <Signal
+                  className={cn(
+                    "size-3",
+                    // Always visible when the load failed: the hover-only affordance
+                    // is what made an unknown status look like a set one.
+                    statusesFailed ? "text-danger-primary" : "text-tertiary opacity-0 group-hover:opacity-100"
+                  )}
+                />
               )}
             </button>
           </Tooltip>
@@ -247,6 +262,7 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
   const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
   const [statuses, setStatuses] = useState<Record<string, TProjectStatusUpdate>>({});
+  const [statusesFailed, setStatusesFailed] = useState(false);
   const [statusProjectId, setStatusProjectId] = useState<string | null>(null);
   const [undatedProjectId, setUndatedProjectId] = useState<string | null>(null);
 
@@ -254,8 +270,18 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
     if (!workspaceSlug) return;
     service
       .getWorkspaceStatuses(workspaceSlug.toString())
-      .then((r) => setStatuses(r || {}))
-      .catch(() => setStatuses({}));
+      .then((r) => {
+        setStatuses(r || {});
+        setStatusesFailed(false);
+        return undefined;
+      })
+      // An empty map draws a row with no pastille, which is exactly how a project
+      // nobody has reported on looks. "Nobody has said anything" and "nobody could
+      // ask" are opposite readings of the same blank.
+      .catch(() => {
+        setStatuses({});
+        setStatusesFailed(true);
+      });
   }, [workspaceSlug, service]);
 
   const statusProjectName = statusProjectId ? portfolio.getProject(statusProjectId)?.name : undefined;
@@ -269,6 +295,7 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
             key={blockId}
             blockId={blockId}
             status={statuses[blockId]}
+            statusesFailed={statusesFailed}
             onOpenStatus={setStatusProjectId}
             onOpenUndated={setUndatedProjectId}
           />

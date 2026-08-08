@@ -18,6 +18,7 @@ import { Check, Copy, ExternalLink, Globe, Loader2 } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPublicTimelineState } from "@/plane-web/types/arribada";
 
@@ -28,6 +29,11 @@ export const OverviewPublicLinkBlock = observer(function OverviewPublicLinkBlock
   const [state, setState] = useState<TPublicTimelineState | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // The one question this block exists to answer is "is this project readable
+  // without a login". A failed load rendered nothing at all — inside a section
+  // titled "Shared outside the login", so the section sat there empty and the
+  // reader could not tell whether their schedule was public.
+  const [failure, setFailure] = useState<string | null>(null);
 
   const slug = workspaceSlug?.toString();
   const pid = projectId?.toString();
@@ -36,8 +42,10 @@ export const OverviewPublicLinkBlock = observer(function OverviewPublicLinkBlock
     if (!slug || !pid) return;
     try {
       setState(await service.getPublicTimelineState(slug, pid));
-    } catch {
+      setFailure(null);
+    } catch (error) {
       setState(null);
+      setFailure(apiErrorMessage(error, "The project did not answer."));
     }
   };
 
@@ -46,7 +54,24 @@ export const OverviewPublicLinkBlock = observer(function OverviewPublicLinkBlock
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, pid]);
 
-  if (!slug || !pid || !state) return null;
+  if (!slug || !pid) return null;
+
+  if (failure)
+    return (
+      <div className="px-4 py-3">
+        <div role="alert" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-13">
+          <span className="text-secondary">
+            <span className="font-medium text-primary">Couldn&apos;t check whether this schedule is published.</span>{" "}
+            {failure} It may or may not be readable without a login — this panel does not know either way.
+          </span>
+          <button type="button" onClick={() => void load()} className="text-12 text-accent-primary hover:underline">
+            Check again
+          </button>
+        </div>
+      </div>
+    );
+
+  if (!state) return null;
 
   const url = state.link ? `${window.location.origin}/public/timeline/${state.link.anchor}` : null;
 
@@ -72,7 +97,7 @@ export const OverviewPublicLinkBlock = observer(function OverviewPublicLinkBlock
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't publish",
-        message: (error as { error?: string })?.error ?? "Nothing was published.",
+        message: apiErrorMessage(error, "Nothing was published."),
       });
     } finally {
       setBusy(false);
@@ -94,7 +119,7 @@ export const OverviewPublicLinkBlock = observer(function OverviewPublicLinkBlock
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't turn it off",
-        message: (error as { error?: string })?.error ?? "The link is still live.",
+        message: apiErrorMessage(error, "The link is still live."),
       });
     } finally {
       setBusy(false);

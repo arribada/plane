@@ -21,6 +21,7 @@ import { Hammer, Loader2 } from "lucide-react";
 import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -38,6 +39,12 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
   const [options, setOptions] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // The catch used to do nothing at all, and `loaded` flipped true regardless —
+  // so a failed request rendered the select with an empty vocabulary: a
+  // discipline dropdown offering only "None", on the field every money and
+  // capacity figure in this fork is keyed on. It looked like a project with no
+  // disciplines defined, and picking one was impossible.
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceSlug || !projectId || !issueId) return;
@@ -48,8 +55,11 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
         if (!live) return;
         setRole(data.role);
         setOptions(data.options ?? []);
-      } catch {
-        // A field that will not load must not break the panel it sits in.
+        setFailure(null);
+      } catch (error) {
+        // A field that will not load must not break the panel it sits in, and
+        // must not pretend to be an empty one either.
+        if (live) setFailure(apiErrorMessage(error, "The roster could not be read."));
       } finally {
         if (live) setLoaded(true);
       }
@@ -61,6 +71,15 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
   }, [workspaceSlug, projectId, issueId]);
 
   if (!loaded) return null;
+
+  if (failure)
+    return (
+      <SidebarPropertyListItem icon={Hammer} label="Discipline">
+        <p role="alert" className="py-1 text-11 text-danger-primary">
+          Couldn&apos;t load it. {failure} The disciplines this project offers are unknown, so none can be set here.
+        </p>
+      </SidebarPropertyListItem>
+    );
 
   const commit = async (next: string) => {
     const previous = role;
@@ -83,7 +102,7 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't set the discipline",
-        message: (error as { error?: string })?.error ?? "It was not changed.",
+        message: apiErrorMessage(error, "It was not changed."),
       });
     } finally {
       setBusy(false);

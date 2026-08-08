@@ -519,6 +519,36 @@ export type TBudgetDisplay = {
   unconvertible: string[];
 };
 
+/** One cumulative point on the spend curve. Both figures are in the curve's own
+ *  currency, converted on the server at the rate a human recorded. */
+export type TSpendCurvePoint = { date: string; committed: number; spent: number };
+
+/** The spend curve, computed by `_spend_curve` on the server.
+ *
+ *  `committed` is human time plus every expense line; `spent` is only the lines
+ *  marked paid. Labour is never `spent` — it is derived from a plan and there is
+ *  no receipt behind it. Every omission is counted rather than dropped in
+ *  silence, because a curve missing a third of the money is worse than one that
+ *  says which third. */
+export type TSpendCurve = {
+  currency: string;
+  points: TSpendCurvePoint[];
+  /** The ceiling, or null — including when the allocation is in a currency these
+   *  points are not, where drawing it would invite a comparison the data does not
+   *  support. */
+  allocation: number | null;
+  /** Expenses with no date, which have no position on a time axis. */
+  undated_expenses: number;
+  /** Days carrying money outside the project's own window. The axis is widened
+   *  to hold them rather than clipped — money that exists has to appear
+   *  somewhere — and this says how far the plan is out. */
+  outside_span: number;
+  /** Currencies the EUR/GBP pair cannot reach, left out of every figure above. */
+  unconvertible: string[];
+  /** True when anything had to be converted, so the figures take a "≈". */
+  converted: boolean;
+};
+
 export type TProjectBudget = {
   /** Approximate, single-currency view. The blocks below are the record. */
   display: TBudgetDisplay;
@@ -561,13 +591,29 @@ export type TProjectBudget = {
      *  Their money is still in `expenses` and `labour`, as recorded. */
     unconvertible: string[];
   } | null;
+  /** Cumulative committed and spent against the allocation, ready to draw.
+   *
+   *  Computed on the server because it has to convert across currencies and to
+   *  include labour, and the client has neither the recorded EUR/GBP rate nor any
+   *  labour figures. Absent on an older server. */
+  curve?: TSpendCurve | null;
   /** The allocation and what is left of it. `amount` null = none recorded. */
   allocation: {
     amount: number | null;
     currency: string;
     committed: number;
+    /** The currency `committed` is actually in. Equal to `currency` in every
+     *  ordinary case, and different exactly when the allocation is held outside
+     *  the EUR/GBP pair — there is then no way to express the total in it, so the
+     *  server reports the total in a currency it can reach and says which.
+     *  Absent on an older server. */
+    committed_currency?: string;
     remaining: number | null;
     percent: number | null;
+    /** True when `committed` could not be expressed in the allocation's own
+     *  currency, so `remaining` and `percent` are withheld rather than computed
+     *  across two bases. Absent on an older server. */
+    basis_mismatch?: boolean;
     /** Currencies the EUR/GBP pair cannot reach, so `committed` leaves them out
      *  and says so. NOT "every currency but this one" — `committed` converts
      *  what it can, at the rate a human recorded, because a sum across

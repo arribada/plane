@@ -18,6 +18,7 @@
 # language model asked for eighty consistent dates will get some of them wrong and
 # nobody will notice which.
 
+import math
 from collections import defaultdict, deque
 from datetime import date, timedelta
 
@@ -921,7 +922,23 @@ def _stretch_for_part_time(days, days_per_week):
     Three days a week means five working days pass for every three worked. The
     scheduler assumed five for everyone, which is how a plan built around a
     part-time engineer comes out nearly twice as fast as it runs.
+
+    THIS IS A CALENDAR SPAN AND NOT AN EFFORT. Five elapsed days of a three-day-a-week
+    engineer is three person-days of work, and the difference is the whole point of
+    the function. The budget used to charge the stretched span as person-days —
+    because the setup wizard wrote dates and no `IssueEffort`, so the cost fell
+    through to the span fallback — and billed a 3-day task at 5. `ProjectSetupApplyEndpoint`
+    now records the effort alongside the dates, which is what keeps the two apart.
+
+    `math.ceil` on a float rather than `int(days)` first. The old form truncated
+    before it stretched: half a day of work vanished, and a 2.5-day task came out
+    the same length as a 2-day one for everybody part-time. Whole days out, because
+    the caller places bars on a calendar.
     """
+    try:
+        worked = max(0.0, float(days or 0))
+    except (TypeError, ValueError):
+        worked = 0.0
     try:
         per_week = int(days_per_week or 5)
     except (TypeError, ValueError):
@@ -929,7 +946,7 @@ def _stretch_for_part_time(days, days_per_week):
     per_week = max(1, min(5, per_week))
     if per_week >= 5:
         return days
-    return -(-int(days) * 5 // per_week)
+    return math.ceil(worked * 5 / per_week)
 
 
 # ---------------------------------------------------------------------------

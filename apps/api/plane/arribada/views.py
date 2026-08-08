@@ -11,6 +11,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q, Sum
 from django.utils import timezone
@@ -2693,6 +2694,38 @@ class ProjectScheduleEndpoint(BaseAPIView):
             if "budget_amount" in payload:
                 schedule.budget_amount = amount
             if currency is not None:
+                # CHANGING THE CURRENCY CONVERTS THE AMOUNT. It used to just relabel
+                # it: switching a €793,764 budget to GBP made it £793,764 — about a
+                # 17% raise from a dropdown, applied to the ceiling every other
+                # figure on the Finance page is read against, with nothing on screen
+                # to say it had happened.
+                #
+                # Only when the amount is not itself part of this request. The
+                # allocation form sends both, and there the number in the box is what
+                # the human means; converting on top of it would double-apply the
+                # rate. This branch is the API caller, and the client's own dropdown,
+                # which change the currency alone.
+                stored_ccy = (schedule.budget_currency or "").strip().upper()
+                if (
+                    "budget_amount" not in payload
+                    and schedule.budget_amount is not None
+                    and stored_ccy
+                    and stored_ccy != currency
+                ):
+                    moved = _convert_money(
+                        float(schedule.budget_amount),
+                        stored_ccy,
+                        currency,
+                        _currency_settings(slug)["eur_gbp_rate"],
+                    )
+                    # None when the pair cannot reach one of the two. The amount then
+                    # stays exactly as recorded rather than being silently relabelled
+                    # — a figure in the wrong currency is worse than one this cannot
+                    # convert, and the budget view names the mismatch either way.
+                    if moved is not None:
+                        schedule.budget_amount = round(moved, 2)
+                        if "budget_amount" not in money:
+                            money.append("budget_amount")
                 schedule.budget_currency = currency
             schedule.save(update_fields=[*money, "updated_at"])
         # Re-serialized rather than returned from `serializer.data`, which was
@@ -2702,11 +2735,40 @@ class ProjectScheduleEndpoint(BaseAPIView):
 
 
 class ProjectTeamEndpoint(BaseAPIView):
-    """Read or replace who works on a project and what they do on it.
+    """Read or update who works on a project and what they do on it.
 
     The roster is people, not accounts (see ProjectTeamMember): it stays useful on an
     instance with two Plane users and a team of twenty, and it is what lets the
     planning assistant send firmware work to the firmware engineer.
+
+    NOT A FULL REPLACE ANY MORE, and removals are the lead's.
+
+    It used to be one: whoever was not in the payload was deleted. Two separate
+    failures came out of that, and they need two different answers.
+
+    The first is authority. A plain project MEMBER could empty the entire roster in
+    one request. What that destroys is not recoverable from anywhere else in the
+    product — `leave`, `days_per_week` and `work_country` are stored here and only
+    here, they are what makes a schedule fit the people who have to run it, and
+    nobody types them twice. There is no confirmation step and no undo. Taking
+    somebody off a project is a staffing decision of exactly the same kind as naming
+    its lead, which this handler already sends to `_lead_guard`, so removals go the
+    same way. Adding a person, correcting an address and recording a discipline stay
+    open to any member: those are the everyday edits, and none of them destroy
+    anything.
+
+    The second is a race, and it is the reason omission no longer deletes at all.
+    Deleting by omission means the payload has to be a complete picture of the
+    roster — but the client builds that picture when the page loads. Two people
+    editing the team, or one person with a tab left open since this morning, and
+    Save silently removes everybody added since. That is not a permission problem:
+    the lead doing it has every right to remove people and did not intend to remove
+    these. So removal is now something the payload SAYS, in `remove: [id, ...]`,
+    rather than something it implies by leaving a name out. A stale tab can now only
+    overwrite the rows it actually holds.
+
+    The two together also make the endpoint safe to call with a partial roster,
+    which is what any future screen editing one person will want.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
@@ -2723,8 +2785,6 @@ class ProjectTeamEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def put(self, request, slug, project_id):
-        from plane.utils.host import base_host
-
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -2795,6 +2855,12 @@ class ProjectTeamEndpoint(BaseAPIView):
                 by_row_name.setdefault(r.name.strip().lower(), r)
 
         resolved, keep = [], set()
+        # Whether this request changes who leads. Decided ROW BY ROW rather than by
+        # comparing the whole lead set against the payload's, because the payload is
+        # no longer the whole roster: an edit naming one person would otherwise read
+        # as "everybody else stopped being lead" and send the most ordinary change on
+        # this screen to `_lead_guard`.
+        lead_changed = False
         for c in cleaned:
             row = by_id.get(c["id"])
             if row is None and c["email"]:
@@ -2803,6 +2869,10 @@ class ProjectTeamEndpoint(BaseAPIView):
                 row = by_row_name.get(c["name"].lower())
             if row is None or str(row.id) in keep:
                 row = ProjectTeamMember(project_id=project_id, source=ProjectTeamMember.MANUAL)
+            # Read before the payload is written over it. `resolved` reuses these very
+            # objects, so asking afterwards would be asking the payload about itself.
+            if c["is_lead"] != (str(row.id) in current_leads):
+                lead_changed = True
             row.name = c["name"]
             row.email = c["email"]
             row.roles = c["roles"]
@@ -2827,15 +2897,17 @@ class ProjectTeamEndpoint(BaseAPIView):
         # because the handler is a full replace: the same request demoted the
         # incumbent lead and could delete the rest of the roster with them.
         #
-        # So a request that would CHANGE the lead set has to come from the lead.
-        # Comparing sets rather than counting flags: what matters is whether the
-        # people leading afterwards are the people leading now, and a full replace
-        # can swap them without changing the number. Rows created in this request
-        # already carry an id (the model's default is uuid4, assigned at
-        # construction), so a newly-added lead is an id nobody currently holds and
-        # reads as a change, which is what it is.
+        # So a request that would CHANGE the lead flag on any row has to come from
+        # the lead. `lead_changed` is set in the loop above, per row, by comparing the
+        # incoming flag against what that row currently holds — a newly created row
+        # asking for `is_lead` counts, because its id is one nobody currently holds.
         #
-        # A roster edit that leaves the lead set alone stays open to any member —
+        # Per row rather than by comparing whole sets, which is what this did while
+        # the payload was the entire roster. It no longer is: an edit naming one
+        # person would read as "everybody else stopped leading" and send the most
+        # ordinary change on this screen to the guard.
+        #
+        # A roster edit that leaves the lead flags alone stays open to any member —
         # adding a person, fixing an address and recording a discipline are the
         # everyday uses and none of them are a permission.
         #
@@ -2844,17 +2916,49 @@ class ProjectTeamEndpoint(BaseAPIView):
         # A plain member cannot appoint themselves onto a leaderless project — on
         # such a project a workspace admin can already approve spending, so that
         # is the same door, not a new one.
-        if current_leads != {str(row.id) for row in resolved if row.is_lead}:
+        #
+        # WHO IS ON THE PROJECT IS NOT A ROSTER FIELD EITHER.
+        #
+        # Removals are named, not implied — see the class docstring — and they are the
+        # lead's to make, for the same reason `is_lead` is: this deletes the only copy
+        # of somebody's leave, working pattern and holiday calendar, with no
+        # confirmation and no undo. Ids that name nobody on this project are ignored
+        # rather than refused: a client retrying a save it already made must not get
+        # an error for work that is already done.
+        wanted_gone = {str(x) for x in (request.data.get("remove") or []) if x}
+        doomed = (
+            {
+                str(i)
+                for i in ProjectTeamMember.objects.filter(
+                    project_id=project_id, id__in=_uuid_list(wanted_gone)
+                ).values_list("id", flat=True)
+            }
+            if wanted_gone
+            else set()
+        )
+        # A row cannot be removed and written in the same request. The write is the
+        # more specific instruction and wins, so a client that sends both gets the
+        # person kept rather than a person silently deleted by a stale list.
+        doomed -= keep
+
+        # Any removal, and any change to who leads. The two are separate rules that
+        # happen to share a guard — removing the incumbent lead is both — and if a
+        # later change ever loosens removals it must not loosen `lead_changed` with
+        # them.
+        if lead_changed or doomed:
             denied = _lead_guard(request, project_id)
             if denied:
                 return denied
 
         try:
             with transaction.atomic():
-                # Full replace: drop whoever is no longer on the list *before* writing,
-                # so a person renamed onto a freed name does not collide with the row
-                # that is about to disappear.
-                ProjectTeamMember.objects.filter(project_id=project_id).exclude(id__in=list(keep)).delete()
+                # Deletions first, so a person renamed onto a freed name does not
+                # collide with the row that is about to disappear. Only the rows the
+                # caller NAMED: a row this payload simply did not mention belongs to
+                # somebody else's edit, and leaving it alone is what stops a tab
+                # opened this morning deleting everyone hired since.
+                if doomed:
+                    ProjectTeamMember.objects.filter(project_id=project_id, id__in=list(doomed)).delete()
                 for row in resolved:
                     row.save()
         except IntegrityError:
@@ -2869,7 +2973,7 @@ class ProjectTeamEndpoint(BaseAPIView):
         # fans out notifications, and a slow queue must not hold a write lock on the
         # roster — and a failure here has not lost the roster edit.
         repointed = _materialise_issue_roles(
-            project, request.user.id, origin=base_host(request=request, is_app=True)
+            project, request.user.id, origin=_notification_origin(request)
         )
 
         return Response(
@@ -2878,6 +2982,11 @@ class ProjectTeamEndpoint(BaseAPIView):
                 "team": _team_rows(project_id),
                 # How many work items the roster edit just handed to somebody.
                 "reassigned": len(repointed),
+                # How many people this request took off the project. Reported because
+                # the client asks for removals by id and an id that named nobody is
+                # quietly ignored — a caller that meant to remove three and removed
+                # none is entitled to see that.
+                "removed": len(doomed),
             },
             status=status.HTTP_200_OK,
         )
@@ -3714,8 +3823,6 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
     @allow_permission(allowed_roles=[ROLE.ADMIN, ROLE.MEMBER], level="PROJECT")
     def post(self, request, slug, project_id):
         from plane.bgtasks.issue_activities_task import issue_activity
-        from plane.utils.host import base_host
-
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -3798,13 +3905,24 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
         # The disciplines each reviewed item needs. Recorded before the owners are
         # materialised below, so an item whose role does have a holder gets pointed at
         # them in the same call the user clicked Apply in.
-        existing_roles = defaultdict(set)
+        #
+        # ONE discipline per item — see IssueRole. This loop used to write a row per
+        # entry in a plural `roles` list, which is how items ended up holding two:
+        # the panel then showed one and the budget charged the other's rate, and any
+        # later attempt to set the discipline 500'd on MultipleObjectsReturned. The
+        # payload keeps its plural shape because the assistant proposes in the plural
+        # and the reviewer edits what it proposed; only the FIRST survives the write,
+        # and the response says how many items had a second one dropped so the
+        # reviewer is told rather than left to notice.
+        existing_roles = set()
         if touched_ids:
-            for issue_id, role in IssueRole.objects.filter(
-                issue__project_id=project_id, issue_id__in=list(touched_ids)
-            ).values_list("issue_id", "role"):
-                existing_roles[str(issue_id)].add(role.strip().lower())
-        new_roles, roles_set = [], set()
+            existing_roles = {
+                str(i)
+                for i in IssueRole.objects.filter(
+                    issue__project_id=project_id, issue_id__in=list(touched_ids)
+                ).values_list("issue_id", flat=True)
+            }
+        new_roles, roles_set, roles_truncated = [], set(), 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -3815,14 +3933,20 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
             if not roles:
                 continue
             roles_set.add(issue_id)
+            if len(roles) > 1:
+                roles_truncated += 1
+            # An item that already has one keeps it. A discipline on the record is
+            # either a human's answer or one this endpoint wrote earlier, and
+            # replacing it from a re-run of the assistant would silently re-price
+            # the item — the rate is looked up by exactly this word.
+            if issue_id in existing_roles:
+                continue
+            existing_roles.add(issue_id)
             # Provenance, not policy: both kinds of row arrive through this endpoint
             # (the assistant's proposal, and whatever the reviewer typed over it), and
             # only the caller knows which is which.
             source = IssueRole.AI if str(row.get("source") or "ai") == "ai" else IssueRole.MANUAL
-            for role in roles:
-                if role.lower() in existing_roles[issue_id]:
-                    continue
-                new_roles.append(IssueRole(issue_id=issue_id, role=role, source=source))
+            new_roles.append(IssueRole(issue_id=issue_id, role=roles[0], source=source))
         if new_roles:
             # Same race as the assignee write below: two reviewers applying overlapping
             # plans must not turn into a 500 on the unique index.
@@ -3846,7 +3970,7 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
                 current_instance=json.dumps({"assignee_ids": sorted(current[issue_id])}),
                 epoch=int(timezone.now().timestamp()),
                 notification=True,
-                origin=base_host(request=request, is_app=True),
+                origin=_notification_origin(request),
             )
 
         # Runs after both writes, so it reads the owners just added and only fires for an
@@ -3856,7 +3980,7 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
             project,
             request.user.id,
             issue_ids=roles_set,
-            origin=base_host(request=request, is_app=True),
+            origin=_notification_origin(request),
         )
 
         return Response(
@@ -3872,6 +3996,12 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
                 # `assigned`: recording one when nobody holds it is the expected
                 # outcome here, not a half-failure.
                 "roles_set": len(roles_set),
+                # Items where more than one discipline was proposed and only the
+                # first was kept. A work item holds one — the rate is looked up by
+                # that word and nothing records how its days would split between
+                # two. Reported rather than silent: a reviewer who typed a second
+                # one is entitled to know it did not land.
+                "roles_truncated": roles_truncated,
             },
             status=status.HTTP_200_OK,
         )
@@ -4513,8 +4643,6 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         from plane.bgtasks.issue_activities_task import issue_activity
         from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
-        from plane.utils.host import base_host
-
         from .blueprints import TRACKS
 
         project = _visible_projects(request, slug).filter(id=project_id).first()
@@ -4551,6 +4679,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
         assignable_ids = _assignable_member_ids(project_id)
         created, skipped = {}, []
         issue_track, issue_role, issue_sprint, issue_owner = {}, {}, {}, {}
+        issue_effort = {}
         with transaction.atomic():
             for row in rows:
                 name = str(row.get("name") or "").strip()[:255]
@@ -4575,6 +4704,23 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                 role = str(row.get("role") or "").strip()[:80]
                 if role:
                     issue_role[key] = role
+                # The estimate the plan was built from. It was on the wire all along
+                # (`TPlannedTask.days`) and this endpoint dropped it, which is how a
+                # wizard-built project came out over-costed.
+                #
+                # The budget prefers a recorded effort and falls back to the calendar
+                # span. Nothing wrote an effort here, so every wizard task fell through
+                # to the span — and the span is not the effort: `_stretch_for_part_time`
+                # widens a task for whoever is part-time, so three days of work for a
+                # three-day-a-week engineer is a five-day bar. Charged as person-days
+                # that is 67% too much, and 150% at one day a week. Somebody working
+                # Mondays does not cost five times somebody working Mondays to Fridays.
+                try:
+                    effort = round(float(row.get("days") or 0), 1)
+                except (TypeError, ValueError):
+                    effort = 0.0
+                if 0 < effort <= 999:
+                    issue_effort[key] = effort
                 # The plan already worked out who does this one — honouring it here is
                 # what makes naming somebody in the wizard mean anything. Anyone Plane
                 # would refuse is dropped, and the discipline still carries the item.
@@ -4614,6 +4760,18 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                     [
                         IssueRole(issue_id=created[key].id, role=role, source=IssueRole.AI)
                         for key, role in issue_role.items()
+                    ],
+                    batch_size=100,
+                    ignore_conflicts=True,
+                )
+
+            if issue_effort:
+                # Written beside the dates so the budget costs the WORK rather than
+                # the bar. See the comment where these are collected.
+                IssueEffort.objects.bulk_create(
+                    [
+                        IssueEffort(issue_id=created[key].id, days=days, updated_by=request.user)
+                        for key, days in issue_effort.items()
                     ],
                     batch_size=100,
                     ignore_conflicts=True,
@@ -4730,7 +4888,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
         # Writing the assignee row notifies nobody on its own — this is what creates
         # the activity, subscribes the new owner and sends the mail. Outside the
         # transaction, because a slow mail server must not hold a lock over the plan.
-        origin = base_host(request=request, is_app=True)
+        origin = _notification_origin(request)
         for key, owner in issue_owner.items():
             if key not in created:
                 continue
@@ -4811,6 +4969,40 @@ def _rate_map(slug):
         }
         for row in WorkspaceRoleRate.objects.filter(workspace__slug=slug)
     }
+
+
+def _costed_issues(project_id):
+    """Work items whose cost belongs in this project's budget.
+
+    NOT `Issue.issue_objects`, which is the manager every planning surface uses and
+    the wrong one here. It excludes archived items and items in archived projects —
+    correct for a board, a capacity bar or a timeline, all of which answer questions
+    about work still to come, and wrong for money.
+
+    `bgtasks/issue_automation_task.py` archives completed items automatically once a
+    project sets `archive_in`. So committed labour DECREASED over time: work that was
+    finished — and therefore actually paid for — aged off the budget, `remaining` grew
+    back, and a funder report understated the cost of the project by exactly the work
+    it had delivered. Expenses are queried by `project_id` and stay forever, so the
+    two halves drifted apart with nothing on screen to say why.
+
+    The neighbouring axis already decided this the right way round and says so out
+    loud: `_cost_by_cycle` keeps archived SPRINTS, and the Finance page labels them
+    "Its cost is kept — money it consumed was still spent." An item is the same fact
+    at a smaller grain.
+
+    What is still excluded, and why each one is not money:
+
+    * soft-deleted — `Issue.objects` is a SoftDeletionManager; a deleted item is not
+      a thing that happened;
+    * triage — not yet accepted into the project, so nobody has agreed to do it;
+    * drafts — a half-typed item nobody has posted.
+    """
+    return (
+        Issue.objects.filter(project_id=project_id)
+        .exclude(state__group="triage")
+        .exclude(is_draft=True)
+    )
 
 
 def _labour_cost(tasks, rates):
@@ -5108,6 +5300,29 @@ class WorkspaceCurrencyEndpoint(BaseAPIView):
         payload = dict(_currency_settings(slug))
         payload["available"] = list(DISPLAY_CURRENCIES)
         return Response(payload, status=status.HTTP_200_OK)
+
+
+def _notification_origin(request):
+    """The base URL a notification's links point at, or "" when there is none.
+
+    `base_host` RAISES `ImproperlyConfigured` when neither `WEB_URL` nor
+    `APP_BASE_URL` is set, and every caller here used it in the response path —
+    after the roster, the plan or the dates had already been written and
+    committed. The caller was then answered 500 and told to try again, for a
+    setting that has nothing to do with what they asked for.
+
+    Both are set in production, so what this actually meant is that these
+    endpoints could not be exercised anywhere else, which is why the largest
+    write handler in this app had no test until the money pass. An origin is a
+    link inside a notification; not having one is a reason to send the
+    notification without a link, not to fail a save that is already on disk.
+    """
+    from plane.utils.host import base_host
+
+    try:
+        return base_host(request=request, is_app=True)
+    except ImproperlyConfigured:
+        return ""
 
 
 def _is_project_lead(user, project_id):
@@ -5419,6 +5634,113 @@ def _expense_lead_time(value):
     return days, None
 
 
+def _spend_curve(labour_by_day, expenses, allocation, currency, eur_gbp, start_date, target_date):
+    """Cumulative committed and spent, against the allocation, over the project's span.
+
+    Computed here rather than in the chart component, because every one of the three
+    things wrong with the old client-side version needed something the client does
+    not have.
+
+    * It summed `expense.total` RAW, across currencies. €5,000 and £3,000 became
+      "8000" drawn against a ceiling in one of them. Every sibling figure on that
+      page converts through the recorded EUR/GBP rate and names what it could not
+      reach; the curve did neither, and it is the one drawn against the ceiling.
+    * It OMITTED LABOUR while labelling its series "Committed" and drawing it against
+      the full allocation. Most projects here cost almost entirely people: £750,000 of
+      work and £15,000 of parts rendered as a line at about 2% of a full budget. The
+      chart said a project was barely started on the day it ran out of money.
+    * It dropped rows outside the span UNCOUNTED — the axis was clipped to the
+      project's window and the buckets were not, so a receipt dated before the start
+      contributed to no point at all and simply left the chart.
+
+    The axis is therefore widened to cover every dated figure rather than clipped to
+    the project window, and `outside_span` says how many fell outside it. Money that
+    exists has to appear somewhere; a reader can be told the window is wrong, but not
+    shown a total that quietly excludes it.
+
+    `committed` is labour plus every expense line; `spent` is only the lines somebody
+    has marked as paid. Labour is never `spent`: it is derived from a plan and there
+    is no receipt behind it.
+    """
+    by_day = {}
+
+    def add(day, amount, spent):
+        bucket = by_day.setdefault(day, {"committed": 0.0, "spent": 0.0})
+        bucket["committed"] += amount
+        if spent:
+            bucket["spent"] += amount
+
+    for day, amount in labour_by_day.items():
+        add(day, amount, spent=False)
+
+    undated = 0
+    unconvertible = set()
+    converted = False
+    for row in expenses:
+        if not row.incurred_on:
+            # No date, no position on a time axis. Counted so the caption can say
+            # so — a curve missing a third of the spend in silence is worse than
+            # one that names what it could not place.
+            undated += 1
+            continue
+        value = _convert_money(float(row.total), row.currency, currency, eur_gbp)
+        if value is None:
+            unconvertible.add((row.currency or "?").strip().upper())
+            continue
+        if (row.currency or "").strip().upper() != (currency or "").strip().upper():
+            converted = True
+        add(row.incurred_on, value, spent=not row.planned)
+
+    if not by_day:
+        return {
+            "currency": currency,
+            "points": [],
+            "allocation": allocation,
+            "undated_expenses": undated,
+            "outside_span": 0,
+            "unconvertible": sorted(unconvertible),
+            "converted": converted,
+        }
+
+    # The span, widened to hold everything. `outside_span` is the count of days
+    # carrying money outside the project's own window — the reading is usually that
+    # the window is wrong, and it is a fact about the project rather than a rounding
+    # detail, so it is reported and not swallowed.
+    outside = 0
+    if start_date or target_date:
+        for day in by_day:
+            if (start_date and day < start_date) or (target_date and day > target_date):
+                outside += 1
+
+    days = sorted(by_day)
+    first = min([days[0]] + ([start_date] if start_date else []))
+    last = max([days[-1]] + ([target_date] if target_date else []))
+
+    committed = spent = 0.0
+    points = []
+    # The span's ends are always drawn, so the curve starts at zero on day one and
+    # runs to the target rather than stopping at the last receipt. The gap between
+    # those two IS the reading.
+    for day in sorted({first, last, *days}):
+        bucket = by_day.get(day)
+        if bucket:
+            committed += bucket["committed"]
+            spent += bucket["spent"]
+        points.append(
+            {"date": day.isoformat(), "committed": round(committed, 2), "spent": round(spent, 2)}
+        )
+
+    return {
+        "currency": currency,
+        "points": points,
+        "allocation": allocation,
+        "undated_expenses": undated,
+        "outside_span": outside,
+        "unconvertible": sorted(unconvertible),
+        "converted": converted,
+    }
+
+
 def _budget_display(wanted, settings, allocated, allocation_currency, labour_totals, expenses):
     """One currency's worth of the same figures, marked as an approximation.
 
@@ -5530,8 +5852,12 @@ class ProjectBudgetEndpoint(BaseAPIView):
 
         # Labour from the work items that exist, not from a plan preview: this is
         # the cost of what the project actually holds.
+        #
+        # `_costed_issues`, not `Issue.issue_objects`: archiving a finished item must
+        # not un-spend the money it cost. See the helper.
         rows = list(
-            Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
+            _costed_issues(project_id)
+            .filter(workspace__slug=slug)
             .filter(start_date__isnull=False, target_date__isnull=False)
             .exclude(id__in=supplied)
             .values("id", "start_date", "target_date")
@@ -5551,6 +5877,27 @@ class ProjectBudgetEndpoint(BaseAPIView):
                 "issue_id", "days", "actual_days"
             )
         }
+        # The days nobody works, for the span fallback below.
+        #
+        # `_working_days_between` takes an optional holiday set and every caller here
+        # omitted it while the capacity reading passed one — so the same two dates
+        # were worth eight days of somebody's rate on the Finance page and seven on
+        # the capacity bar, and neither screen said which. A bank holiday is not a
+        # person-day whichever screen is asking.
+        #
+        # The workspace's own closures plus the default country's statutory days, not
+        # a person's: the fallback exists precisely for items nobody has estimated,
+        # and those have no owner to take a calendar from. Computed once over the span
+        # of every dated item rather than per task.
+        holidays = frozenset()
+        if rows:
+            holidays = _holidays_for(
+                slug,
+                DEFAULT_COUNTRY,
+                min(r["start_date"] for r in rows),
+                max(r["target_date"] for r in rows),
+            )
+
         tasks = []
         from_effort = 0
         for r in rows:
@@ -5566,7 +5913,7 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "role": roles.get(str(r["id"])),
                     "days": float(recorded)
                     if recorded is not None
-                    else _working_days_between(r["start_date"], r["target_date"]),
+                    else _working_days_between(r["start_date"], r["target_date"], holidays),
                     # The month this work lands in. Carried on the task so the
                     # timeline below costs the SAME days the total does — it used
                     # to re-derive them from the calendar span, which billed a task
@@ -5593,6 +5940,31 @@ class ProjectBudgetEndpoint(BaseAPIView):
         allocation_currency = (schedule_row.budget_currency if schedule_row else None) or "EUR"
         currency_settings = _currency_settings(slug)
         eur_gbp = currency_settings["eur_gbp_rate"]
+
+        # THE BASIS EVERY CONVERTED FIGURE BELOW IS SUMMED IN.
+        #
+        # Not simply the allocation's currency, which is what it used to be. Only
+        # EUR and GBP convert, and `ProjectScheduleEndpoint` deliberately grandfathers
+        # a `budget_currency` already recorded outside that pair rather than rewriting
+        # somebody's stored value. A project held in, say, CHF therefore reached this
+        # code with a target currency `_convert_money` cannot produce — so every rate
+        # in the workspace, every expense line and the whole cost of the project were
+        # "excluded", `committed` came out 0, `remaining` reported the entire budget
+        # still available, and the rhythm chart, the sprint breakdown and the funder
+        # report were all empty. That is the €793,764 / €0 shape, reachable again
+        # through data alone.
+        #
+        # So when the allocation cannot be converted INTO, the sums are taken in a
+        # currency that can be — and `remaining` and `percent` are then withheld,
+        # because a total in sterling has no honest comparison against a ceiling in
+        # francs. Withholding two figures is a smaller lie than reporting zero.
+        basis_currency = allocation_currency.strip().upper()
+        if basis_currency not in DISPLAY_CURRENCIES:
+            fallback = (currency_settings["display_currency"] or "").strip().upper()
+            basis_currency = fallback if fallback in DISPLAY_CURRENCIES else DISPLAY_CURRENCIES[0]
+        # True when the allocation is held in something this pair cannot reach, so
+        # every figure below is in `basis_currency` and not in the allocation's.
+        basis_mismatch = basis_currency != allocation_currency.strip().upper()
 
         expenses = list(ProjectExpense.objects.filter(project_id=project_id).select_related("issue"))
         by_category = {}
@@ -5622,13 +5994,13 @@ class ProjectBudgetEndpoint(BaseAPIView):
             # already named in `allocation.excluded_currencies`, computed from
             # this very list. `spend_totals` below is deliberately NOT converted:
             # it is the record, per currency, and stays exactly as entered.
-            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
+            value = _convert_money(float(row.total), row.currency, basis_currency, eur_gbp)
             if value is not None:
-                if (row.currency or "").strip().upper() != allocation_currency.strip().upper():
+                if (row.currency or "").strip().upper() != basis_currency:
                     category_converted = True
                 bucket = by_category.setdefault(
                     row.category,
-                    {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": allocation_currency},
+                    {"category": row.category, "planned": 0.0, "actual": 0.0, "currency": basis_currency},
                 )
                 bucket["planned" if row.planned else "actual"] += value
             key = (row.currency, row.planned)
@@ -5679,6 +6051,10 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # up to each other.
         labour_by_month = {}
         labour_by_cycle = {}
+        # The same figures at the grain the cumulative curve draws in. Built in the
+        # same loop, from the same converted amounts, for the reason stated above:
+        # two passes over one set of tasks is how a chart and a total stop agreeing.
+        labour_by_day = {}
         labour_unconvertible = set()
         # Which sprint each work item sits in. Read from the join table directly —
         # `CycleIssue.objects` already drops soft-deleted rows — because this map
@@ -5701,12 +6077,13 @@ class ProjectBudgetEndpoint(BaseAPIView):
             cost = task["days"] * float(rate.get("hours_per_day") or 0) * float(rate.get("hourly_rate") or 0)
             if cost <= 0:
                 continue
-            value = _convert_money(cost, rate.get("currency"), allocation_currency, eur_gbp)
+            value = _convert_money(cost, rate.get("currency"), basis_currency, eur_gbp)
             if value is None:
                 labour_unconvertible.add((rate.get("currency") or "?").strip().upper())
                 continue
             key = f"{task['ends'].year}-{task['ends'].month:02d}"
             labour_by_month[key] = labour_by_month.get(key, 0.0) + value
+            labour_by_day[task["ends"]] = labour_by_day.get(task["ends"], 0.0) + value
             # `None` is a real bucket here, not a miss: work in no sprint is the
             # figure a sprint view exists to expose.
             cycle_key = cycle_of_issue.get(task["id"])
@@ -5721,7 +6098,7 @@ class ProjectBudgetEndpoint(BaseAPIView):
         expense_by_cycle = {}
         cycle_unconvertible = set()
         for row in expenses:
-            value = _convert_money(float(row.total), row.currency, allocation_currency, eur_gbp)
+            value = _convert_money(float(row.total), row.currency, basis_currency, eur_gbp)
             if value is None:
                 cycle_unconvertible.add((row.currency or "?").strip().upper())
                 continue
@@ -5758,13 +6135,13 @@ class ProjectBudgetEndpoint(BaseAPIView):
         for amount, ccy in [(r["amount"], r["currency"]) for r in labour["totals"]] + [
             (float(r.total), r.currency) for r in expenses
         ]:
-            value = _convert_money(amount, ccy, allocation_currency, eur_gbp)
+            value = _convert_money(amount, ccy, basis_currency, eur_gbp)
             if value is None:
                 # Outside the EUR/GBP pair: no honest position in this total, so
                 # it is left out and named rather than guessed at.
                 other_currencies.add((ccy or "?").strip().upper())
                 continue
-            if (ccy or "").strip().upper() != allocation_currency.strip().upper():
+            if (ccy or "").strip().upper() != basis_currency:
                 converted_any = True
             committed += value
 
@@ -5786,7 +6163,7 @@ class ProjectBudgetEndpoint(BaseAPIView):
             project_id,
             labour_by_cycle,
             expense_by_cycle,
-            allocation_currency,
+            basis_currency,
             sorted(cycle_unconvertible | labour_unconvertible),
         )
 
@@ -5809,12 +6186,31 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "amount": allocated,
                     "currency": allocation_currency,
                     "committed": round(committed, 2),
+                    # The currency `committed` is actually in. Equal to `currency`
+                    # in every ordinary case, and different exactly when the
+                    # allocation is held outside the EUR/GBP pair — see
+                    # `basis_currency`. A client that formats `committed` with
+                    # `currency` would otherwise stamp francs on a sterling total.
+                    "committed_currency": basis_currency,
                     # None rather than 0 when nothing is allocated: a project with no
                     # budget recorded is not a project that is 100% over.
-                    "remaining": None if allocated is None else round(allocated - committed, 2),
+                    #
+                    # Also None when the two bases differ, because subtracting a
+                    # sterling total from a franc ceiling is not arithmetic. This
+                    # used to answer with the whole allocation still available on a
+                    # fully committed project, which is the worst of the three
+                    # possible answers.
+                    "remaining": None
+                    if allocated is None or basis_mismatch
+                    else round(allocated - committed, 2),
                     "percent": None
-                    if not allocated
+                    if not allocated or basis_mismatch
                     else round(100 * committed / allocated),
+                    # True when `committed` could not be expressed in the
+                    # allocation's own currency, so `remaining` and `percent` are
+                    # withheld above and the client has to say why rather than
+                    # render two blanks.
+                    "basis_mismatch": basis_mismatch,
                     # Currencies the EUR/GBP pair cannot reach, so no figure here
                     # includes them. It used to mean "not the allocation's
                     # currency", which on this instance was every rate in the
@@ -5827,13 +6223,32 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     # people to ignore the mark.
                     "converted": converted_any,
                 },
+                # Cumulative committed and spent against the allocation. Computed
+                # here rather than in the chart because it has to convert across
+                # currencies and to include labour, and the client has neither the
+                # rate nor the labour. See `_spend_curve`.
+                "curve": _spend_curve(
+                    labour_by_day,
+                    expenses,
+                    # No ceiling when the allocation is in a currency these figures
+                    # are not: a dashed line at 793,764 francs drawn across a
+                    # sterling curve is a comparison the reader would make and the
+                    # data does not support. The same reason `remaining` is None.
+                    None if basis_mismatch else allocated,
+                    basis_currency,
+                    eur_gbp,
+                    schedule_row.start_date if schedule_row else None,
+                    schedule_row.target_date if schedule_row else None,
+                ),
                 "rhythm": _spend_rhythm(
                     expense_by_month,
                     labour_by_month,
-                    allocated,
+                    # Same: `sustainable` and `exhausted_on` are both derived from
+                    # `allocated - committed`, which has no meaning across bases.
+                    None if basis_mismatch else allocated,
                     committed,
                     schedule_row.target_date if schedule_row else None,
-                    allocation_currency,
+                    basis_currency,
                     sorted(labour_unconvertible),
                 ),
                 # Cost per sprint. A cycle is the unit a project manager commits
@@ -6030,7 +6445,31 @@ class ProjectProcurementEndpoint(BaseAPIView):
 
 
 class ProjectProcurementDecisionEndpoint(BaseAPIView):
-    """Approve or reject a request. Lead only, and approval is what spends."""
+    """Approve or reject a request. Lead only, and approval is what spends.
+
+    Every read of the request that decides an EXPENSE LINE — `post` and `delete`
+    — happens under `select_for_update`, inside the transaction that will do the
+    writing. `patch` is the purchasing record and creates and destroys nothing, so
+    it stays an ordinary update.
+
+    That is not a style preference. The decision used to be taken from a copy of
+    the row fetched before the transaction opened, and the idempotency guard then
+    tested that copy — so two clicks on Approve were two requests that both saw an
+    empty `expense_id`, both created a line, and the second overwrote the pointer
+    to the first. The project paid twice and the surviving orphan could never be
+    removed, because reject and delete both clean up through that one pointer.
+
+    The same stale read made Approve racing Reject worse than either alone: the
+    reject evaluated its own copy, found the `expense_id` empty because the approve
+    had not yet committed, skipped the delete, and then wrote the link to null. The
+    outcome was a REJECTED request that permanently cost the project money, with
+    nothing on any screen pointing at the line.
+
+    `select_for_update` serialises the two and re-reads committed state, so the
+    second one in sees what the first one did. `ProcurementRequest.expense` is a
+    OneToOne on top of that, so even a path that skipped this lock cannot produce
+    the two-lines-one-request shape.
+    """
 
     @allow_permission(allowed_roles=MONEY_ROLES, level="PROJECT")
     def post(self, request, slug, project_id, request_id):
@@ -6041,10 +6480,6 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
         if denied:
             return denied
 
-        row = ProcurementRequest.objects.filter(id=request_id, project_id=project_id).first()
-        if not row:
-            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
-
         decision = str(request.data.get("decision") or "").strip().lower()
         if decision not in {ProcurementRequest.APPROVED, ProcurementRequest.REJECTED}:
             return Response(
@@ -6054,6 +6489,18 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
         note = str(request.data.get("note") or "")[:2000]
 
         with transaction.atomic():
+            # Inside the transaction and locked: see the class docstring. Everything
+            # below reads `row` to decide whether money already exists, so a copy
+            # taken before this line is a copy that can be wrong by the time it is
+            # believed.
+            row = (
+                ProcurementRequest.objects.select_for_update()
+                .filter(id=request_id, project_id=project_id)
+                .first()
+            )
+            if not row:
+                return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+
             if decision == ProcurementRequest.APPROVED:
                 # Approving twice must not spend twice. The existing line is reused
                 # rather than a second one created — an idempotent approve is worth
@@ -6108,6 +6555,13 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
             else:
                 # Rejecting something previously approved takes the money back out.
                 # Leaving the line would make a rejected request cost the project.
+                #
+                # `row.expense_id` is trustworthy here and was not before: under the
+                # lock above it is what the last committed approve wrote, so an
+                # approve that landed a moment ago is seen and its line removed.
+                # Read outside the lock it was whatever the row said when the request
+                # arrived, which is how a reject used to skip the delete and then null
+                # the only pointer to a line the project was still paying for.
                 if row.expense_id:
                     ProjectExpense.objects.filter(id=row.expense_id).delete()
                     row.expense = None
@@ -6194,10 +6648,22 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Deleting an approved request must not leave its money behind.
-        if row.expense_id:
-            ProjectExpense.objects.filter(id=row.expense_id).delete()
-        row.delete()
+        # Locked and re-read for the same reason as `post`: this deletes an expense
+        # line chosen from `row.expense_id`, and a withdrawal racing an approval read
+        # that column before the approval had written it. The request then disappeared
+        # and its money stayed, attached to nothing.
+        with transaction.atomic():
+            locked = (
+                ProcurementRequest.objects.select_for_update()
+                .filter(id=request_id, project_id=project_id)
+                .first()
+            )
+            if not locked:
+                return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Deleting an approved request must not leave its money behind.
+            if locked.expense_id:
+                ProjectExpense.objects.filter(id=locked.expense_id).delete()
+            locked.delete()
         return Response({"deleted": True}, status=status.HTTP_200_OK)
 
 
@@ -7210,9 +7676,32 @@ def _suggest_dates_from_effort(project_id, issue_id, days, issue):
     role = IssueRole.objects.filter(issue_id=issue_id).values_list("role", flat=True).first()
     people = 1
     if role:
+        # `roles`, plural, and it is a JSONField holding a list — not `role`.
+        #
+        # This filtered on `role=role`, a column that does not exist, so Django
+        # raised FieldError and the effort endpoint answered 500 on exactly the
+        # state the feature is for: an item that HAS a discipline and is MISSING a
+        # date, which is the only path that reaches here. The crash was not the
+        # damage. On POST the estimate is written before this line runs, so the
+        # user saw "Couldn't save the effort — It was not changed", watched the box
+        # revert, and the budget charged the new number anyway.
+        #
+        # Compared case-insensitively in Python rather than with `roles__contains`,
+        # because IssueRole.role is free text typed on one screen and the roster's
+        # entries are typed on another: "Firmware" and "firmware" are one discipline
+        # to every other reader here (`_role_holders` lowercases both sides) and a
+        # containment lookup on a JSON array is exact. One query either way — the
+        # roster is a project's team, not a table scan.
+        wanted = str(role).strip().lower()
         people = max(
             1,
-            ProjectTeamMember.objects.filter(project_id=project_id, role=role).count(),
+            sum(
+                1
+                for roles in ProjectTeamMember.objects.filter(project_id=project_id).values_list(
+                    "roles", flat=True
+                )
+                if any(str(r).strip().lower() == wanted for r in (roles or []))
+            ),
         )
     # ceil, not round: Python rounds half to EVEN, so round(2.5) is 2 and every
     # half-day estimate on the board would have been quietly under-planned. An
@@ -7522,15 +8011,18 @@ def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unco
       discipline — which the warnings panel above already names, and which a
       count of only the costed items would have hidden.
     """
+    # Counted from the same set the money comes from — `_costed_issues`, which keeps
+    # archived items. It used to count from `Issue.issue_objects`, which drops them:
+    # a finished sprint whose items had all been auto-archived would have reported
+    # its cost against "0 items", and a row that says a sprint holds nothing while
+    # charging four thousand euros to it explains neither figure.
     rows = list(
         Cycle.objects.filter(project_id=project_id)
         .order_by("start_date", "created_at")
         .values("id", "name", "start_date", "end_date", "archived_at")
     )
 
-    # Grouped, not one query per cycle. Counted from Issue.issue_objects the way
-    # the Sprints page counts, so the two screens agree on "how big is this
-    # sprint" — archived, draft and triage items are out of both.
+    # Grouped, not one query per cycle.
     #
     # `issue_cycle__deleted_at__isnull=True` makes this a LEFT JOIN, so an item in
     # no sprint comes back under a null key rather than not at all. That is the
@@ -7539,9 +8031,8 @@ def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unco
     # subtraction would report the unsprinted figure as negative.
     grouped = {
         r["issue_cycle__cycle_id"]: r["n"]
-        for r in Issue.issue_objects.filter(
-            project_id=project_id, issue_cycle__deleted_at__isnull=True
-        )
+        for r in _costed_issues(project_id)
+        .filter(issue_cycle__deleted_at__isnull=True)
         .values("issue_cycle__cycle_id")
         .annotate(n=Count("id", distinct=True))
     }

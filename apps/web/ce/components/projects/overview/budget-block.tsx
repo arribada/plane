@@ -125,6 +125,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // Who may write to the sheet. Answered by the server, not inferred from the
   // workspace role: "project lead" is a job, and admin is a permission level.
   const [canApprove, setCanApprove] = useState(false);
+  // The id of the request whose decision is in flight, or null. One at a time
+  // across the whole queue rather than per row: the reload afterwards replaces
+  // every row, so a second decision taken against the list being replaced is
+  // acting on figures that are already stale.
+  const [deciding, setDeciding] = useState<string | null>(null);
 
   // The sheet belongs to whoever answers for the budget. Everyone else asks.
   const canEdit = canApprove;
@@ -284,6 +289,14 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   };
 
   const decide = async (id: string, decision: "approved" | "rejected") => {
+    // Approving writes an expense line into the project. There was no in-flight
+    // guard at all, so two clicks were two POSTs — and the server took its
+    // idempotency decision from a copy of the request read before its own
+    // transaction, so both of them created a line and the project paid twice.
+    // The server is fixed and locks; this is the half that stops the second
+    // request being sent at all, which is also the only half a user can see.
+    if (deciding) return;
+    setDeciding(id);
     try {
       await service.decidePurchase(slug, pid, id, decision);
       await load(displayCcy);
@@ -293,15 +306,21 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         title: "Couldn't record that decision",
         message: "The request is unchanged.",
       });
+    } finally {
+      setDeciding(null);
     }
   };
 
   const withdraw = async (id: string) => {
+    if (deciding) return;
+    setDeciding(id);
     try {
       await service.withdrawPurchase(slug, pid, id);
       await load(displayCcy);
     } catch {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't withdraw it", message: "It is still there." });
+    } finally {
+      setDeciding(null);
     }
   };
 
@@ -361,6 +380,13 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // in this very currency would train people to ignore the mark.
   const allocApprox = useDisp && !!disp && (alloc?.currency ?? "") !== disp.currency;
   const fig = (amount: number) => (near ? approx(amount, shownCcy) : money(amount, shownCcy));
+  // The currency `committed` is actually in, which is NOT always the allocation's.
+  // A budget held outside the EUR/GBP pair cannot be converted into, so the server
+  // sums in a currency it can reach and names it here. Formatting that total with
+  // the allocation's code would stamp francs on a sterling figure — and reporting
+  // it as zero, which is what happened before, was the €793,764 / €0 incident.
+  const committedCcy = (!useDisp && alloc?.basis_mismatch && alloc?.committed_currency) || shownCcy;
+  const figCommitted = (amount: number) => (near ? approx(amount, committedCcy) : money(amount, committedCcy));
   const figAlloc = (amount: number) => (allocApprox ? approx(amount, shownCcy) : money(amount, shownCcy));
   // Currencies no total on this page includes: the ones the EUR/GBP pair cannot
   // reach. Both blocks now mean the same thing by it — the allocation's list used
@@ -381,7 +407,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
           ) : (
             <>
               <span className={cn("text-18 font-semibold", over ? "text-danger-primary" : "text-primary")}>
-                {fig(shownCommitted)}
+                {figCommitted(shownCommitted)}
               </span>
               <span className="text-13 text-tertiary">of {figAlloc(shownAmount)}</span>
               {shownRemaining != null && (
@@ -501,8 +527,18 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             than letting somebody wonder why the switch does nothing. */}
         {!useDisp && alloc?.amount != null && (
           <p className="mt-1.5 text-11 text-tertiary">
-            This budget is held in {alloc.currency}, which this reading cannot convert. The figures above are the ones
-            recorded, counted only against amounts in the same currency.
+            {alloc.basis_mismatch ? (
+              <>
+                This budget is held in {alloc.currency}, which only euros and sterling can be converted between — so the
+                committed figure is reported in {committedCcy} instead, and how much is left cannot be worked out from
+                the two. Record the allocation in {committedCcy} to get one answer.
+              </>
+            ) : (
+              <>
+                This budget is held in {alloc.currency}, which this reading cannot convert. The figures above are the
+                ones recorded, counted only against amounts in the same currency.
+              </>
+            )}
           </p>
         )}
 
@@ -519,8 +555,29 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             />
             {/* The currency the project was actually funded in. It was storable
                 all along and no screen ever asked, so every budget in the
-                instance says euros whether or not that is true. */}
-            <select value={allocCcy} onChange={(e) => setAllocCcy(e.target.value)} className={cn(input, "w-20")}>
+                instance says euros whether or not that is true.
+
+                Changing it CONVERTS the amount in the box. It used to relabel it:
+                a €793,764 budget switched to GBP saved as £793,764, roughly a 17%
+                raise chosen from a dropdown, on the ceiling every figure on this
+                page is read against. The rate is the one a human recorded and
+                which travels with every other converted figure here. */}
+            <select
+              value={allocCcy}
+              onChange={(e) => {
+                const next = e.target.value;
+                const rate = currency?.eur_gbp_rate;
+                const amount = Number(allocDraft);
+                if (rate && allocDraft.trim() !== "" && Number.isFinite(amount)) {
+                  if (allocCcy === "EUR" && next === "GBP")
+                    setAllocDraft(String(Math.round(amount * rate * 100) / 100));
+                  else if (allocCcy === "GBP" && next === "EUR")
+                    setAllocDraft(String(Math.round((amount / rate) * 100) / 100));
+                }
+                setAllocCcy(next);
+              }}
+              className={cn(input, "w-20")}
+            >
               {[...new Set([...options, allocCcy])].map((code) => (
                 <option key={code} value={code}>
                   {code}
@@ -570,17 +627,14 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         />
       </div>
 
-      {expenses.length > 0 && (
+      {/* Gated on the SERIES having something in it, not on the expense list.
+          A project whose cost is entirely people — most of them here — has an
+          empty ledger and a full curve, and this block used to hide itself on
+          exactly those. */}
+      {(budget?.curve?.points?.length ?? 0) > 1 && (
         <div className="rounded-lg border border-subtle bg-layer-2 px-3 py-2.5">
           <p className="mb-1 text-11 font-medium tracking-wide text-tertiary uppercase">Spend over time</p>
-          <SpendCurve
-            expenses={expenses}
-            startDate={budget?.span?.start_date ?? null}
-            targetDate={budget?.span?.target_date ?? null}
-            allocation={alloc?.amount ?? null}
-            currency={alloc?.currency ?? "EUR"}
-            money={money}
-          />
+          <SpendCurve curve={budget?.curve ?? undefined} money={money} />
         </div>
       )}
 
@@ -797,20 +851,25 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "approved")}
-                      className="flex items-center gap-1 rounded bg-success-primary px-3 py-1.5 text-11 text-white"
+                      // Disabled for the whole queue while any decision is in
+                      // flight, and it SAYS so: a button that silently swallowed
+                      // the second click would leave somebody pressing it harder.
+                      disabled={!!deciding}
+                      className="flex items-center gap-1 rounded bg-success-primary px-3 py-1.5 text-11 text-white disabled:opacity-50"
                       aria-label={`Approve ${r.label} — this writes the line into the project's expenses`}
                     >
                       <Check className="size-3" />
-                      Approve
+                      {deciding === r.id ? "Saving…" : "Approve"}
                     </button>
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "rejected")}
+                      disabled={!!deciding}
                       aria-label={`Reject ${r.label}`}
                       // Same box as Approve: the two sit 8px apart and one of them
                       // was a 20px target, which is how a thumb aiming at Reject
                       // approves a purchase instead.
-                      className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
+                      className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
                     >
                       <X className="size-3" />
                       Reject
@@ -820,7 +879,8 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                   <button
                     type="button"
                     onClick={() => void withdraw(r.id)}
-                    className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary"
+                    disabled={!!deciding}
+                    className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary disabled:opacity-50"
                     title="Withdraw your request"
                   >
                     Withdraw

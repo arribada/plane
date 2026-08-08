@@ -45,7 +45,16 @@ import type {
 
 // The roster endpoint answers with the vocabulary too, so the editor can offer
 // the same disciplines the server accepts instead of hardcoding a second list.
-export type TProjectTeamResponse = { roles_vocabulary: { value: string; label: string }[]; team: TTeamMember[] };
+export type TProjectTeamResponse = {
+  roles_vocabulary: { value: string; label: string }[];
+  team: TTeamMember[];
+  /** Work items the roster edit just handed to somebody. Absent on an older server. */
+  reassigned?: number;
+  /** People this request actually took off the project. An id naming nobody is
+   *  ignored rather than refused, so a caller that meant to remove three and
+   *  removed none needs to be able to see that. Absent on an older server. */
+  removed?: number;
+};
 
 // Talks to the fork-only /api/arribada/ endpoints (plane.arribada Django app).
 // Same origin + session cookie: no auth wiring beyond what APIService already does.
@@ -531,7 +540,15 @@ export class ArribadaService extends APIService {
       .catch(rethrow);
   }
 
-  // Full replace of the roster: whatever is not in `team` is dropped.
+  // Upsert the rows in `team`, and remove exactly the ids in `remove`.
+  //
+  // NOT a full replace, though it used to be. Leaving somebody out no longer
+  // deletes them: the payload is built when the editor opens, so a second person
+  // editing the team — or one tab left open since this morning — meant Save
+  // silently removed everybody added in between. Removal is now something the
+  // request says rather than something it implies, and the server asks the lead
+  // for it, because a roster row holds the only copy of that person's leave,
+  // working pattern and holiday calendar.
   async setProjectTeam(
     workspaceSlug: string,
     projectId: string,
@@ -542,9 +559,10 @@ export class ArribadaService extends APIService {
       email?: string;
       roles: string[];
       is_lead?: boolean;
-    }[]
+    }[],
+    remove: string[] = []
   ): Promise<TProjectTeamResponse> {
-    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`, { team })
+    return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/team/`, { team, remove })
       .then((response) => response?.data)
       .catch(rethrow);
   }

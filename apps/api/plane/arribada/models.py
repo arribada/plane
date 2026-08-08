@@ -383,6 +383,24 @@ class IssueRole(models.Model):
     `role` is free text for the same reason ProjectTeamMember.roles is (see
     PROJECT_ROLES): a vocabulary that refuses "acoustics" is a vocabulary people route
     around. Matching against the roster is done case-insensitively by the callers.
+
+    ONE DISCIPLINE PER WORK ITEM, enforced below on `issue` alone.
+
+    It used to be unique on `(issue, role)`, which made several rows per item legal,
+    and every reader disagreed about which one counted. The work-item panel took
+    `.first()` — alphabetically first, via the ordering below. The budget built a dict
+    keyed on the issue, so alphabetically LAST won. The panel therefore showed one
+    discipline while the budget charged the other's hourly rate, and the two figures
+    never share a screen, so nobody could reconcile them. Worse, four of the five
+    writers use `update_or_create(issue_id=...)`, which looks a row up on a key the
+    database did not consider unique: the moment an item held two, every attempt to
+    set its discipline raised MultipleObjectsReturned — a permanent 500 on that item,
+    unfixable through the UI, because the endpoint that would have cleared it 500s too.
+
+    Plural was never modelled anyway. `_labour_cost` multiplies an item's WHOLE effort
+    by one discipline's rate; nothing anywhere records how a task's days split between
+    two of them. So two rows could not have produced a cost either — only two costs,
+    depending on who was asking.
     """
 
     MANUAL = "manual"
@@ -410,9 +428,11 @@ class IssueRole(models.Model):
             # applying a plan and a human editing the same item are two writers, and
             # only the database can settle that race. Every writer pairs it with
             # bulk_create(ignore_conflicts=True) so the loser is a no-op, not a 500.
-            models.UniqueConstraint(
-                fields=["issue", "role"], name="arribada_issue_role_unique_issue_role"
-            )
+            #
+            # On `issue` alone — see the class docstring. This is also what makes
+            # `update_or_create(issue_id=...)` a legal lookup, which four writers had
+            # been doing against the old two-column key.
+            models.UniqueConstraint(fields=["issue"], name="arribada_issue_role_unique_issue")
         ]
 
     def __str__(self):
@@ -752,8 +772,22 @@ class ProcurementRequest(models.Model):
     )
     decided_at = models.DateTimeField(null=True, blank=True)
     decision_note = models.TextField(blank=True, default="")
-    expense = models.ForeignKey(
-        ProjectExpense, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    # ONE expense per request, enforced by the database.
+    #
+    # A plain ForeignKey let two rows claim the same line, and — more to the point —
+    # let one request produce several. Approve was read outside its own transaction,
+    # so the idempotency guard tested a copy of the row taken before the lock existed:
+    # a double click was two requests that both saw `expense_id` empty, both created a
+    # line, and the second overwrote the pointer to the first. The project then paid
+    # twice for one purchase, and the surviving orphan was UNREACHABLE — reject and
+    # delete both clean up via this single column, so nothing could ever remove it.
+    #
+    # OneToOne is the invariant stated where it can be enforced. Postgres allows many
+    # NULLs in a unique index, so a request awaiting a decision is unaffected. The
+    # handler pairs it with `select_for_update` on the request, which is what makes
+    # the second approve re-read a committed `expense_id` rather than a stale one.
+    expense = models.OneToOneField(
+        ProjectExpense, null=True, blank=True, on_delete=models.SET_NULL, related_name="procurement_request"
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

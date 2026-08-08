@@ -18,6 +18,7 @@ import { EUserProjectRoles } from "@plane/types";
 import { Avatar } from "@plane/ui";
 import { cn, getFileURL } from "@plane/utils";
 import { useMember } from "@/hooks/store/use-member";
+import { apiErrorStatus } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TTeamMember } from "@/plane-web/types/arribada";
 
@@ -127,6 +128,16 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   // The saved roster outranks the overview payload until the parent refetch
   // lands, so the block never shows what the user just replaced.
   const [override, setOverride] = useState<TTeamMember[] | null>(null);
+  // Ids the editor has taken off the roster in this session.
+  //
+  // Removal used to be implied — the PUT was a full replace, so dropping a row
+  // from `draft` deleted the person. Two things were wrong with that. The payload
+  // is a snapshot taken when the editor opened, so a second editor's additions
+  // were deleted by a Save that never mentioned them; and it meant every member
+  // could empty a roster whose rows hold the only copy of somebody's leave,
+  // working pattern and holiday calendar. The server now removes exactly the ids
+  // named here and asks the lead before it does.
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
   // A refetch must not overwrite what someone has already typed.
   const touched = useRef(false);
   const keySeq = useRef(0);
@@ -150,13 +161,15 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   );
 
   // The vocabulary is only worth a round trip once someone actually edits, and
-  // the same call returns the roster the server currently holds — which is what
-  // a full-replace PUT has to be built from.
+  // the same call returns the roster the server currently holds — so the editor
+  // opens on what is there now rather than on the overview payload, which may be
+  // minutes old.
   useEffect(() => {
     let cancelled = false;
     if (editing && slug && projectId) {
       setVocabLoading(true);
       setStaleRoster(false);
+      setRemovedIds([]);
       service
         .getProjectTeam(slug, projectId)
         .then((r) => {
@@ -328,14 +341,26 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
 
     setSaving(true);
     try {
-      const r = await service.setProjectTeam(slug, projectId, payload);
+      const r = await service.setProjectTeam(slug, projectId, payload, removedIds);
       setOverride(r.team ?? []);
       if (r.roles_vocabulary?.length) setVocabulary(r.roles_vocabulary);
+      setRemovedIds([]);
       setEditing(false);
       onSaved?.();
-    } catch {
+    } catch (e) {
       // The editor stays open so nothing typed is lost with the error.
-      setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't save the team", message: "Please try again." });
+      //
+      // A 403 here means one specific thing: removals are the lead's, and this
+      // request asked for one. Saying "please try again" to that would send
+      // somebody round the same loop forever.
+      const forbidden = apiErrorStatus(e) === 403;
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: forbidden ? "Only the project lead can take somebody off the roster" : "Couldn't save the team",
+        message: forbidden
+          ? "Everything else you changed is unsaved too — put the person back to save the rest."
+          : "Please try again.",
+      });
     } finally {
       setSaving(false);
     }
@@ -589,7 +614,13 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
                   </button>
                   <button
                     type="button"
-                    onClick={() => mutate((rows) => rows.filter((r) => r.key !== row.key))}
+                    onClick={() => {
+                      // A row that has never been saved has no id, so there is
+                      // nothing for the server to remove — dropping it from the
+                      // draft IS the removal. A saved row is named explicitly.
+                      if (row.id) setRemovedIds((ids) => (ids.includes(row.id!) ? ids : [...ids, row.id!]));
+                      mutate((rows) => rows.filter((r) => r.key !== row.key));
+                    }}
                     aria-label={`Remove ${row.name || "this person"}`}
                     className="flex-shrink-0 rounded border border-subtle p-1.5 text-tertiary hover:bg-layer-2 hover:text-primary"
                   >

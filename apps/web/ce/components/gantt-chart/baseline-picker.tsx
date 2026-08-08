@@ -23,6 +23,7 @@ import { cn } from "@plane/utils";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { getBaselineShared } from "./baseline-request";
 
 const service = new ArribadaService();
 
@@ -47,7 +48,9 @@ export const BaselinePicker = observer(function BaselinePicker() {
   const load = async () => {
     if (!slug || !pid) return;
     try {
-      const payload = await service.getBaseline(slug, pid);
+      // Shared with the ghost-bar overlay, which mounts in the same commit and
+      // used to make this exact request a second time.
+      const payload = await getBaselineShared(slug, pid);
       setSnapshots(payload?.baselines ?? []);
       setFailure(null);
     } catch (error) {

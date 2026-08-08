@@ -30,7 +30,8 @@
  * regardless. Dismissing writes to the record the sync itself reads, so it stays
  * gone, and the archive at the foot of the page is how a mistake is undone.
  */
-import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { Archive, ChevronRight, ExternalLink, Github, ListChecks, Loader2, Undo2, X } from "lucide-react";
@@ -72,6 +73,174 @@ type TArchivedItem = {
   html_url: string;
   dismissed_at: string | null;
 };
+
+type TRowProps = {
+  item: TQueueItem;
+  /** The project this row is going to, "" for none. A string rather than the
+   *  whole map, so a change to another row is not a change to this one. */
+  choiceId: string;
+  owner?: TOwner;
+  busy: boolean;
+  /** The workspace's projects as `<option>`s, built ONCE by the parent and shared
+   *  by every row. React elements are immutable descriptions, so the same array
+   *  can appear in three hundred selects. */
+  projectOptions: ReactNode;
+  onChoose: (rowId: string, projectId: string) => void;
+  onForget: (rowId: string) => void;
+  onPick: (rowId: string) => void;
+  onDismiss: (row: TQueueItem) => void;
+  onSettle: (row: TQueueItem) => void;
+};
+
+/**
+ * One issue waiting for a decision.
+ *
+ * Extracted and memoised because this page is a list of independent decisions
+ * that behaved like a single one. `choice`, `owner` and `busyRows` all lived in
+ * the root, and the `<option>` list was rebuilt per row inside the render, so
+ * choosing a project on ONE row re-rendered every row and re-created every
+ * option: about 2,900 elements on today's data, and 300 rows × 540 projects —
+ * 168,000 — at the size this workspace is heading for. Now a click touches the
+ * row it was aimed at.
+ *
+ * Every handler is passed by the parent as a stable `useCallback` and takes the
+ * row id, which is what makes `memo` actually hold: a fresh closure per row per
+ * render would defeat it silently and the page would look exactly the same.
+ */
+export const TriageRow = memo(function TriageRow(props: TRowProps) {
+  const { item, choiceId, owner, busy, projectOptions, onChoose, onForget, onPick, onDismiss, onSettle } = props;
+
+  /** The claimant picked for this row, if the pick is one of the claimants.
+   *  Settling the repository on a project that never claimed it is a different
+   *  and much larger act than resolving a contest, so it is not offered here. */
+  const claimantChosen = item.claimed_by.find((c) => c.id === choiceId) ?? null;
+
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-subtle bg-layer-1 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-13 text-primary" title={item.title}>
+            {item.title}
+          </span>
+          <a
+            href={item.html_url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex-shrink-0 text-tertiary hover:text-primary"
+            aria-label={`Open ${item.repo}#${item.number} on GitHub`}
+          >
+            <ExternalLink className="size-3" />
+          </a>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-10 text-tertiary">
+          <span>
+            {item.repo}#{item.number}
+          </span>
+          {item.labels.length > 0 && <span>· {item.labels.join(", ")}</span>}
+          {item.github_assignees.length > 0 && <span>· @{item.github_assignees.join(", @")}</span>}
+          {item.milestone && <span>· {item.milestone}</span>}
+          {/* Why this row is here at all. Without it, a repository two
+              projects claim looks identical to one nobody claims, and
+              the answer to each is different.
+
+              The names are the answer, so they are the control. Reading
+              "claimed by Firmware and Hardware" and then hunting for one
+              of those two words in a list of twenty-three is the same
+              decision made twice, and the second time is where it goes
+              wrong. */}
+          {item.claimed_by.length > 1 && (
+            <span className="text-warning-primary">
+              ·{" "}
+              {item.claimed_by.map((c, index) => (
+                <span key={c.id}>
+                  {index === 0 ? "claimed by " : " and "}
+                  <button
+                    type="button"
+                    onClick={() => onChoose(item.id, c.id)}
+                    title={`File this one in ${c.name}`}
+                    className={cn(
+                      "underline decoration-dotted underline-offset-2 hover:text-primary",
+                      choiceId === c.id && "font-medium text-primary no-underline"
+                    )}
+                  >
+                    {c.name}
+                  </button>
+                </span>
+              ))}
+              {/* The other half of the answer: this row, or this repo
+                  for good. Offered only once a claimant is chosen, so
+                  the sentence it completes is already on screen. */}
+              {claimantChosen && (
+                <button
+                  type="button"
+                  onClick={() => onSettle(item)}
+                  title={`Give ${item.repo} to this project permanently and unlink it from the others`}
+                  className="ml-1.5 text-tertiary underline decoration-dotted underline-offset-2 hover:text-primary"
+                >
+                  always
+                </button>
+              )}
+            </span>
+          )}
+          {item.claimed_by.length === 0 && <span>· no project names this repository</span>}
+        </div>
+      </div>
+
+      <select
+        value={choiceId}
+        onChange={(e) => onChoose(item.id, e.target.value)}
+        aria-label={`Project for ${item.title}`}
+        className="w-56 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+      >
+        <option value="">Leave it here</option>
+        {projectOptions}
+      </select>
+
+      {/* The second decision, and it has a default: a work item of its
+          own. Shown even before a project is picked so the default is
+          read rather than discovered after the fact. */}
+      <div className="flex w-44 flex-shrink-0 items-center gap-1">
+        <button
+          type="button"
+          disabled={!choiceId}
+          onClick={() => onPick(item.id)}
+          title={owner ? `On the checklist of ${owner.name}` : "Put it on an existing work item's checklist instead"}
+          className={cn(
+            "min-w-0 flex-1 truncate rounded border border-subtle px-2 py-1 text-left text-11",
+            choiceId ? "text-secondary hover:text-primary" : "text-tertiary opacity-50",
+            owner && "text-primary"
+          )}
+        >
+          {owner ? `On ${owner.label}` : "Its own work item"}
+        </button>
+        {owner && (
+          <button
+            type="button"
+            onClick={() => onForget(item.id)}
+            aria-label={`Give ${item.title} its own work item instead`}
+            className="flex-shrink-0 text-tertiary hover:text-primary"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
+
+      {/* The third answer. Filing was the only way off this list, so a
+          duplicate or a wontfix could only be cleared by creating work
+          for it somewhere. */}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onDismiss(item)}
+        title="Archive it — no project, and the sync will not bring it back"
+        aria-label={`Archive ${item.title} without filing it`}
+        className={cn("flex-shrink-0 text-tertiary hover:text-primary", busy && "opacity-50")}
+      >
+        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+      </button>
+    </li>
+  );
+});
 
 export const GithubTriageRoot = observer(function GithubTriageRoot() {
   const { workspaceSlug } = useParams();
@@ -158,39 +327,74 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
   const chosen = Object.entries(choice).filter(([, project]) => project);
   const grouped = chosen.filter(([id]) => owner[id]).length;
 
-  const forget = (rowId: string) =>
-    setOwner((current) => {
-      const next = { ...current };
-      delete next[rowId];
-      return next;
-    });
+  // Built once per project list rather than once per row. Three hundred rows used
+  // to mean three hundred copies of the same five hundred `<option>`s, rebuilt on
+  // every keystroke anywhere on the page.
+  const projectOptions = useMemo(
+    () =>
+      projects.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      )),
+    [projects]
+  );
 
-  const dismiss = async (row: TQueueItem) => {
-    if (!slug) return;
-    setBusyRows((current) => [...current, row.id]);
-    try {
-      await service.dismissGithubTriage(slug, [row.id]);
-      // Removed here rather than by reloading the queue: a reload would also
-      // discard every other project choice on the page, which is somebody's
-      // work in progress and nothing to do with this row.
-      setItems((current) => (current ?? []).filter((i) => i.id !== row.id));
-      setChoice((c) => {
-        const next = { ...c };
-        delete next[row.id];
+  const forget = useCallback(
+    (rowId: string) =>
+      setOwner((current) => {
+        const next = { ...current };
+        delete next[rowId];
         return next;
-      });
-      forget(row.id);
-      loadArchive();
-    } catch (error) {
-      setToast({
-        type: TOAST_TYPE.ERROR,
-        title: "Couldn't archive it",
-        message: (error as { error?: string })?.error ?? "It is still in the queue.",
-      });
-    } finally {
-      setBusyRows((current) => current.filter((id) => id !== row.id));
-    }
-  };
+      }),
+    []
+  );
+
+  // Functional updates and no dependencies, so the identity of every handler
+  // below is stable for the life of the page — which is the only reason the
+  // memoised row can skip a render at all.
+  const choose = useCallback(
+    (rowId: string, projectId: string) => {
+      setChoice((c) => ({ ...c, [rowId]: projectId }));
+      // Leaving it here means it is not going anywhere, so where it
+      // was going is no longer an answer worth keeping.
+      if (!projectId) forget(rowId);
+    },
+    [forget]
+  );
+
+  const pickOne = useCallback((rowId: string) => setPicking([rowId]), []);
+  const settleOne = useCallback((row: TQueueItem) => setSettling(row), []);
+
+  const dismiss = useCallback(
+    async (row: TQueueItem) => {
+      if (!slug) return;
+      setBusyRows((current) => [...current, row.id]);
+      try {
+        await service.dismissGithubTriage(slug, [row.id]);
+        // Removed here rather than by reloading the queue: a reload would also
+        // discard every other project choice on the page, which is somebody's
+        // work in progress and nothing to do with this row.
+        setItems((current) => (current ?? []).filter((i) => i.id !== row.id));
+        setChoice((c) => {
+          const next = { ...c };
+          delete next[row.id];
+          return next;
+        });
+        forget(row.id);
+        loadArchive();
+      } catch (error) {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "Couldn't archive it",
+          message: (error as { error?: string })?.error ?? "It is still in the queue.",
+        });
+      } finally {
+        setBusyRows((current) => current.filter((id) => id !== row.id));
+      }
+    },
+    [slug, forget, loadArchive]
+  );
 
   const restore = async (row: TArchivedItem) => {
     if (!slug) return;
@@ -338,153 +542,19 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
         <>
           <ul className="flex flex-col gap-1.5">
             {items.map((item) => (
-              <li
+              <TriageRow
                 key={item.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-subtle bg-layer-1 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-13 text-primary" title={item.title}>
-                      {item.title}
-                    </span>
-                    <a
-                      href={item.html_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-shrink-0 text-tertiary hover:text-primary"
-                      aria-label={`Open ${item.repo}#${item.number} on GitHub`}
-                    >
-                      <ExternalLink className="size-3" />
-                    </a>
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-10 text-tertiary">
-                    <span>
-                      {item.repo}#{item.number}
-                    </span>
-                    {item.labels.length > 0 && <span>· {item.labels.join(", ")}</span>}
-                    {item.github_assignees.length > 0 && <span>· @{item.github_assignees.join(", @")}</span>}
-                    {item.milestone && <span>· {item.milestone}</span>}
-                    {/* Why this row is here at all. Without it, a repository two
-                        projects claim looks identical to one nobody claims, and
-                        the answer to each is different.
-
-                        The names are the answer, so they are the control. Reading
-                        "claimed by Firmware and Hardware" and then hunting for one
-                        of those two words in a list of twenty-three is the same
-                        decision made twice, and the second time is where it goes
-                        wrong. */}
-                    {item.claimed_by.length > 1 && (
-                      <span className="text-warning-primary">
-                        ·{" "}
-                        {item.claimed_by.map((c, index) => (
-                          <span key={c.id}>
-                            {index === 0 ? "claimed by " : " and "}
-                            <button
-                              type="button"
-                              onClick={() => setChoice((current) => ({ ...current, [item.id]: c.id }))}
-                              title={`File this one in ${c.name}`}
-                              className={cn(
-                                "underline decoration-dotted underline-offset-2 hover:text-primary",
-                                choice[item.id] === c.id && "font-medium text-primary no-underline"
-                              )}
-                            >
-                              {c.name}
-                            </button>
-                          </span>
-                        ))}
-                        {/* The other half of the answer: this row, or this repo
-                            for good. Offered only once a claimant is chosen, so
-                            the sentence it completes is already on screen. */}
-                        {claimantChosen(item) && (
-                          <button
-                            type="button"
-                            onClick={() => setSettling(item)}
-                            title={`Give ${item.repo} to this project permanently and unlink it from the others`}
-                            className="ml-1.5 text-tertiary underline decoration-dotted underline-offset-2 hover:text-primary"
-                          >
-                            always
-                          </button>
-                        )}
-                      </span>
-                    )}
-                    {item.claimed_by.length === 0 && <span>· no project names this repository</span>}
-                  </div>
-                </div>
-
-                <select
-                  value={choice[item.id] ?? ""}
-                  onChange={(e) => {
-                    const projectId = e.target.value;
-                    setChoice((c) => ({ ...c, [item.id]: projectId }));
-                    // Leaving it here means it is not going anywhere, so where it
-                    // was going is no longer an answer worth keeping.
-                    if (!projectId) forget(item.id);
-                  }}
-                  aria-label={`Project for ${item.title}`}
-                  className="w-56 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
-                >
-                  <option value="">Leave it here</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-
-                {/* The second decision, and it has a default: a work item of its
-                    own. Shown even before a project is picked so the default is
-                    read rather than discovered after the fact. */}
-                <div className="flex w-44 flex-shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    disabled={!choice[item.id]}
-                    onClick={() => setPicking([item.id])}
-                    title={
-                      owner[item.id]
-                        ? `On the checklist of ${owner[item.id].name}`
-                        : "Put it on an existing work item's checklist instead"
-                    }
-                    className={cn(
-                      "min-w-0 flex-1 truncate rounded border border-subtle px-2 py-1 text-left text-11",
-                      choice[item.id] ? "text-secondary hover:text-primary" : "text-tertiary opacity-50",
-                      owner[item.id] && "text-primary"
-                    )}
-                  >
-                    {owner[item.id] ? `On ${owner[item.id].label}` : "Its own work item"}
-                  </button>
-                  {owner[item.id] && (
-                    <button
-                      type="button"
-                      onClick={() => forget(item.id)}
-                      aria-label={`Give ${item.title} its own work item instead`}
-                      className="flex-shrink-0 text-tertiary hover:text-primary"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  )}
-                </div>
-
-                {/* The third answer. Filing was the only way off this list, so a
-                    duplicate or a wontfix could only be cleared by creating work
-                    for it somewhere. */}
-                <button
-                  type="button"
-                  disabled={busyRows.includes(item.id)}
-                  onClick={() => void dismiss(item)}
-                  title="Archive it — no project, and the sync will not bring it back"
-                  aria-label={`Archive ${item.title} without filing it`}
-                  className={cn(
-                    "flex-shrink-0 text-tertiary hover:text-primary",
-                    busyRows.includes(item.id) && "opacity-50"
-                  )}
-                >
-                  {busyRows.includes(item.id) ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Archive className="size-3.5" />
-                  )}
-                </button>
-              </li>
+                item={item}
+                choiceId={choice[item.id] ?? ""}
+                owner={owner[item.id]}
+                busy={busyRows.includes(item.id)}
+                projectOptions={projectOptions}
+                onChoose={choose}
+                onForget={forget}
+                onPick={pickOne}
+                onDismiss={dismiss}
+                onSettle={settleOne}
+              />
             ))}
           </ul>
 

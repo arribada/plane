@@ -10,7 +10,7 @@
  * renderer is touched.
  */
 import type { FC } from "react";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
@@ -20,7 +20,7 @@ import { useWorkspaceHolidays } from "../use-workspace-holidays";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
-import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { getBaselineShared } from "../baseline-request";
 
 type Props = {
   itemsContainerWidth: number;
@@ -30,17 +30,116 @@ type Props = {
 const DIAMOND = 7; // half-diagonal of a milestone marker
 const BAR = 18; // visible bar height the progress fill sits inside
 
+/**
+ * Cross-project dependency arrows, in their own observer.
+ *
+ * Split out because of ONE line: these arrows dim the ones you are not pointing
+ * at, which means reading `store.activeBlockId` — and `block-row.tsx` writes that
+ * on `onMouseEnter` and `onMouseLeave`. Read from the parent, it made moving the
+ * mouse across a single bar recompute the ENTIRE overlay: weekend bands, holiday
+ * bands, ghost bars, slack tails, milestones, all of it, for every block on the
+ * chart, several times a second.
+ *
+ * MobX tracks whatever a component reads while it renders, so moving the read
+ * down here is the whole fix: a hover now re-renders the arrows and nothing else,
+ * and on a project gantt — where these arrows never draw — it re-renders nothing
+ * at all, because the parent no longer mounts this component.
+ *
+ * Everything below is the code that used to live inline, unchanged.
+ */
+const DependencyArrows: FC<{ blockIds: string[] }> = observer(function DependencyArrows({ blockIds }) {
+  const store = useTimeLineChartStore();
+  const portfolio = usePortfolio();
+  const active = store.activeBlockId;
+
+  // Drawn whenever there are edges. Gating them on the critical-path switch meant a
+  // portfolio of six projects showed no dependencies until somebody pressed a button
+  // whose label promises something else entirely.
+  if (!portfolio.crossEdges.length) return null;
+
+  // Drawn only between two currently-positioned bars; critical edges in red,
+  // cross-project in purple dashed, in-project in grey. predecessor end ->
+  // successor start.
+  const arrows: {
+    path: string;
+    hx: number;
+    hy: number;
+    color: string;
+    width: number;
+    dash?: string;
+    opacity: number;
+    from: string;
+    to: string;
+  }[] = [];
+  const idx = new Map<string, number>();
+  blockIds.forEach((id, i) => idx.set(id, i));
+  for (const e of portfolio.crossEdges) {
+    const ia = idx.get(e.from);
+    const ib = idx.get(e.to);
+    if (ia === undefined || ib === undefined) continue;
+    const ba = store.getBlockById(e.from);
+    const bb = store.getBlockById(e.to);
+    if (!ba?.position || !bb?.position) continue;
+    const x1 = ba.position.marginLeft + (ba.position.width ?? 0); // predecessor end
+    const x2 = bb.position.marginLeft; // successor start
+    const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+    const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+    // Rounded elbow: drop just before the successor's start, then arrive pointing
+    // into it. Square corners at this density read as a circuit diagram.
+    const midx = Math.max(x1 + 8, x2 - 10);
+    const r = Math.min(5, Math.abs(y2 - y1) / 2, Math.max(0, midx - x1));
+    const down = y2 >= y1 ? 1 : -1;
+    const path =
+      r > 1
+        ? `M ${x1} ${y1} H ${midx - r} a ${r} ${r} 0 0 ${down > 0 ? 1 : 0} ${r} ${down * r} V ${y2 - down * r} a ${r} ${r} 0 0 ${down > 0 ? 0 : 1} ${r} ${down * r} H ${x2}`
+        : `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`;
+    // Red is the critical chain and nothing else; a cross-project link is dashed
+    // because crossing a project boundary is a fact about the link, not a severity.
+    const highlighted = portfolio.showCriticalPath && e.critical;
+    const related = active === e.from || active === e.to;
+    const color = highlighted ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
+    arrows.push({
+      path,
+      hx: x2,
+      hy: y2,
+      color,
+      width: highlighted ? 2 : related ? 1.75 : 1,
+      dash: e.cross_project && !highlighted ? "4 2" : undefined,
+      // Same three states as the project gantt: at rest they sit back far enough
+      // to read the bars through, and pointing at one bar lights only its own.
+      opacity: related ? 0.95 : active ? 0.08 : highlighted ? 0.85 : 0.32,
+      from: e.from,
+      to: e.to,
+    });
+  }
+
+  return (
+    <>
+      {arrows.map((a) => (
+        // The "fade dependency arrows" switch applies here too, so the portfolio
+        // and the per-project chart answer it the same way.
+        <g
+          key={`dep-${a.from}-${a.to}`}
+          opacity={store.dimDependencies ? a.opacity : Math.max(a.opacity, 0.7)}
+          style={{ transition: "opacity .12s" }}
+        >
+          <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} />
+          <path d={`M ${a.hx} ${a.hy} l -5 -3 l 0 6 z`} fill={a.color} />
+        </g>
+      ))}
+    </>
+  );
+});
+
 export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditionalLayers(props) {
   const { itemsContainerWidth, blockCount } = props;
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
-  const portfolio = usePortfolio();
   // Shared with the arrows, which colour the critical chain from the same answer.
   const { byIssue: slackByIssue } = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
   // This overlay is shared by every gantt (issues/cycles/modules); the portfolio-only
   // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
   const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
-  const service = useMemo(() => new ArribadaService(), []);
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
 
   // Which promised plan the ghosts draw; empty means the newest.
@@ -51,11 +150,13 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     if (workspaceSlug && projectId) {
       const ws = workspaceSlug.toString();
       const pid = projectId.toString();
-      service
-        // Whichever snapshot the reader picked, the newest by default. An entry
-        // whose work item was deleted has a null id and no bar to sit behind — the
-        // baseline still records it, and the report is where that shows.
-        .getBaseline(ws, pid, selectedBaseline || undefined)
+      // Whichever snapshot the reader picked, the newest by default. An entry
+      // whose work item was deleted has a null id and no bar to sit behind — the
+      // baseline still records it, and the report is where that shows.
+      //
+      // Shared with BaselinePicker, which mounts beside this and used to make the
+      // byte-identical request in the same commit.
+      getBaselineShared(ws, pid, selectedBaseline || undefined)
         .then((payload) => {
           if (cancelled) return;
           const map: Record<string, { start: string | null; target: string | null }> = {};
@@ -77,7 +178,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, service, selectedBaseline]);
+  }, [workspaceSlug, projectId, selectedBaseline]);
 
   // ABOVE the early return: this is a hook, and calling it only on the renders
   // where currentViewData exists changes the hook count between renders, which
@@ -89,7 +190,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   if (!view) return null;
 
   const height = Math.max(blockCount, 1) * BLOCK_HEIGHT;
-  const active = store.activeBlockId;
   const blockIds = store.blockIds ?? [];
   const dayWidthForTails: number = view.data?.dayWidth ?? 0;
 
@@ -166,67 +266,6 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     ghosts.push({ x: x1, y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2 - 5, w: Math.max(x2 - x1, 3) });
   }
 
-  // cross-project dependency arrows (portfolio "critical path" mode). Drawn only
-  // between two currently-positioned bars; critical edges in red, cross-project in
-  // purple dashed, in-project in grey. predecessor end -> successor start.
-  const arrows: {
-    path: string;
-    hx: number;
-    hy: number;
-    color: string;
-    width: number;
-    dash?: string;
-    opacity: number;
-    from: string;
-    to: string;
-  }[] = [];
-  // Drawn whenever there are edges. Gating them on the critical-path switch meant a
-  // portfolio of six projects showed no dependencies until somebody pressed a button
-  // whose label promises something else entirely.
-  if (isPortfolio && portfolio.crossEdges.length) {
-    const idx = new Map<string, number>();
-    blockIds.forEach((id, i) => idx.set(id, i));
-    for (const e of portfolio.crossEdges) {
-      const ia = idx.get(e.from);
-      const ib = idx.get(e.to);
-      if (ia === undefined || ib === undefined) continue;
-      const ba = store.getBlockById(e.from);
-      const bb = store.getBlockById(e.to);
-      if (!ba?.position || !bb?.position) continue;
-      const x1 = ba.position.marginLeft + (ba.position.width ?? 0); // predecessor end
-      const x2 = bb.position.marginLeft; // successor start
-      const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      // Rounded elbow: drop just before the successor's start, then arrive pointing
-      // into it. Square corners at this density read as a circuit diagram.
-      const midx = Math.max(x1 + 8, x2 - 10);
-      const r = Math.min(5, Math.abs(y2 - y1) / 2, Math.max(0, midx - x1));
-      const down = y2 >= y1 ? 1 : -1;
-      const path =
-        r > 1
-          ? `M ${x1} ${y1} H ${midx - r} a ${r} ${r} 0 0 ${down > 0 ? 1 : 0} ${r} ${down * r} V ${y2 - down * r} a ${r} ${r} 0 0 ${down > 0 ? 0 : 1} ${r} ${down * r} H ${x2}`
-          : `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`;
-      // Red is the critical chain and nothing else; a cross-project link is dashed
-      // because crossing a project boundary is a fact about the link, not a severity.
-      const highlighted = portfolio.showCriticalPath && e.critical;
-      const related = active === e.from || active === e.to;
-      const color = highlighted ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
-      arrows.push({
-        path,
-        hx: x2,
-        hy: y2,
-        color,
-        width: highlighted ? 2 : related ? 1.75 : 1,
-        dash: e.cross_project && !highlighted ? "4 2" : undefined,
-        // Same three states as the project gantt: at rest they sit back far enough
-        // to read the bars through, and pointing at one bar lights only its own.
-        opacity: related ? 0.95 : active ? 0.08 : highlighted ? 0.85 : 0.32,
-        from: e.from,
-        to: e.to,
-      });
-    }
-  }
-
   // milestones: zero-duration items (start === target) drawn as named diamonds
   // Ids the bar renderer should not draw at all: a diamond replaces the bar, it
   // does not decorate it, and a 3px sliver poking out from under it reads as a bug.
@@ -299,18 +338,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           <circle cx={todayX} cy={3} r={3} fill="#ef4444" />
         </g>
       )}
-      {arrows.map((a) => (
-        // The "fade dependency arrows" switch applies here too, so the portfolio
-        // and the per-project chart answer it the same way.
-        <g
-          key={`dep-${a.from}-${a.to}`}
-          opacity={store.dimDependencies ? a.opacity : Math.max(a.opacity, 0.7)}
-          style={{ transition: "opacity .12s" }}
-        >
-          <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} />
-          <path d={`M ${a.hx} ${a.hy} l -5 -3 l 0 6 z`} fill={a.color} />
-        </g>
-      ))}
+      {isPortfolio && <DependencyArrows blockIds={blockIds} />}
       {milestones.map((m) => (
         <g key={`ms-${m.x}-${m.y}`}>
           <path

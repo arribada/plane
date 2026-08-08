@@ -4,6 +4,7 @@
 
 import uuid
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models.functions import Lower
 
@@ -342,14 +343,31 @@ class ProjectTeamMember(models.Model):
         ordering = ("-is_lead", "name")
         verbose_name = "Project team member"
         verbose_name_plural = "Project team members"
+        indexes = [
+            # The two lookups the wiki sync does per entry, and it does them inside
+            # an uncapped loop over the request body. They were `__iexact`, which
+            # Django compiles to `UPPER(col) = UPPER(%s)` — an expression no index
+            # here matched, so each one sequential-scanned the whole roster. The
+            # callers now go through `_ci()`, which emits `LOWER(col) = %s`; these
+            # are the indexes that serves.
+            models.Index(Lower("email"), "project", name="arribada_team_lower_email"),
+            models.Index(Lower("name"), "project", name="arribada_team_lower_name"),
+            # `roles__contains=[role]` — "who on this project holds this
+            # discipline". It runs once per work item in the bulk discipline
+            # assignment, i.e. up to five hundred times in one request, and JSONB
+            # containment has no answer at all without a GIN index. The audit
+            # called this the highest-value missing index in the fork.
+            GinIndex(fields=["roles"], name="arribada_team_roles_gin"),
+        ]
         constraints = [
             # Two partial unique indexes rather than an in-code check: the wiki cron and
             # a human editing the roster write concurrently, and only the database can
             # settle that race. The address is the identity whenever we have one; the
             # name is the fallback for the (common) roster row with no address yet.
-            # Case folding is done in the callers, not here — a functional index over
-            # Lower(name) cannot be expressed without a raw migration, and every write
-            # path already normalises before it looks a person up.
+            # Case folding is done in the callers, not here — the unique rule itself is
+            # over the raw column, and every write path normalises before it looks a
+            # person up. The Lower() indexes above are for the READ, and are plain
+            # indexes precisely so they cannot change what is or is not a duplicate.
             models.UniqueConstraint(
                 fields=["project", "email"],
                 condition=~models.Q(email=""),

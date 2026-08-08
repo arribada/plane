@@ -11,8 +11,19 @@
  * cannot ask which five. This is that list, plus a condensed timeline, and it
  * exists only in the printout.
  *
- * Fetched on mount rather than on print: `window.print()` is synchronous, so
- * anything not already in the DOM when it fires does not make it onto the page.
+ * Fetched when somebody asks to print, NOT on mount.
+ *
+ * `window.print()` is synchronous, so anything not already in the DOM when it
+ * fires does not make it onto the page — which is why this used to load on
+ * mount. The cost of that was two requests on every single Overview view, by far
+ * the heaviest pair on the page: up to five hundred work items (of which this
+ * reads four fields) and a second full budget computation the block above had
+ * already made, all to fill a `hidden` div that most readers never print.
+ *
+ * So the parent arms it instead, and waits: the Print button loads this first and
+ * calls `window.print()` once it is in the DOM. `beforeprint` arms it too, which
+ * covers Ctrl-P from the second press onwards — the browser will not hold a print
+ * dialog open for a network call, and the button is the discoverable path anyway.
  */
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
@@ -31,9 +42,17 @@ const GROUPS: { key: string; title: string; match: (state: string) => boolean }[
   { key: "unstarted", title: "Not started", match: (s) => s === "unstarted" || s === "backlog" },
 ];
 
-type Props = { overview: TProjectOverview | null };
+type Props = {
+  overview: TProjectOverview | null;
+  /** Somebody wants to print. Until this is true nothing here is fetched. */
+  armed: boolean;
+  /** Called once the annex is in the DOM — or once it is known there is nothing
+   *  to put there — so the parent can stop waiting and print. Failure counts:
+   *  a report missing its annex is better than a Print button that never fires. */
+  onSettled: () => void;
+};
 
-export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overview }: Props) {
+export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overview, armed, onSettled }: Props) {
   const { workspaceSlug, projectId } = useParams();
   // The items payload carries a state ID, not a group — the group lives in the
   // project's own state list, which is the only place that mapping exists.
@@ -44,7 +63,8 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overvie
   useEffect(() => {
     const slug = workspaceSlug?.toString();
     const pid = projectId?.toString();
-    if (!slug || !pid) return;
+    // `items !== null` — already loaded, so a second print does not refetch.
+    if (!armed || !slug || !pid || items !== null) return;
     let live = true;
     const load = async () => {
       try {
@@ -56,14 +76,24 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overvie
         setItems(rows);
         setBudget(money);
       } catch {
-        // The annex is an extra. Failing to load it must not cost the report.
+        // The annex is an extra. Failing to load it must not cost the report —
+        // and must not leave the Print button waiting for it forever, so the
+        // empty array both marks this as answered and releases the parent.
+        if (live) setItems([]);
       }
     };
     void load();
     return () => {
       live = false;
     };
-  }, [workspaceSlug, projectId]);
+  }, [armed, workspaceSlug, projectId, items]);
+
+  // Fired from an effect rather than from `load`, so it happens AFTER the rows
+  // are painted. Calling it beside `setItems` would let the parent print against
+  // a DOM that has not been re-rendered yet.
+  useEffect(() => {
+    if (armed && items !== null) onSettled();
+  }, [armed, items, onSettled]);
 
   if (!items?.length) return null;
 

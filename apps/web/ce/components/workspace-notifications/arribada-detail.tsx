@@ -17,7 +17,8 @@
  * anything, and "18 unclassified tasks" with no way to reach them is a number
  * that only makes somebody feel behind.
  */
-import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { ExternalLink, Loader2 } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
@@ -42,6 +43,46 @@ type Props = {
   entityId?: string | null;
   projectId?: string | null;
 };
+
+/** One unclassified GitHub issue and where it is going.
+ *
+ *  Memoised, and given the `<option>` list rather than building its own, for the
+ *  same reason the triage page's row is (see `github-triage/root.tsx`): the
+ *  select was rendering every workspace project inside every row, and picking a
+ *  project on one row re-rendered the lot. This list is shorter than the triage
+ *  page's, but it is the same defect and it would grow the same way. */
+const UnclassifiedRow = memo(function UnclassifiedRow(props: {
+  item: TUnclassified;
+  choiceId: string;
+  projectOptions: ReactNode;
+  onChoose: (rowId: string, projectId: string) => void;
+}) {
+  const { item, choiceId, projectOptions, onChoose } = props;
+  return (
+    <li className="flex items-center gap-2">
+      <span className="min-w-0 flex-1 truncate text-13 text-primary" title={item.name}>
+        {item.name}
+      </span>
+      <a
+        href={item.html_url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex-shrink-0 text-11 text-tertiary hover:underline"
+      >
+        {item.repo}#{item.number}
+      </a>
+      <select
+        value={choiceId}
+        onChange={(e) => onChoose(item.id, e.target.value)}
+        aria-label={`Project for ${item.name}`}
+        className="w-52 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
+      >
+        <option value="">Leave in the queue</option>
+        {projectOptions}
+      </select>
+    </li>
+  );
+});
 
 export const ArribadaNotificationDetail = observer(function ArribadaNotificationDetail(props: Props) {
   const { workspaceSlug, title, messageHtml, sender, entityId, projectId } = props;
@@ -78,6 +119,21 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
   }, [isDigest, workspaceSlug]);
 
   const chosen = Object.entries(choice).filter(([, target]) => target);
+
+  const projectOptions = useMemo(
+    () =>
+      projects.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      )),
+    [projects]
+  );
+  // `target` rather than `projectId`: the component already has a `projectId`
+  // prop meaning something else entirely — the work item's project.
+  const choose = useCallback((rowId: string, target: string) => {
+    setChoice((c) => ({ ...c, [rowId]: target }));
+  }, []);
 
   const classify = async () => {
     if (chosen.length === 0) return;
@@ -162,32 +218,13 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
               </p>
               <ul className="space-y-1.5">
                 {items.map((item) => (
-                  <li key={item.id} className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-13 text-primary" title={item.name}>
-                      {item.name}
-                    </span>
-                    <a
-                      href={item.html_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-shrink-0 text-11 text-tertiary hover:underline"
-                    >
-                      {item.repo}#{item.number}
-                    </a>
-                    <select
-                      value={choice[item.id] ?? ""}
-                      onChange={(e) => setChoice((c) => ({ ...c, [item.id]: e.target.value }))}
-                      aria-label={`Project for ${item.name}`}
-                      className="w-52 flex-shrink-0 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-strong"
-                    >
-                      <option value="">Leave in the queue</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </li>
+                  <UnclassifiedRow
+                    key={item.id}
+                    item={item}
+                    choiceId={choice[item.id] ?? ""}
+                    projectOptions={projectOptions}
+                    onChoose={choose}
+                  />
                 ))}
               </ul>
               <div className="mt-3 flex items-center gap-2">

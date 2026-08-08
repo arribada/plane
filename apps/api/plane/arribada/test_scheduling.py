@@ -6,8 +6,9 @@
 # Run: python -m pytest plane/arribada/tests_scheduling.py
 
 import datetime as dt
+import time
 
-from plane.arribada.scheduling import cascade, critical_path
+from plane.arribada.scheduling import _topo_order, cascade, critical_path
 
 D = dt.date
 
@@ -71,3 +72,37 @@ def test_cycle_is_safe():
     ]
     assert cascade(issues, cyc) == {}  # no hang, cycle nodes dropped
     critical_path(issues, cyc)  # no hang
+
+
+def test_topo_order_reports_exactly_the_cycle():
+    """Two nodes in a loop, one outside it. The answer, before the speed."""
+    order, in_cycle = _topo_order(
+        ["A", "B", "C"], [("A", "B", "FS"), ("B", "A", "FS"), ("C", "A", "FS")]
+    )
+    assert order == ["C"]
+    assert sorted(in_cycle) == ["A", "B"]
+
+
+def test_topo_order_is_not_quadratic():
+    """`in_cycle = [n for n in node_ids if n not in order]` — against a LIST.
+
+    A linear scan of `order` once per node, so finding the cycles cost O(n²) while
+    the topological sort itself is linear. Measured at sixteen thousand nodes: 7.7
+    seconds, against 7 milliseconds for the set-based version. Nothing on this
+    instance is near that today; the point is that the ceiling exists at all, and
+    a chain is exactly the shape a big plan has.
+
+    Ten thousand nodes in a straight chain. Generous bound — this is a wall-clock
+    assertion on CI hardware — but two orders of magnitude below the old cost.
+    """
+    n = 10_000
+    ids = [str(i) for i in range(n)]
+    edges = [(str(i), str(i + 1), "FS") for i in range(n - 1)]
+
+    began = time.perf_counter()
+    order, in_cycle = _topo_order(ids, edges)
+    elapsed = time.perf_counter() - began
+
+    assert len(order) == n
+    assert in_cycle == []
+    assert elapsed < 2.0, f"{elapsed:.1f}s for {n} nodes — the list scan is back"

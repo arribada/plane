@@ -129,6 +129,14 @@ COUNTRIES = [
 ]
 
 
+# A range wider than this is bad data, not a plan. `easter_sunday` is only exact
+# for 1583-4099 anyway, so building a century of calendars past the end of a real
+# project buys nothing and costs a year of arithmetic per iteration. The callers
+# that could reach here with a silly range now clamp their dates too
+# (`_parse_date`); this is the second lock on the same door.
+MAX_SPAN_YEARS = 120
+
+
 def holidays_for(country, start, end):
     """{date: name} for one country over an inclusive date range.
 
@@ -140,7 +148,8 @@ def holidays_for(country, start, end):
     if not build or not start or not end:
         return {}
     out = {}
-    for year in range(start.year, end.year + 1):
+    last_year = min(end.year, start.year + MAX_SPAN_YEARS)
+    for year in range(start.year, last_year + 1):
         for day, name in build(year).items():
             if start <= day <= end:
                 out[day] = name

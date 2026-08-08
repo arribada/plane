@@ -65,6 +65,42 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
 
+  // The printed annex is a second page of detail nobody reads on screen, and
+  // fetching it cost two of the heaviest requests on this route — up to five
+  // hundred work items and a duplicate budget — on EVERY view of the Overview.
+  // It is now fetched only when somebody means to print, and the button waits
+  // for it: `window.print()` is synchronous, so printing before the rows are in
+  // the DOM would print the report without them.
+  const [annexArmed, setAnnexArmed] = useState(false);
+  const [annexReady, setAnnexReady] = useState(false);
+  const [printQueued, setPrintQueued] = useState(false);
+  const onAnnexSettled = useCallback(() => setAnnexReady(true), []);
+
+  const print = useCallback(() => {
+    if (annexReady) {
+      window.print();
+      return;
+    }
+    setAnnexArmed(true);
+    setPrintQueued(true);
+  }, [annexReady]);
+
+  useEffect(() => {
+    if (printQueued && annexReady) {
+      setPrintQueued(false);
+      window.print();
+    }
+  }, [printQueued, annexReady]);
+
+  // Ctrl-P and the browser's own menu. The dialog is already opening by the time
+  // this runs, so the first one prints without the annex; arming here means the
+  // next one — and the Print button — has it ready.
+  useEffect(() => {
+    const arm = () => setAnnexArmed(true);
+    window.addEventListener("beforeprint", arm);
+    return () => window.removeEventListener("beforeprint", arm);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     if (slug && pid) {
@@ -273,12 +309,13 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
         )}
         <button
           type="button"
-          onClick={() => window.print()}
-          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1"
+          onClick={print}
+          disabled={printQueued}
+          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
           title="Print this overview, or save it as a PDF — every section is expanded on paper"
         >
           <Printer className="size-3" />
-          Print / PDF
+          {printQueued ? "Preparing…" : "Print / PDF"}
         </button>
       </div>
 
@@ -407,7 +444,7 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
       )}
       {/* Printed only: the screen has counts and a link to the list, paper has
           neither. */}
-      <OverviewPrintAnnex overview={data} />
+      <OverviewPrintAnnex overview={data} armed={annexArmed} onSettled={onAnnexSettled} />
     </div>
   );
 });

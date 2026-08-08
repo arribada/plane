@@ -14,6 +14,7 @@ from datetime import date, datetime, time, timedelta
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q, Sum
+from django.db.models.functions import Lower
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -63,7 +64,7 @@ from .rate_presets import (
     convert as _convert_money,
     preset_payload,
 )
-from .scheduling import build_edges, cascade, critical_path, slack_for_issues
+from .scheduling import build_edges, cascade, critical_path, slack_for_issues, weekdays_between
 from .serializers import MONEY_FIELDS, ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
@@ -237,6 +238,30 @@ def _github_url(text):
         return None
     url = re.split(r"[\"'<>\s]", html.unescape(m.group(0)))[0]
     return url.rstrip(".,;") or None
+
+
+def _ci(queryset, field, value):
+    """`field` equals `value`, case-insensitively, USING THE INDEX.
+
+    Django compiles `__iexact` to `UPPER(col) = UPPER(%s)`. Every case-insensitive
+    index in this app is on `lower(col)` — that is what a `UniqueConstraint` over
+    `Lower("name")` builds, and it is the shape Postgres needs to answer these
+    lookups without reading the table. `UPPER(...)` matches none of them, so all
+    four `__iexact` call sites in the fork sequential-scanned; EXPLAIN on
+    production confirmed it. One of them sits inside `TeamSyncEndpoint`'s uncapped
+    loop over the request body, where a five-thousand-entry push from the wiki was
+    five thousand sequential scans.
+
+    Annotating `Lower(field)` and comparing to a lowered value emits exactly
+    `LOWER(col) = %s`, which the existing indexes serve. The answer is unchanged.
+
+    NOT `filter(col=value.lower())`: the stored value keeps its own capitalisation
+    ("Firmware" is a real row), so an exact match would miss it, fail to find the
+    row it is supposed to update, and then try to insert a duplicate straight into
+    a case-insensitive unique index.
+    """
+    key = f"_ci_{field}"
+    return queryset.annotate(**{key: Lower(field)}).filter(**{key: str(value or "").lower()})
 
 
 def _uuid_list(values):
@@ -1069,7 +1094,12 @@ class ProjectBaselineEndpoint(BaseAPIView):
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
         snapshots = list(
-            ProjectBaseline.objects.filter(project_id=project_id).select_related("captured_by")
+            ProjectBaseline.objects.filter(project_id=project_id)
+            .select_related("captured_by")
+            # Counted in the same query rather than one COUNT per snapshot below.
+            # A project that baselines at every review holds dozens, and this
+            # endpoint is called twice on every gantt mount.
+            .annotate(entries_total=Count("entries"))
         )
         wanted = request.query_params.get("baseline")
         chosen = None
@@ -1103,7 +1133,7 @@ class ProjectBaselineEndpoint(BaseAPIView):
                             b.captured_by.display_name or b.captured_by.email if b.captured_by else None
                         ),
                         "note": b.note,
-                        "entry_count": b.entries.count(),
+                        "entry_count": b.entries_total,
                     }
                     for b in snapshots
                 ],
@@ -2313,13 +2343,13 @@ class TeamSyncEndpoint(BaseAPIView):
             # address is a different person, not a rename, and merging two people is a
             # far worse outcome than creating one duplicate row.
             if email:
-                row = ProjectTeamMember.objects.filter(project=project, email__iexact=email).first()
+                row = _ci(ProjectTeamMember.objects.filter(project=project), "email", email).first()
                 if row is None:
-                    row = ProjectTeamMember.objects.filter(
-                        project=project, email="", name__iexact=name
+                    row = _ci(
+                        ProjectTeamMember.objects.filter(project=project, email=""), "name", name
                     ).first()
             else:
-                row = ProjectTeamMember.objects.filter(project=project, name__iexact=name).first()
+                row = _ci(ProjectTeamMember.objects.filter(project=project), "name", name).first()
             creating = row is None
             if creating:
                 row = ProjectTeamMember(project=project, source=ProjectTeamMember.WIKI)
@@ -3358,14 +3388,47 @@ class WorkspaceAiSettingsEndpoint(BaseAPIView):
         )
 
 
+# The window a date entered by a human — or proposed by a model, or pushed by the
+# wiki — is allowed to land in.
+#
+# Not decoration. Every date that reaches this fork's calendar arithmetic comes
+# through here, and a single work item dated 9999-12-31 used to make the gantt and
+# the budget endpoints answer 500 *permanently*: nothing in the product could
+# undo it, because the endpoints that would show you the offending row were the
+# ones raising. 2500 was survivable and merely cost 41 seconds a request. The
+# arithmetic is bounded now, but a plan reaching past the horizon below is bad
+# data whatever it costs, and refusing it at the door is where that is cheapest
+# to say.
+#
+# The floor is 1970 rather than date.min because these are project dates, expense
+# dates and rate-capture dates — not birthdays.
+PLAN_DATE_FLOOR = date(1970, 1, 1)
+PLAN_DATE_HORIZON_YEARS = 50
+
+
+def _plan_date_ceiling():
+    """The latest date this instance will accept, moving with the calendar."""
+    return date(timezone.now().date().year + PLAN_DATE_HORIZON_YEARS, 12, 31)
+
+
 def _parse_date(value):
-    """'YYYY-MM-DD' -> date, or None. Models like to append a time or a comment."""
+    """'YYYY-MM-DD' -> date, or None. Models like to append a time or a comment.
+
+    None also means "outside the plausible window" — see PLAN_DATE_FLOOR. Every
+    caller already treats None as "no date given", so a refused date lands on a
+    path that exists. The one place where the difference is worth reporting is
+    `ProjectUndatedGapEndpoint.post` — the bulk button that plants these — and it
+    counts a refusal as a `rejected` rather than skipping the row in silence.
+    """
     if not value or not isinstance(value, str):
         return None
     try:
-        return date.fromisoformat(value.strip()[:10])
+        parsed = date.fromisoformat(value.strip()[:10])
     except ValueError:
         return None
+    if parsed < PLAN_DATE_FLOOR or parsed > _plan_date_ceiling():
+        return None
+    return parsed
 
 
 class ProjectAiDraftItemEndpoint(BaseAPIView):
@@ -6301,20 +6364,44 @@ class ProjectBudgetEndpoint(BaseAPIView):
 
 
 def _working_days_between(start, end, holidays=None):
-    """Inclusive working days between two dates; 1 when they are the same day.
+    """How LONG a piece of work is: inclusive working days, never fewer than one.
 
     `holidays` is optional and every existing caller omits it, so their answers do
     not move. It exists for the capacity reading, where counting a bank holiday as
     a working day would report spare time that does not exist.
+
+    ─────────────────────────────────────────────────────────────────────────────
+    NOT the same function as `_count_working_days` below, and they must not be
+    collapsed. They disagree on two points, deliberately:
+
+                                this                  _count_working_days
+      empty range (end<start)   1                     0
+      all days non-working      1  (floored)          0  (not floored)
+      what it measures          a task's DURATION     a person's CAPACITY
+      who reads it              the budget            the workload board
+
+    A task takes at least one day — there is no such thing as work that costs
+    zero person-days, and this is the fallback the budget charges when nobody
+    recorded an effort, so a zero here would bill a real task at nothing. A
+    person's week can genuinely contain zero working days (leave, closure), and
+    flooring THAT at one would invent capacity nobody has and quietly under-report
+    every over-allocation on the board.
+
+    So: same calendar, two different questions, two right answers. The calendar
+    arithmetic itself lives in exactly one place — `scheduling.weekdays_between`
+    — so the two cannot drift about which days exist, only about what to do with
+    an empty answer, which is the part that is supposed to differ.
+    ─────────────────────────────────────────────────────────────────────────────
+
+    Arithmetic rather than a day-by-day walk: see `weekdays_between` for why (a
+    single work item dated 9999 used to make this raise `OverflowError`, i.e. a
+    permanent 500 on the budget endpoint).
     """
     if not start or not end or end < start:
         return 1
-    skip = holidays or frozenset()
-    day, count = start, 0
-    while day <= end:
-        if day.weekday() < 5 and day not in skip:
-            count += 1
-        day += timedelta(days=1)
+    count = weekdays_between(start, end)
+    if holidays:
+        count -= sum(1 for day in holidays if day.weekday() < 5 and start <= day <= end)
     return max(1, count)
 
 
@@ -6740,7 +6827,17 @@ def _working_day_test(holidays, leave):
 
 
 def _count_working_days(start, end, is_working):
-    """Working days in the inclusive range [start, end]; 0 if the range is empty."""
+    """How much CAPACITY a person has: working days in [start, end], 0 if empty.
+
+    Deliberately NOT `_working_days_between`, which floors at one — see the table
+    in that docstring for why the two differ and why collapsing them would be
+    wrong. Zero is a real answer here: a fortnight entirely on leave is zero
+    working days, and reporting it as one would invent capacity.
+
+    `is_working` is a per-person predicate (weekends + workspace closures + that
+    person's own leave), so this cannot be closed-form arithmetic the way
+    `weekdays_between` is — hence the loop, hence the ceiling.
+    """
     if end < start:
         return 0
     day, count = start, 0
@@ -8355,27 +8452,58 @@ def _project_role_options(project_id):
     return options
 
 
-def _role_from_assignees(project_id, issue_id):
-    """The discipline an item's assignees imply, when they imply exactly one.
+def _roles_from_assignees(project_id, issue_ids):
+    """{issue_id: discipline} for MANY items, in two queries whatever the count.
 
     Silent on anything ambiguous, and the ambiguity is the point: two assignees,
     or one who wears three hats, is a person who has not told you which hat this
     task is. Guessing there is how a rate lands on the wrong trade.
+
+    Plural because the singular version was being called from inside a response
+    comprehension over an unsliced queryset — the discipline-gap endpoint spent 84
+    queries answering one request, 77 of them byte-identical. That endpoint exists
+    to list every dated item with no discipline, so its row count IS the size of
+    the problem it reports: the worse the project's data, the more queries it ran.
     """
-    holders = list(
-        IssueAssignee.objects.filter(issue_id=issue_id, deleted_at__isnull=True).values_list(
-            "assignee_id", flat=True
-        )
-    )
-    if len(holders) != 1:
-        return None
-    roles = (
-        ProjectTeamMember.objects.filter(project_id=project_id, member_id=holders[0])
-        .values_list("roles", flat=True)
-        .first()
-    )
-    roles = [str(r).strip() for r in (roles or []) if str(r).strip()]
-    return roles[0] if len(roles) == 1 else None
+    ids = [str(i) for i in issue_ids]
+    if not ids:
+        return {}
+
+    by_issue = defaultdict(list)
+    for issue_id, assignee_id in IssueAssignee.objects.filter(
+        issue_id__in=ids, deleted_at__isnull=True
+    ).values_list("issue_id", "assignee_id"):
+        by_issue[str(issue_id)].append(assignee_id)
+
+    # Exactly one assignee, or there is nothing to infer from.
+    lone = {issue_id: holders[0] for issue_id, holders in by_issue.items() if len(holders) == 1}
+    if not lone:
+        return {}
+
+    # First row per member wins, under the model's own ordering — the same row
+    # `.first()` used to pick, so an instance with a duplicated roster entry keeps
+    # answering exactly as it did.
+    role_of_member = {}
+    for member_id, roles in ProjectTeamMember.objects.filter(
+        project_id=project_id, member_id__in=set(lone.values())
+    ).values_list("member_id", "roles"):
+        key = str(member_id)
+        if key in role_of_member:
+            continue
+        cleaned = [str(r).strip() for r in (roles or []) if str(r).strip()]
+        role_of_member[key] = cleaned[0] if len(cleaned) == 1 else None
+
+    return {issue_id: role_of_member.get(str(member)) for issue_id, member in lone.items()}
+
+
+def _role_from_assignees(project_id, issue_id):
+    """The discipline ONE item's assignees imply, when they imply exactly one.
+
+    A thin call through to the batch above rather than a second implementation:
+    two copies of "when may we infer a discipline" is how the panel and the bulk
+    fix come to offer different answers for the same row.
+    """
+    return _roles_from_assignees(project_id, [issue_id]).get(str(issue_id))
 
 
 def _effort_from_dates(issue_id, issue):
@@ -8644,7 +8772,7 @@ class ProjectIssueOrdersEndpoint(BaseAPIView):
                 .values_list("id", flat=True)
             ]
 
-        row = ProjectIssueOrder.objects.filter(project_id=project_id, name__iexact=name).first()
+        row = _ci(ProjectIssueOrder.objects.filter(project_id=project_id), "name", name).first()
         overwrote = bool(row)
         if row:
             row.name = name
@@ -9161,15 +9289,26 @@ class ProjectChecklistSummaryEndpoint(BaseAPIView):
 
         # Owners are this project's items; members may live anywhere, so the
         # state is read through the join rather than assumed local.
-        rows = IssueChecklistItem.objects.filter(owner__project_id=project_id).values_list(
-            "owner_id", "member__state__group"
+        #
+        # Grouped by the database rather than by a Python loop over every checklist
+        # line in the project. The old version read one row per membership and
+        # tallied them here, so the work — and the transferred payload — grew with
+        # the number of checklist ENTRIES while the answer is one pair per owner.
+        rows = (
+            IssueChecklistItem.objects.filter(owner__project_id=project_id)
+            # `.order_by()` before `.values()`, or the model's default ordering on
+            # `sort_order` joins the GROUP BY and every line becomes its own group —
+            # the aggregate would return one row per membership again, silently.
+            .order_by()
+            .values("owner_id")
+            .annotate(
+                total=Count("id"),
+                done=Count("id", filter=Q(member__state__group="completed")),
+            )
         )
-        summary = {}
-        for owner_id, group in rows:
-            entry = summary.setdefault(str(owner_id), {"done": 0, "total": 0})
-            entry["total"] += 1
-            if group == "completed":
-                entry["done"] += 1
+        summary = {
+            str(r["owner_id"]): {"done": r["done"], "total": r["total"]} for r in rows
+        }
         return Response({"summaries": summary}, status=status.HTTP_200_OK)
 
 class WorkspaceDirectoryEndpoint(BaseAPIView):
@@ -9282,7 +9421,7 @@ class ProjectDisciplinesEndpoint(BaseAPIView):
             return Response({"error": "name required"}, status=status.HTTP_400_BAD_REQUEST)
         # Case-insensitive, matching the constraint: adding "Firmware" when
         # "firmware" is already there is a no-op, not an error.
-        existing = ProjectDiscipline.objects.filter(project_id=project_id, name__iexact=name).first()
+        existing = _ci(ProjectDiscipline.objects.filter(project_id=project_id), "name", name).first()
         if not existing:
             ProjectDiscipline.objects.create(project_id=project_id, name=name, created_by=request.user)
         return Response(
@@ -9449,6 +9588,14 @@ class ProjectUndatedGapEndpoint(BaseAPIView):
             start = _parse_date(span.get("start_date"))
             target = _parse_date(span.get("target_date"))
             if not start or not target:
+                # A value that was SENT but did not survive parsing is a refusal,
+                # not an omission, and it has to be counted as one: this is the
+                # bulk "fix all undated items" action, and it is how a target of
+                # 9999-12-31 used to get written — after which the gantt and the
+                # budget answered 500 for good, including the screens that would
+                # have shown you the row to correct.
+                if span.get("start_date") or span.get("target_date"):
+                    rejected += 1
                 continue
             # An end before its start is not a span. Silently swapping them would
             # be guessing; refusing says which row needs a second look.
@@ -9486,6 +9633,10 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
             .values("id", "name", "sequence_id", "start_date", "target_date")
             .order_by("start_date")
         )
+        # ONE grouped read for the whole page, before the comprehension rather than
+        # inside it. This used to be a call per row: 84 queries for 77 rows, and
+        # the count grew with exactly the thing the endpoint is here to report.
+        suggested = _roles_from_assignees(project_id, [r["id"] for r in rows])
         return Response(
             {
                 "items": [
@@ -9497,7 +9648,7 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
                         "target_date": str(r["target_date"]),
                         # What its assignee already implies, so the common row is a
                         # confirmation rather than a decision.
-                        "suggested": _role_from_assignees(project_id, r["id"]),
+                        "suggested": suggested.get(str(r["id"])),
                     }
                     for r in rows
                 ],

@@ -150,6 +150,35 @@ def _repo_workspaces(repos, claims):
     return out
 
 
+def repos_with_open_issues():
+    """Every repo that still has an open issue recorded, as a set of names.
+
+    One query, so the run's report can name only the repos where a missed closure
+    would actually have cost something — most of the 49 mapped repos have never
+    produced an issue, and a warning that lists all of them is a warning nobody
+    reads.
+
+    `.order_by()` is load-bearing, not tidying. `GithubIssue` orders by
+    `-github_created_at`, and SQL cannot ORDER BY a column that is not in the
+    SELECT of a DISTINCT — so Django adds it silently, the DISTINCT key becomes
+    (repo, github_created_at), and it stops de-duplicating anything at all. EXPLAIN
+    on production showed the sort over every row. Clearing the ordering makes this
+    the one-column DISTINCT it was written to be; nothing downstream cares what
+    order a set comes back in.
+
+    A named function rather than four lines inline because the trap is invisible
+    at the call site and a test cannot reach into a 250-line task body.
+    """
+    from plane.arribada.models import GithubIssue
+
+    return set(
+        GithubIssue.objects.filter(state="open")
+        .order_by()
+        .values_list("repo", flat=True)
+        .distinct()
+    )
+
+
 def _repos_to_sync():
     """owner/repo set: explicit GITHUB_SYNC_REPOS, else every repo mapped to a project."""
     from plane.arribada.models import ProjectWikiDoc
@@ -669,11 +698,7 @@ def _github_plane_sync():
     # when the token expires produces a warning nobody can read — which is the
     # same as no warning. One query, so the report can name only the repos where
     # a closure could have been missed.
-    from plane.arribada.models import GithubIssue
-
-    tracked_open = set(
-        GithubIssue.objects.filter(state="open").values_list("repo", flat=True).distinct()
-    )
+    tracked_open = repos_with_open_issues()
 
     for repo, (issues, complete) in by_repo.items():
         workspace_id = workspaces.get(repo)

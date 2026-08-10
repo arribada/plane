@@ -42,14 +42,16 @@ every push.
 Labels only exist on images built after this change, so for anything older this table is the
 record:
 
-| Image                                         | Image id       | Commit                      | Notes                                                                              |
-| --------------------------------------------- | -------------- | --------------------------- | ---------------------------------------------------------------------------------- |
-| `arribada/plane-backend:v1.3.1-arribada.87`   | `59d2c947c519` | `170c639e7b`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built 2026-08-08 10:57  |
-| `arribada/plane-frontend:v1.3.1-arribada.87`  | `7bbff227cf0b` | `170c639e7b`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), built 2026-08-08 10:56 |
-| `arribada/plane-backend:rollback-94f7adddea`  | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                           |
-| `arribada/plane-frontend:rollback-94f7adddea` | `6a65bd4702e1` | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                   |
-| `arribada/plane-backend:rollback-20260730`    | `e2ce98341ca1` | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                        |
-| `arribada/plane-frontend:rollback-20260730`   | `a60822d87386` | (undated)                   | also tagged `v1.3.1-arribada.1`                                                    |
+| Image                                                | Image id       | Commit                      | Notes                                                                                      |
+| ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
+| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built 2026-08-10 07:10          |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), CI artifact of run 31364698124 |
+| `arribada/plane-backend:v1.3.1-arribada.87`          | `59d2c947c519` | `170c639e7b`                | the previous serve; **the roll-forward/back target for this deploy**                       |
+| `arribada/plane-frontend:v1.3.1-arribada.87`         | `7bbff227cf0b` | `170c639e7b`                | the previous serve; pair it with the backend above                                         |
+| `arribada/plane-backend:rollback-94f7adddea`         | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                   |
+| `arribada/plane-frontend:rollback-94f7adddea`        | `6a65bd4702e1` | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                           |
+| `arribada/plane-backend:rollback-20260730`           | `e2ce98341ca1` | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                                |
+| `arribada/plane-frontend:rollback-20260730`          | `a60822d87386` | (undated)                   | also tagged `v1.3.1-arribada.1`                                                            |
 
 Why the numbered tags cannot be trusted as history: `v1.3.1-arribada.5` is dated 2026-08-05,
 five days _after_ `.4`, and `.77`, `.78`, `.79` and `.80` are all the single image id
@@ -69,6 +71,13 @@ whenever anyone pushed. Go by image id.
 ---
 
 ## 1. Decide: code only, or code **and** database?
+
+> **2026-08-10.** `e75cd9a12f` is deployed and carries migration `0039_roster_lookup_indexes`.
+> It is `AddIndex` only — no columns, no `RunPython`, nothing to undo badly — so rolling the
+> code back to `.87` and leaving `0039` applied costs nothing at all. A pre-deploy dump was
+> taken anyway and verified:
+> `/opt/backups/archive/plane-db-predeploy-2026-08-10_070951.sql.gz` (gzip clean, ends with
+> `PostgreSQL database dump complete`, 1,222,442 bytes compressed / 7,200,501 raw).
 
 Run this against the commit that is actually deployed:
 

@@ -17,10 +17,10 @@ Numbers, so you can tell at a glance when this file has rotted again:
 
 |                                                      |                                                          |
 | ---------------------------------------------------- | -------------------------------------------------------- |
-| `plane.arribada` migrations                          | `0001` → `0037` (own graph, see traps)                   |
+| `plane.arribada` migrations                          | `0001` → `0039` (own graph, see traps)                   |
 | Models in `models.py`                                | 26                                                       |
 | Endpoint classes in `views.py` / routes in `urls.py` | 72 / 72                                                  |
-| Python files in the app                              | 38 (18 source, 17 tests, 3 package markers)              |
+| Python files in the app                              | 55 (20 source, 32 tests, 3 package markers)              |
 | `arribada-*` celery beat entries                     | 5                                                        |
 | `@shared_task` functions                             | 5                                                        |
 | Web diff vs upstream                                 | 292 files, ~33k insertions (147 in `ce/`, 87 in `core/`) |
@@ -193,8 +193,20 @@ for workspace admins. See the comment on `MONEY_ROLES` in `views.py` and
 | `zulip_notify.py`                            | Best-effort Zulip poster                                                                                                                                         |
 | `management/commands/retire_github_inbox.py` | One-shot: retired the GHIN inbox project (below)                                                                                                                 |
 
-17 test files, run with `python -m pytest plane/arribada/` from `apps/api`. They need a real
+32 test files, run with `python -m pytest plane/arribada/` from `apps/api`. They need a real
 Postgres (`pytest.ini` uses `--reuse-db --nomigrations`).
+
+**`--nomigrations` has two consequences worth knowing before you trust a green run.**
+
+- **No migration in this app has any test coverage.** pytest builds the schema straight from
+  the models and never executes a migration file, so a `RunPython` is never run by the suite
+  — `0038`'s `keep_one_discipline` and `unlink_shared_expenses` delete rows on production and
+  have never been exercised by a test, in either direction. If you write a data migration,
+  its correctness is on you and on the pre-deploy dump; CI will not tell you.
+- **`--reuse-db` keeps a stale local database forever.** A model change with no matching
+  local schema produces a wall of `column ... does not exist` errors that have nothing to do
+  with the test that failed. `--create-db` once, or drop the `test_*` database, before
+  believing any of them.
 
 ### Beat schedule (`apps/api/plane/celery.py`)
 
@@ -218,6 +230,17 @@ headers / expire_seconds` and drops everything else into `**kwargs` **in silence
 - **`acks_late=True` is only safe because all five are idempotent** (`update_or_create` on
   the snapshot, a 20-hour dedup window on both notification tasks, `external_id` dedup on the
   forwarder). Do not copy the policy onto a task that appends.
+- **`CELERY_TASK_TIME_LIMIT` is paired with RabbitMQ's `consumer_timeout`, which is 30
+  minutes here because no `rabbitmq.conf` overrides the default.** Past that the broker closes
+  the channel and requeues a delivery whose task is still running, which under `acks_late` is
+  the same task running twice. The limits live in `settings/common.py` (soft 1500 s, hard
+  1680 s) and both must stay under 1800 s. Raising either without raising `consumer_timeout`
+  on the broker puts the bug straight back.
+- **The Redis lock is fenced on the delivery's `task_id`.** Its release is in a `finally`,
+  which a SIGKILL never runs, so a killed worker used to leave the key held for its whole TTL
+  and the `acks_late` redelivery was refused by its own corpse — `acks_late` bought the two
+  locked tasks nothing. `task_lock(..., owner=self.request.id)` lets a redelivery reclaim the
+  lock its own dead run left, and only its own.
 
 ---
 

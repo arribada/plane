@@ -162,7 +162,7 @@ def forward_notifications(self):
     # the same up to 20 000 items twice, at 15 s a request, and the second run's only
     # possible outcome is `duplicates`. After an outage beat delivers every missed
     # ten-minute tick at once, which is exactly when the far side can least afford it.
-    with task_lock("forward_notifications", 9 * 60) as held:
+    with task_lock("forward_notifications", 9 * 60, owner=self.request.id) as held:
         if not held:
             return "another forward_notifications run is already in progress"
         return _forward_notifications()

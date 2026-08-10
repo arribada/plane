@@ -948,7 +948,11 @@ def github_plane_sync(self):
     Concurrency was not hypothetical: with nothing expiring the messages, a broker outage
     ended with every missed 30-minute tick delivered at once into four prefork children.
     """
-    with task_lock("github_plane_sync", SYNC_LOCK_SECONDS) as held:
+    # `owner` is the delivery's own id, so a redelivery after this worker was killed
+    # reclaims the lock its dead predecessor left instead of standing down in front of it.
+    # `.run()` from the "Sync now" button has no request id, which falls back to a random
+    # token — an inline call gets no takeover, which is right: nothing crashed.
+    with task_lock("github_plane_sync", SYNC_LOCK_SECONDS, owner=self.request.id) as held:
         if not held:
             # `skipped` is the key the "Sync now" view reads as "nothing to do", which is the
             # honest answer: a sync IS running, and starting a second one is the bug.

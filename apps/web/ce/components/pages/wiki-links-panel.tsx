@@ -68,12 +68,19 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
 
-  // The PUT behind every button here is workspace ADMIN/MEMBER. Showing the
-  // buttons to a guest only bought them a 403 after they had typed the URL.
+  // The PUT behind every button here is ADMIN/MEMBER **on this project**, not on
+  // the workspace — `ProjectWikiDocEndpoint.put` moved to `level="PROJECT"` when
+  // the permission class was fixed. This gate did not move with it, so a
+  // workspace member who is a guest on the project (or not on it at all, and
+  // reading it as a workspace admin who never joined) saw every pencil, typed a
+  // URL, and got a 403 whose message told them they were something they already
+  // were: "only workspace members and admins can edit". Same level, same roles,
+  // same order as the decorator — that is the whole rule.
   const canEdit = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
-    EUserPermissionsLevel.WORKSPACE,
-    workspaceSlug?.toString()
+    EUserPermissionsLevel.PROJECT,
+    workspaceSlug?.toString(),
+    projectId?.toString()
   );
   const editable = canEdit && loaded && !loadFailed;
 
@@ -157,7 +164,10 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
         title: status === 403 ? "You can't change these links" : "Couldn't save the link",
         message:
           status === 403
-            ? "Only workspace members and admins can edit a project's documentation links."
+            ? // Names the level the server actually decides on. Saying "workspace"
+              // here told a workspace member they were not one, which reads as a
+              // broken product rather than as a permission they can go and ask for.
+              "These links belong to the project. You need to be a member or an admin of this project to change them."
             : "Nothing was saved. Check the address and try again.",
       });
       return false;

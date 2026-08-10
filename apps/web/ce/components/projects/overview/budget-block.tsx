@@ -35,7 +35,9 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn, renderFormattedDate } from "@plane/utils";
 import { downloadText } from "@/plane-web/components/gantt-chart/export";
 import { ExpenseModal } from "@/plane-web/components/workspace/expense-modal";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { buildBudgetCsv } from "./budget-export";
+import { decisionVerb, statusPill } from "./helpers";
 import { SpendAnalysis } from "./spend-analysis";
 import { SpendCurve } from "./spend-curve";
 import { useProject } from "@/hooks/store/use-project";
@@ -79,6 +81,16 @@ const money = (amount: number, currency: string) => {
  * number this page worked out from a rate a colleague typed last spring.
  */
 const approx = (amount: number, currency: string) => `≈ ${money(amount, currency)}`;
+
+/**
+ * A date input's value on its way to the server.
+ *
+ * An emptied `<input type="date">` gives `""`, and the server parses YYYY-MM-DD
+ * and ignores anything else — so `""` would silently leave yesterday's promised
+ * delivery date in place, still holding the schedule's floor, while the form that
+ * cleared it reported success.
+ */
+const dateOrNull = (value: string) => (value.trim() ? value.trim() : null);
 
 /** The recorded amounts, side by side, for the line under a converted figure. */
 const recorded = (rows: { currency: string; amount: number }[]) =>
@@ -130,9 +142,34 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // every row, so a second decision taken against the list being replaced is
   // acting on figures that are already stale.
   const [deciding, setDeciding] = useState<string | null>(null);
+  // The purchase whose order details are open for editing, and the draft in that
+  // form. One at a time, like the decision above and for the same reason: saving
+  // reloads the whole list, so a second form open over the old rows is editing
+  // figures that are about to be replaced.
+  const [tracking, setTracking] = useState<string | null>(null);
+  const [trackDraft, setTrackDraft] = useState({
+    order_reference: "",
+    ordered_on: "",
+    expected_on: "",
+    received_on: "",
+  });
+  const [trackSaving, setTrackSaving] = useState(false);
 
   // The sheet belongs to whoever answers for the budget. Everyone else asks.
   const canEdit = canApprove;
+  // Recording that an order was placed or arrived is NOT the same permission as
+  // approving one. Approving commits the money and writes an expense line, and the
+  // server keeps that to the project lead (`can_approve`). The PATCH behind the
+  // tracking form is `MONEY_ROLES` at project level — ADMIN or MEMBER on this
+  // project — because the person who placed the order is usually not the lead and
+  // is always the one who knows when it shipped. Same roles, same level, same
+  // order as that decorator.
+  const canTrack = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.PROJECT,
+    slug,
+    pid
+  );
   // Raising a request needs only write access to the project.
   const canRequest = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
@@ -321,6 +358,58 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
       setToast({ type: TOAST_TYPE.ERROR, title: "Couldn't withdraw it", message: "It is still there." });
     } finally {
       setDeciding(null);
+    }
+  };
+
+  /** Open the order form on a decided request, seeded with what is already recorded. */
+  const openTracking = (r: TProcurementRequest) => {
+    setTracking(r.id);
+    setTrackDraft({
+      order_reference: r.order_reference ?? "",
+      ordered_on: r.ordered_on ?? "",
+      expected_on: r.expected_on ?? "",
+      received_on: r.received_on ?? "",
+    });
+  };
+
+  /**
+   * Record what happened to an approved purchase after the money decision.
+   *
+   * `service.trackPurchase` has existed with no caller at all since the fields
+   * were added, which cost three things at once: an approved purchase could never
+   * be marked ordered or received; the audit list drew both of those states as
+   * "Rejected"; and "Let the schedule wait for deliveries" could not do anything,
+   * because auto-schedule builds its floors from `expected_on`/`received_on` and
+   * nothing on earth could write them.
+   *
+   * The status is DERIVED from the dates rather than picked separately. Two
+   * controls that can contradict each other — a date saying the parts arrived and
+   * a dropdown still saying "ordered" — is a second source of truth about the same
+   * fact, and the schedule reads the dates, so the dates are the fact.
+   */
+  const saveTracking = async (id: string) => {
+    if (trackSaving) return;
+    setTrackSaving(true);
+    const ordered = dateOrNull(trackDraft.ordered_on);
+    const received = dateOrNull(trackDraft.received_on);
+    try {
+      await service.trackPurchase(slug, pid, id, {
+        status: received ? "received" : ordered ? "ordered" : "approved",
+        order_reference: trackDraft.order_reference.trim(),
+        ordered_on: ordered,
+        expected_on: dateOrNull(trackDraft.expected_on),
+        received_on: received,
+      });
+      setTracking(null);
+      await load(displayCcy);
+    } catch (error) {
+      setToast({
+        type: TOAST_TYPE.ERROR,
+        title: "Couldn't save the order details",
+        message: apiErrorMessage(error, "Nothing was changed, and the schedule still has the old dates."),
+      });
+    } finally {
+      setTrackSaving(false);
     }
   };
 
@@ -943,15 +1032,17 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     key={r.id}
                     className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-subtle pt-1.5"
                   >
+                    {/* A lookup, not a ternary. See REQUEST_STATUS_PILL in
+                        ./helpers — the two-way version drew `ordered` and
+                        `received` as "Rejected", in red, in the list a grant
+                        reviewer reads. */}
                     <span
                       className={cn(
                         "flex-shrink-0 rounded px-1.5 py-0.5 text-10 font-medium",
-                        r.status === "approved"
-                          ? "bg-success-subtle text-success-primary"
-                          : "bg-danger-subtle text-danger-primary"
+                        statusPill(r.status).className
                       )}
                     >
-                      {r.status === "approved" ? "Approved" : "Rejected"}
+                      {statusPill(r.status).label}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-13 text-primary">{r.label}</span>
                     <span className="flex-shrink-0 text-13 text-secondary tabular-nums">
@@ -960,16 +1051,115 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     <span className="w-full text-11 text-tertiary">
                       {r.requested_by_name && `Asked by ${r.requested_by_name}`}
                       {r.supplier && ` · ${r.supplier}`}
-                      {r.decided_by_name &&
-                        ` · ${r.status === "approved" ? "approved" : "rejected"} by ${r.decided_by_name}`}
+                      {r.decided_by_name && ` · ${decisionVerb(r.status)} by ${r.decided_by_name}`}
                       {r.decided_at && ` on ${renderFormattedDate(r.decided_at)}`}
                     </span>
+                    {/* What happened after the yes. Only rendered where there is
+                        something to say, so a project that buys nothing on a lead
+                        time is not made to read about deliveries. */}
+                    {(r.order_reference || r.ordered_on || r.expected_on || r.received_on) && (
+                      <span className="w-full text-11 text-tertiary">
+                        {r.ordered_on && `Ordered ${renderFormattedDate(r.ordered_on)}`}
+                        {r.order_reference && ` · ref ${r.order_reference}`}
+                        {r.received_on
+                          ? ` · arrived ${renderFormattedDate(r.received_on)}`
+                          : r.expected_on
+                            ? ` · expected ${renderFormattedDate(r.expected_on)}`
+                            : ""}
+                      </span>
+                    )}
                     {(r.justification || r.decision_note) && (
                       <span className="w-full text-11 text-tertiary italic">
                         {r.justification}
                         {r.justification && r.decision_note && " — "}
                         {r.decision_note}
                       </span>
+                    )}
+                    {/* The control that had no counterpart in the product at all.
+                        Offered to anyone who may write to the sheet rather than to
+                        the lead alone — approving spends money and is the lead's;
+                        writing down that the boards shipped is bookkeeping, and the
+                        person who placed the order is the one who knows. The server
+                        draws the same line: PATCH is MONEY_ROLES, POST is lead. */}
+                    {canTrack && r.status !== "rejected" && (
+                      <button
+                        type="button"
+                        onClick={() => (tracking === r.id ? setTracking(null) : openTracking(r))}
+                        aria-expanded={tracking === r.id}
+                        // Two words on screen, the whole sentence in the accessible
+                        // name. A row already carries the purchase's label; a button
+                        // repeating it visibly would wrap this row onto three lines
+                        // on a phone, and a screen reader hearing "Track order" nine
+                        // times in a list would learn nothing from any of them.
+                        aria-label={`${r.ordered_on || r.received_on || r.expected_on ? "Update" : "Track"} the order for ${r.label}`}
+                        className="flex-shrink-0 text-11 text-tertiary hover:text-accent-primary"
+                      >
+                        {r.ordered_on || r.received_on || r.expected_on ? "Update order" : "Track order"}
+                      </button>
+                    )}
+                    {canTrack && tracking === r.id && (
+                      <div className="flex w-full flex-wrap items-end gap-2 rounded border border-subtle bg-layer-1 p-2">
+                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                          Order reference
+                          <input
+                            type="text"
+                            value={trackDraft.order_reference}
+                            onChange={(e) => setTrackDraft((d) => ({ ...d, order_reference: e.target.value }))}
+                            placeholder="PO-2026-014"
+                            className={input}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                          Ordered on
+                          <input
+                            type="date"
+                            value={trackDraft.ordered_on}
+                            onChange={(e) => setTrackDraft((d) => ({ ...d, ordered_on: e.target.value }))}
+                            className={input}
+                          />
+                        </label>
+                        {/* The one date the planner reads. Says so here rather than
+                            in a help panel nobody opens — it is the difference
+                            between a note and a thing that moves somebody's dates. */}
+                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                          Expected
+                          <input
+                            type="date"
+                            value={trackDraft.expected_on}
+                            onChange={(e) => setTrackDraft((d) => ({ ...d, expected_on: e.target.value }))}
+                            className={input}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                          Arrived
+                          <input
+                            type="date"
+                            value={trackDraft.received_on}
+                            onChange={(e) => setTrackDraft((d) => ({ ...d, received_on: e.target.value }))}
+                            className={input}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={trackSaving}
+                          onClick={() => void saveTracking(r.id)}
+                          className="rounded bg-accent-primary px-2 py-1 text-11 text-white disabled:opacity-50"
+                        >
+                          {trackSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTracking(null)}
+                          className="px-2 py-1 text-11 text-tertiary hover:text-primary"
+                        >
+                          Cancel
+                        </button>
+                        <span className="w-full text-10 text-tertiary">
+                          {budget?.schedule_from_deliveries
+                            ? "This project's reflow will not start a linked work item before the arrival date — the expected date until the parts land, then the real one."
+                            : "Recorded for the audit trail. Turn on “Let the schedule wait for deliveries” above to have a reflow respect these dates."}
+                        </span>
+                      </div>
                     )}
                     {canApprove && (
                       <button

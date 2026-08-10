@@ -482,11 +482,17 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
         slug,
         chosen.map(([id, project_id]) => ({ id, project_id, checklist_owner_id: owner[id]?.id }))
       );
+      // A partial result is not good news, and it used to be announced as if it
+      // were: a green tick, "N filed", and the whole remainder explained away as
+      // "they had already been filed elsewhere" — which the page had no way of
+      // knowing and which was, for a project the caller could not write to, simply
+      // false. Refusals are a 403 now and land in the `catch`; anything still
+      // counted here is a row that left the queue under us, and it says only that.
       setToast({
-        type: TOAST_TYPE.SUCCESS,
-        title: `${result.filed} filed`,
+        type: result.skipped ? TOAST_TYPE.WARNING : TOAST_TYPE.SUCCESS,
+        title: result.skipped ? `${result.filed} filed, ${result.skipped} not` : `${result.filed} filed`,
         message: result.skipped
-          ? `${result.skipped} were left — they had already been filed elsewhere.`
+          ? `${result.skipped} could not be filed — they are no longer waiting in the queue. Check them on GitHub before filing them again.`
           : grouped
             ? `Each one is now a work item in its project, and ${grouped} of them are on a checklist.`
             : "Each one is now a work item in its project, with its discipline and assignee.",
@@ -498,7 +504,7 @@ export const GithubTriageRoot = observer(function GithubTriageRoot() {
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't file them",
-        message: (error as { error?: string })?.error ?? "Nothing was moved.",
+        message: apiErrorMessage(error, "Nothing was moved."),
       });
     } finally {
       setSaving(false);

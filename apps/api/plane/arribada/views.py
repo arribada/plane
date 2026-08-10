@@ -11,7 +11,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q, Sum
 from django.db.models.functions import Lower
@@ -8861,6 +8861,7 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
         from .github_sync_task import _repo_owners
 
         visible = _visible_projects(request, slug).filter(archived_at__isnull=True)
+        writable_for_picker = _writable_projects(request, slug).filter(archived_at__isnull=True)
         project_names = {str(p["id"]): p["name"] for p in visible.values("id", "name")}
         claimed = _repo_owners()
 
@@ -8916,9 +8917,19 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
         return Response(
             {
                 "items": items,
+                # What the picker may offer, which is what the POST will ACCEPT —
+                # `_writable_projects`, the same queryset the filing endpoint scopes
+                # itself with. It used to be `visible`, which admits a guest, so the
+                # dropdown listed destinations that were guaranteed to be refused and
+                # the refusal was then reported as a success.
+                #
+                # `claimed_by` above still comes from everything visible: "two projects
+                # claim this repo" is a fact about the repo, and hiding one of the two
+                # because the reader cannot write to it would make a contested row look
+                # uncontested.
                 "projects": [
                     {"id": str(p["id"]), "name": p["name"]}
-                    for p in visible.values("id", "name").order_by("name")
+                    for p in writable_for_picker.values("id", "name").order_by("name")
                 ],
             },
             status=status.HTTP_200_OK,
@@ -8949,6 +8960,44 @@ class WorkspaceGithubTriageQueueEndpoint(BaseAPIView):
         writable = _writable_projects(request, slug)
         visible = _visible_projects(request, slug)
         allowed_projects = {str(p) for p in writable.values_list("id", flat=True)}
+
+        # Refused, not counted. A project the caller cannot write to used to fall
+        # into the same `skipped` counter as a row that was already filed, and the
+        # page then explained the whole number as "they had already been filed
+        # elsewhere" — in a GREEN success toast. Somebody triaging a morning's
+        # backlog was told their work had landed when none of it had, and the only
+        # way to find out was to go and look at a project.
+        #
+        # Checked in a pass of its own, BEFORE anything is written, so the answer is
+        # all-or-nothing: a batch half-filed and half-refused leaves the caller with
+        # no way to know which half without re-reading the queue.
+        refused = sorted(
+            {
+                str(e.get("project_id"))
+                for e in entries[:200]
+                if isinstance(e, dict) and e.get("project_id") and str(e.get("project_id")) not in allowed_projects
+            }
+        )
+        if refused:
+            # Named where they can be named. A project id in a 403 is useless to the
+            # person reading the toast; a project id they cannot see stays a bare id,
+            # which is the correct amount to tell them about it. The lookup is wrapped
+            # because `refused` is unvalidated client input and a non-UUID in an
+            # `id__in` raises rather than matching nothing.
+            names = {}
+            try:
+                names = {str(k): v for k, v in visible.filter(id__in=refused).values_list("id", "name")}
+            except (ValueError, ValidationError):
+                pass
+            listed = ", ".join(names.get(pid, pid) for pid in refused)
+            return Response(
+                {
+                    "error": f"You cannot file work items into {listed}. Nothing was filed.",
+                    "refused_projects": refused,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         filed, skipped = 0, 0
 
         for entry in entries[:200]:
@@ -9778,11 +9827,28 @@ class WorkspaceGithubInboxGapEndpoint(BaseAPIView):
                 # stuck — and the widget has to be able to tell those apart.
                 "tracked": GithubIssue.objects.filter(workspace__slug=slug).count(),
                 # The sync is workspace-wide; its endpoint takes a project only
-                # to anchor the permission check. Any project the caller can see
-                # does that job, and the widget has none of its own.
+                # to anchor the permission check. The widget has no project of
+                # its own, so one is chosen here — and it has to be a project
+                # that will actually PASS that check.
+                #
+                # It used to be `_visible_projects(...).first()` with no
+                # `order_by`, which is wrong twice. `_visible_projects` admits a
+                # GUEST while GithubSyncNowEndpoint requires ADMIN or MEMBER, so
+                # the button could be anchored on the one project in the
+                # workspace where the caller is a viewer and 403 for a person who
+                # is a member of nine others. And an unordered `.first()` on a
+                # join has no defined answer at all: Postgres returns whatever the
+                # plan happens to emit, so which project gates the button changed
+                # between calls, which makes the failure unreproducible on top of
+                # being wrong.
+                #
+                # `_writable_projects` asks the same two questions the decorator
+                # asks, and `order_by("created_at", "id")` makes the pick stable —
+                # `id` breaks the tie, because created_at is not unique.
                 "sync_project_id": str(
-                    _visible_projects(request, slug)
+                    _writable_projects(request, slug)
                     .filter(archived_at__isnull=True)
+                    .order_by("created_at", "id")
                     .values_list("id", flat=True)
                     .first()
                     or ""

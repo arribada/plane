@@ -392,9 +392,14 @@ def test_a_project_guest_cannot_file_github_issues_into_the_project_they_watch(t
         {"items": [{"id": str(uuid.uuid4()), "project_id": str(two_worlds["watched"].id)}]},
         format="json",
     )
-    # The queue answers per row rather than per request — one bad entry must not
-    # discard a batch — so the refusal shows up as a skip, not a status code.
-    assert queue.status_code == 200
-    assert queue.json()["filed"] == 0, (
-        "the triage queue filed into a project the caller is only a GUEST of."
+    # This used to assert `200` with `filed == 0`, on the reasoning that the queue
+    # answers per row and one bad entry must not discard a batch. The reasoning was
+    # right about batches and wrong about refusals: the per-row skip was
+    # indistinguishable from "this row had already been filed", and the page said so
+    # out loud, in green — see test_refused_not_skipped.py. A permission refusal is
+    # now a 403 taken before anything is written, and only the honest skips remain
+    # in the counter.
+    assert queue.status_code == 403, (
+        f"the triage queue accepted a project the caller is only a GUEST of "
+        f"(got {queue.status_code})."
     )

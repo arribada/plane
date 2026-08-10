@@ -35,7 +35,13 @@ What this module adds:
 * `ArribadaTask` — a base whose `on_failure` routes a dead run somewhere a person will see it.
 * `report_task_failure` — that route: `log_exception` (durable file + console) plus a Zulip
   post when `ARRIBADA_ZULIP_*` is configured, which it is in production. Never raises.
-* `task_lock` — a Redis lock, so overlapping runs of the same task cannot race.
+* `task_lock` — a Redis lock, so overlapping runs of the same task cannot race. It is fenced
+  on the Celery delivery's `task_id`, so a lock orphaned by a SIGKILL is reclaimed by the
+  redelivery of the very run that dropped it, instead of refusing it for the whole TTL.
+
+The time limits that make `acks_late` safe are NOT here either: they are worker-wide, so they
+live in `settings/common.py` as `CELERY_TASK_SOFT_TIME_LIMIT` / `CELERY_TASK_TIME_LIMIT`, with
+the reasoning about RabbitMQ's `consumer_timeout` written out beside them.
 
 `expires` is deliberately NOT here: see the note in `plane/celery.py`, where it has to be
 spelled `expire_seconds` because this instance runs `django_celery_beat`'s DatabaseScheduler.
@@ -148,8 +154,8 @@ BASE = {"base": ArribadaTask}
 
 
 @contextmanager
-def task_lock(name, timeout):
-    """`with task_lock("x", 900) as held:` — `held` is False when someone else holds it.
+def task_lock(name, timeout, owner=None):
+    """`with task_lock("x", 900, owner=self.request.id) as held:` — False when someone else holds it.
 
     Why a lock at all: after a broker outage beat delivers every missed tick at once and the
     worker runs them in parallel across its prefork children. `github_plane_sync` reads
@@ -160,11 +166,39 @@ def task_lock(name, timeout):
     matches this run's token, so a run that overshot its TTL cannot delete the lock a later
     run legitimately took.
 
+    ### `owner`: the fencing token, and why the lock needed one
+
+    The release is in a `finally`. A SIGKILL — an OOM kill, `docker compose up -d` on a
+    running worker — does not run `finally`, so the key survives its whole TTL with nobody
+    behind it. `acks_late=True` + `reject_on_worker_lost=True` then redeliver the message
+    within seconds, the redelivered run's `SET NX` fails against that orphan, and it returns
+    "another run is already in progress" and exits. The redelivery is discarded by
+    `expire_seconds` long before the TTL frees the key.
+
+    Which means: before this argument existed, `acks_late` bought the two locked tasks
+    **nothing at all**. The crash-recovery machinery was fully wired and its every recovery
+    attempt was refused by our own lock.
+
+    Passing the Celery delivery's `task_id` as `owner` fixes it, because a redelivery is the
+    same AMQP message and therefore carries the same task id (and `Task.retry` preserves it
+    too). So on a failed acquire we read the key back: if it holds OUR id, the holder is this
+    same delivery's dead predecessor and we take the lock over, refreshing its TTL. Any other
+    value is a genuinely different run and we still stand down.
+
+    Taking a lock over is only safe because the task cannot outlive its delivery: the worker
+    kills it at CELERY_TASK_TIME_LIMIT (1680 s), which is under RabbitMQ's 30-minute
+    `consumer_timeout`, so the broker never requeues a message whose task is still running.
+    Remove that ceiling and this becomes a way to run one task twice — the two settings are a
+    pair, and settings/common.py says so from the other side.
+
     Redis being unreachable yields True (proceed). A cache outage must not stop the scheduled
     work — the same judgement as IGNORE_EXCEPTIONS on the Django cache. Losing the lock costs
     a possible duplicate; refusing to run costs the day's data.
     """
-    token = uuid.uuid4().hex
+    # A random token when there is no delivery to name (an eager call, a management shell).
+    # Random is the safe default: it can never collide with another run, it just gives up the
+    # takeover it has no identity to claim.
+    token = owner or uuid.uuid4().hex
     key = f"arribada:lock:{name}"
     client = None
     try:
@@ -178,9 +212,34 @@ def task_lock(name, timeout):
         return
 
     if not acquired:
-        logger.info("task_lock(%s): already held, skipping this run", name)
-        yield False
-        return
+        # Reclaim our own orphan, and only our own. `GET` then a plain `SET` rather than one
+        # atomic script: the only writer that can be racing us here is another delivery, and
+        # it would be writing a DIFFERENT token, so the compare-and-delete on the way out
+        # still refuses to free a lock that is no longer ours.
+        held_by = None
+        try:
+            held_by = client.get(key)
+            if isinstance(held_by, bytes):
+                held_by = held_by.decode("utf-8", "replace")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("task_lock(%s): could not read the holder (%s)", name, exc)
+
+        if owner and held_by == token:
+            logger.warning(
+                "task_lock(%s): reclaiming the lock left by this delivery's previous, killed run "
+                "(task_id %s) — this is acks_late redelivery doing its job",
+                name,
+                token,
+            )
+            try:
+                client.set(key, token, px=int(timeout * 1000))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("task_lock(%s): could not refresh the reclaimed lock (%s)", name, exc)
+            # Falls through to the yield-True path below.
+        else:
+            logger.info("task_lock(%s): already held, skipping this run", name)
+            yield False
+            return
 
     try:
         yield True

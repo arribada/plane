@@ -393,6 +393,50 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["application/json"]
 
+# --- Task time limits -------------------------------------------------------------------
+#
+# ⚠️ THESE TWO NUMBERS ARE PAIRED WITH RabbitMQ's `consumer_timeout`. Read this before
+# raising either of them.
+#
+# `consumer_timeout` defaults to 1_800_000 ms — THIRTY MINUTES — and this deployment ships
+# no `rabbitmq.conf` at all, so the default is what production runs. When a consumer holds a
+# delivery unacknowledged for longer than that, RabbitMQ does not wait politely: it closes
+# the entire CHANNEL with a PRECONDITION_FAILED and requeues the delivery, while the task is
+# still executing in the worker.
+#
+# That was survivable when tasks acknowledged on delivery. It is not now. Since the task
+# safety commit every arribada task runs with `acks_late=True` and
+# `reject_on_worker_lost=True` (see plane/arribada/task_safety.py), which is precisely the
+# configuration that turns "this run was slow" into "this run happened twice, concurrently".
+#
+# `expire_seconds` in plane/celery.py does not cover it. Expiry only discards a message that
+# is still QUEUED, and it only helps where it is shorter than 30 minutes — which is true of
+# exactly the two tasks that also take a Redis lock. The three unlocked ones sit above it:
+# cycle_scope_snapshot (60 min), due_date_reminder (4 h), github_classification_warnings
+# (4 h). Two of those are check-then-act on `Notification` with no unique index behind them,
+# so a second concurrent run is duplicate in-app notifications and duplicate Zulip pings
+# landing on real people.
+#
+# So the rule is: kill the task before the broker gives up on it. Both limits are below
+# 1800 s, hard above soft, with the gap between them left for the SoftTimeLimitExceeded
+# unwinding to run its `finally` blocks (which is what releases a task_lock) and ack.
+#
+# Raising one of these without raising `consumer_timeout` to match puts the bug straight
+# back. `consumer_timeout` lives in the broker, not here — `/etc/rabbitmq/rabbitmq.conf`,
+# `consumer_timeout = <milliseconds>`, and it needs a broker restart to take effect. The
+# invariant to keep is CELERY_TASK_TIME_LIMIT < consumer_timeout, always, with room to spare.
+#
+# This is worker-wide, so upstream's daily cleanups inherit it too. That is deliberate: they
+# had no ceiling either, and a cleanup that overran 30 minutes was already being requeued by
+# the broker in silence. A visible TimeLimitExceeded in the log is the better failure.
+# Deliberately NOT in the CELERY_ namespace: `config_from_object(..., namespace="CELERY")`
+# maps every CELERY_* key onto a Celery setting, and this one is a fact about the broker
+# rather than a Celery option. It exists so the tests can assert against the same number
+# the comment above argues from.
+RABBITMQ_CONSUMER_TIMEOUT_SECONDS = 30 * 60  # RabbitMQ's shipped default
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", 25 * 60))  # 1500 s
+CELERY_TASK_TIME_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", 28 * 60))  # 1680 s
+
 
 CELERY_IMPORTS = (
     # scheduled tasks

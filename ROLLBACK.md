@@ -58,15 +58,63 @@ five days _after_ `.4`, and `.77`, `.78`, `.79` and `.80` are all the single ima
 `9aac79315fc7`. The tag was a counter somebody typed, and CI's default overwrote `.1`
 whenever anyone pushed. Go by image id.
 
-> ### ⚠️ `ghcr.io/arribada/plane-backend` is EMPTY
+> ### ⚠️ The registry story — corrected 2026-08-10
 >
-> Every backend image listed above — including **both** rollback targets — exists only in
-> this droplet's `/var/lib/docker`. CI builds the backend and its push step fails on a ghcr
-> credential that 403s, which is why the deploy script explicitly judges the _web_ job's
-> conclusion and ignores the run's. **If that disk is lost there is no rollback and no
-> roll-forward, only a rebuild from source.** Fixing this means a working ghcr credential
-> and letting the backend push succeed, exactly as the frontend already does. Until then,
-> `docker save` the two rollback images somewhere off the droplet.
+> An earlier version of this file said **`ghcr.io/arribada/plane-backend` is EMPTY** and
+> that the backend's push step "fails on a ghcr credential that 403s". **Both claims are
+> wrong**, and believing them during an incident would send you to rebuild from source
+> when a good image was one `docker pull` away. What is actually true:
+>
+> **The backend IS in ghcr — roughly 49 tags, including the one serving production.**
+> `.github/workflows/arribada-build.yml` pushes it on every push to `arribada/main`:
+> the "Push image" step is `docker/build-push-action@v6` with `push: true` and
+> `tags: ghcr.io/arribada/plane-backend:${TAG}`. Proven from the CI job logs, not
+> inferred. The push succeeds; nothing 403s in CI, which authenticates with the job's
+> own `secrets.GITHUB_TOKEN`.
+>
+> **The real problem is that the droplet cannot READ ghcr.** Its credential is a `gho_`
+> OAuth token carrying `gist, repo, workflow` and **no package scopes at all**. Reproduce
+> it from anywhere holding that token:
+>
+> ```bash
+> curl -s -H "Authorization: Bearer $TOKEN" \
+>   https://api.github.com/orgs/arribada/packages/container/plane-backend/versions
+> # {"message":"You need at least read:packages scope to get a package's versions.", ... 403}
+> ```
+>
+> That is why the backend is built **on the droplet** rather than pulled, and why the
+> deploy path never depends on a registry read. It is a missing-scope problem, not a
+> missing-image problem. **Fix: issue a token with `read:packages`** (a PAT or a
+> fine-grained token with package read on the org) and `docker login ghcr.io` with it —
+> then every backend rollback target becomes pullable and the droplet's disk stops being
+> the only copy.
+>
+> **The FRONTEND is the genuine gap.** It stopped being pushed to ghcr on **2026-07-18**
+> (`c233e5874e`, then `850fa62bca`). The `web` job now builds with
+> `outputs: type=docker,dest=/tmp/frontend-image.tar` and uploads the gzipped tar via
+> `actions/upload-artifact` with **`retention-days: 5`** — it never pushes. The ghcr-style
+> name in the table above (`ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88`) is only
+> the tag baked _inside_ that tar; **there is no such image in the registry**. So a
+> frontend older than five days exists **only** in this droplet's `/var/lib/docker`, and
+> past that window rolling the frontend back means re-running the workflow at the old
+> commit. Until the frontend is pushed again, `docker save` the frontend rollback images
+> somewhere off the droplet.
+>
+> **`/opt/plane-fork/build-be.sh` on the droplet repeats the same disproven claim** in its
+> comments. It cannot be edited from the repository — fix it in place on the droplet, or
+> trust this file over it. Any `ghcr.io/...` name in the table below is the tag baked into
+> a local image; for the frontend it does **not** imply a registry copy.
+
+> ### ⚠️ There are no DigitalOcean droplet backups
+>
+> Droplet backups are **deliberately not enabled** on `157.245.42.241`. Nothing snapshots
+> this machine. `/opt/backups/images/` — and every pre-deploy dump in
+> `/opt/backups/archive` — sits on the **same disk as the data it protects**, so a disk or
+> droplet loss takes the database, the uploads, the images and the backups together.
+>
+> **A monthly manual download to a workstation is the only off-machine copy.** It is not
+> automated and nothing will remind you. Pull at minimum the newest pre-deploy dump, the
+> matching uploads tarball, and a `docker save` of the current + rollback images.
 
 ---
 
@@ -285,8 +333,13 @@ no-op.
 ## 6. What still has no rollback
 
 - **The frontend build is not reproducible from the droplet.** It comes from a CI artifact
-  that is retained for 5 days. Past that, rolling the frontend back means re-running the
-  workflow at the old commit.
+  that is retained for 5 days, and since 2026-07-18 it is **not pushed to ghcr at all**.
+  Past that window, rolling the frontend back means re-running the workflow at the old
+  commit — a 30–40 minute build, during an incident. This is the worst remaining gap.
+- **The droplet's own copy is the only copy of anything it holds.** DigitalOcean droplet
+  backups are deliberately off and `/opt/backups/` is on the same disk as the data (see §0).
+  The backend rollback images are recoverable from ghcr _once a `read:packages` credential
+  exists_; today the droplet cannot pull them.
 - **MinIO uploads** are backed up nightly and pre-deploy, but there is no procedure here for
   restoring a single asset — only the whole tarball.
 - **`django_celery_beat`'s `PeriodicTask` rows** are written from `app.conf.beat_schedule` on

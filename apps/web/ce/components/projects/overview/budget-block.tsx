@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import { cn, renderFormattedDate } from "@plane/utils";
+import { cn, renderFormattedDate, renderFormattedInstant } from "@plane/utils";
 import { downloadText } from "@/plane-web/components/gantt-chart/export";
 import { ExpenseModal } from "@/plane-web/components/workspace/expense-modal";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
@@ -1052,7 +1052,16 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       {r.requested_by_name && `Asked by ${r.requested_by_name}`}
                       {r.supplier && ` · ${r.supplier}`}
                       {r.decided_by_name && ` · ${decisionVerb(r.status)} by ${r.decided_by_name}`}
-                      {r.decided_at && ` on ${renderFormattedDate(r.decided_at)}`}
+                      {/* `decided_at` is the ONE date on this row that is an
+                          instant. ProcurementRequest stamps it with
+                          `timezone.now()` — a DateTimeField — while `needed_by`,
+                          `ordered_on`, `expected_on` and `received_on` beside it
+                          are DateFields somebody typed, and those stay on
+                          renderFormattedDate. Reading the instant as a day put
+                          an approval made at 5pm Pacific on the next morning,
+                          which is precisely the row an auditor cross-references
+                          against a bank statement. */}
+                      {r.decided_at && ` on ${renderFormattedInstant(r.decided_at)}`}
                     </span>
                     {/* What happened after the yes. Only rendered where there is
                         something to say, so a project that buys nothing on a lead

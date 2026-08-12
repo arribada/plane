@@ -21,7 +21,7 @@ import {
   EstimatePropertyIcon,
   ParentPropertyIcon,
 } from "@plane/propel/icons";
-import { cn, getDate, renderFormattedPayloadDate, shouldHighlightIssueDueDate } from "@plane/utils";
+import { cn, renderFormattedPayloadDate, shouldHighlightIssueDueDate } from "@plane/utils";
 // components
 import { DateDropdown } from "@/components/dropdowns/date";
 import { EstimateDropdown } from "@/components/dropdowns/estimate";
@@ -47,6 +47,7 @@ import { IssueParentSelectRoot } from "@/plane-web/components/issues/issue-detai
 import { DateAlert } from "@/plane-web/components/issues/issue-details/sidebar/date-alert";
 import { TransferHopInfo } from "@/plane-web/components/issues/issue-details/sidebar/transfer-hop-info";
 import { IssueWorklogProperty } from "@/plane-web/components/issues/worklog/property";
+import { useDatePairEdit } from "@/plane-web/components/issues/use-date-pair-edit";
 import type { TIssueOperations } from "../issue-detail";
 import { IssueCycleSelect } from "../issue-detail/cycle-select";
 import { IssueLabel } from "../issue-detail/label";
@@ -78,21 +79,30 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
     issueId,
     issueName: issue?.name ?? "",
   });
+  /**
+   * Setting one end of the window past the other.
+   *
+   * It used to be impossible and unexplained: `maxDate`/`minDate` below clamped
+   * the two pickers against each other, so the day was greyed out with no reason
+   * given — the silent-failure class this fork has spent a week removing, in a
+   * date picker rather than in an HTTP catch. The clamp is gone; crossing now
+   * asks whether the whole item moved, which is what people mean by it. Above the
+   * early return because it is a hook.
+   */
+  const datePair = useDatePairEdit({
+    current: { start_date: issue?.start_date, target_date: issue?.target_date },
+    apply: (patch) => issueOperations.update(workspaceSlug, projectId, issueId, patch),
+  });
   if (!issue) return <></>;
   const createdByDetails = getUserDetails(issue?.created_by);
   const projectDetails = getProjectById(issue.project_id);
   const isEstimateEnabled = projectDetails?.estimate;
   const stateDetails = getStateById(issue.state_id);
 
-  const minDate = getDate(issue.start_date);
-  minDate?.setDate(minDate.getDate());
-
-  const maxDate = getDate(issue.target_date);
-  maxDate?.setDate(maxDate.getDate());
-
   return (
     <div>
       {finished.prompt}
+      {datePair.dialog}
       <h6 className="text-body-xs-medium">{t("common.properties")}</h6>
       <div className={`mt-3 w-full space-y-3 ${disabled ? "opacity-60" : ""}`}>
         <SidebarPropertyListItem icon={StatePropertyIcon} label={t("common.state")}>
@@ -190,14 +200,11 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         <SidebarPropertyListItem icon={StartDatePropertyIcon} label={t("common.order_by.start_date")}>
           <DateDropdown
             value={issue.start_date}
-            onChange={(val) =>
-              issueOperations.update(workspaceSlug, projectId, issueId, {
-                start_date: val ? renderFormattedPayloadDate(val) : null,
-              })
-            }
+            onChange={(val) => datePair.onDateChange("start_date", val ? renderFormattedPayloadDate(val) : null)}
             placeholder={t("issue.add.start_date")}
             buttonVariant="transparent-with-text"
-            maxDate={maxDate ?? undefined}
+            // No `maxDate`: a start after the end is a question, not a forbidden
+            // day. See `datePair` above.
             disabled={disabled}
             className="group w-full grow"
             buttonContainerClassName="w-full text-left h-7.5"
@@ -211,14 +218,12 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           <div className="flex w-full items-center gap-2">
             <DateDropdown
               value={issue.target_date}
-              onChange={(val) =>
-                issueOperations.update(workspaceSlug, projectId, issueId, {
-                  target_date: val ? renderFormattedPayloadDate(val) : null,
-                })
-              }
+              onChange={(val) => datePair.onDateChange("target_date", val ? renderFormattedPayloadDate(val) : null)}
               placeholder={t("issue.add.due_date")}
               buttonVariant="transparent-with-text"
-              minDate={minDate ?? undefined}
+              // Mirror of the start picker: no `minDate`, the crossing is asked
+              // about rather than blocked. Fixing one direction only would leave
+              // the other silently refusing.
               disabled={disabled}
               className="group w-full grow"
               buttonContainerClassName="w-full text-left h-7.5"

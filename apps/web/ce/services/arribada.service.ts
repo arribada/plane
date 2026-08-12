@@ -12,6 +12,7 @@ import type {
   TAiPlan,
   TAiSettings,
   TBlueprintCatalogue,
+  TCriticalPathDiagnostics,
   TGithubInboxItem,
   TPlannedSprint,
   TPlannedTask,
@@ -24,6 +25,7 @@ import type {
   TPortfolioProject,
   TNonWorkingDay,
   TProjectBudget,
+  TDriveLink,
   TProjectDocs,
   TProcurementRequest,
   TProjectExpense,
@@ -309,7 +311,17 @@ export class ArribadaService extends APIService {
     projectId: string
     // `slack` is the useful half: free/total working days per issue. `issue_ids` is
     // the chain, kept for callers that only want the boolean.
-  ): Promise<{ issue_ids: string[]; slack?: Record<string, { free: number; total: number; critical: boolean }> }> {
+  ): Promise<{
+    issue_ids: string[];
+    slack?: Record<string, { free: number; total: number; critical: boolean }>;
+    /** ISO date an item cannot start before, because it is waiting on a delivery.
+     *  Absent on a backend that predates it, and `{}` on every project that has
+     *  not turned `schedule_from_deliveries` on — which is most of them. */
+    delivery_floors?: Record<string, string>;
+    /** Why the chain is empty when it is. Optional: an older backend does not
+     *  send it, and the banner draws nothing rather than inventing a cause. */
+    diagnostics?: TCriticalPathDiagnostics;
+  }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/critical-path/`)
       .then((response) => response?.data)
       .catch(rethrow);
@@ -329,7 +341,10 @@ export class ArribadaService extends APIService {
     data: {
       doc_id?: string;
       title?: string;
+      /** @deprecated Sets the FIRST Drive link and leaves the rest alone. Send
+       *  `google_drive_links` instead; this exists for older callers. */
       google_drive_url?: string;
+      google_drive_links?: TDriveLink[];
       chat_url?: string;
       github_repo_urls?: string[];
     }
@@ -424,6 +439,7 @@ export class ArribadaService extends APIService {
   async getWorkspaceCriticalPath(workspaceSlug: string): Promise<{
     issue_ids: string[];
     edges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[];
+    diagnostics?: TCriticalPathDiagnostics;
   }> {
     return this.get(`/api/arribada/workspaces/${workspaceSlug}/critical-path/`)
       .then((response) => response?.data ?? { issue_ids: [], edges: [] })
@@ -740,6 +756,7 @@ export class ArribadaService extends APIService {
         | "timeline_locked"
         | "allow_edit_others"
         | "allow_add_items"
+        | "lead_only_edits"
       >
     >
   ): Promise<TProjectSchedule> {

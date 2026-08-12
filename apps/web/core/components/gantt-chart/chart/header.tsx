@@ -13,7 +13,7 @@ import { Row } from "@plane/ui";
 // components
 import { cn } from "@plane/utils";
 import { VIEWS_LIST } from "@/components/gantt-chart/data";
-import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
+import { isSyntheticRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { SavedOrderMenu } from "@/plane-web/components/gantt-chart/saved-order";
 // helpers
 // hooks
@@ -109,7 +109,9 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
       <div className="min-w-0 shrink truncate text-11 font-medium text-tertiary">
         {/* Group headers occupy a row but are not work items: counting them turned
             "37 work items" into 43 the moment grouping was switched on. */}
-        {blockIds ? `${blockIds.filter((id) => !isGroupRowId(id)).length} ${loaderTitle}` : t("common.loading")}
+        {/* ARRIBADA FIX: every synthetic band row, not just the work-item gantt's.
+            The portfolio has always counted its folder headers as projects. */}
+        {blockIds ? `${blockIds.filter((id) => !isSyntheticRowId(id)).length} ${loaderTitle}` : t("common.loading")}
       </div>
 
       {/* The controls, in four groups separated by a hairline: what is shown, the
@@ -221,7 +223,7 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
 
         {/* Output and options: what leaves this chart, and how it is drawn. */}
         <div className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap">
-          <SavedOrderMenu visibleIssueIds={(blockIds ?? []).filter((id) => !isGroupRowId(id))} />
+          <SavedOrderMenu visibleIssueIds={(blockIds ?? []).filter((id) => !isSyntheticRowId(id))} />
 
           {toolbarActions}
 

@@ -15,6 +15,43 @@
 import { createContext, useContext } from "react";
 import type { TGanttGroup, TGanttGroupBy } from "./grouping";
 
+/**
+ * What the two panes need to know about sub-task nesting.
+ *
+ * On the same context as the groups because it is the same problem: a row's
+ * shape is decided in the layout root, from the loaded issues, and both panes
+ * have to agree about it or the bars stop lining up with their labels.
+ */
+export type TGanttSubtaskContext = {
+  /** False everywhere the chart does not nest, which is every chart that never
+   *  provides this context, plus the one the reader has switched it off on. */
+  enabled: boolean;
+  depthOf: (id: string) => number;
+  /** Direct children present on this chart, not the work item's own count. */
+  childCountOf: (id: string) => number;
+  parentOf: (id: string) => string | null;
+  isCollapsed: (id: string) => boolean;
+  toggle: (id: string) => void;
+  /** Every row on this chart that has children — what "fold all" folds. */
+  parentIds: string[];
+  /** The span the folded children cover when it reaches outside the parent's own
+   *  bar, so a fold never hides work without saying so. Null otherwise. */
+  rollupOf: (id: string) => { start: Date; end: Date } | null;
+};
+
+const NO_PARENTS: string[] = [];
+
+const NO_SUBTASKS: TGanttSubtaskContext = {
+  enabled: false,
+  depthOf: () => 0,
+  childCountOf: () => 0,
+  parentOf: () => null,
+  isCollapsed: () => false,
+  toggle: () => undefined,
+  parentIds: NO_PARENTS,
+  rollupOf: () => null,
+};
+
 export type TGanttGroupContext = {
   /** Empty when grouping is off. */
   byKey: Map<string, TGanttGroup>;
@@ -28,6 +65,9 @@ export type TGanttGroupContext = {
    *  dropping. The layout root owns the mutation; the header only reports the
    *  gesture. */
   assign: ((issueId: string, groupKey: string) => Promise<void>) | null;
+  /** Sub-task nesting. Independent of grouping — either can be on without the
+   *  other — and computed in the same place for the same reason. */
+  subtasks: TGanttSubtaskContext;
 };
 
 const EMPTY: TGanttGroupContext = {
@@ -36,6 +76,7 @@ const EMPTY: TGanttGroupContext = {
   toggle: () => undefined,
   groupBy: "none",
   assign: null,
+  subtasks: NO_SUBTASKS,
 };
 
 export const GanttGroupContext = createContext<TGanttGroupContext>(EMPTY);

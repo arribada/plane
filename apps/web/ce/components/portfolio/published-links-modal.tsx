@@ -26,7 +26,7 @@ import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { AlertTriangle, ExternalLink, Globe, X } from "lucide-react";
-import { renderFormattedDate } from "@plane/utils";
+import { renderFormattedInstant } from "@plane/utils";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -119,9 +119,15 @@ export const PublishedLinksModal = observer(function PublishedLinksModal({ isOpe
                 {links.map((link) => (
                   <li key={link.anchor} className="flex items-baseline gap-3 py-2">
                     <span className="flex-1 truncate text-13 text-primary">{link.project_name}</span>
+                    {/* ProjectPublicTimeline.created_at is a DateTimeField, so
+                        this is an instant and not a day. It answers "how long
+                        has this been readable without a login" — the question
+                        this whole dialog exists to make answerable — and read as
+                        a day it aged every link published after 4pm Pacific by
+                        one, which is the wrong direction to be wrong in. */}
                     <span className="shrink-0 text-11 text-tertiary">
                       {link.created_by_name ? `${link.created_by_name}, ` : ""}
-                      {renderFormattedDate(link.created_at)}
+                      {renderFormattedInstant(link.created_at)}
                     </span>
                     <a
                       href={`${window.location.origin}/public/timeline/${link.anchor}`}

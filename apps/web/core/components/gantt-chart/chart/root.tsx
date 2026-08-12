@@ -24,6 +24,7 @@ import {
   viewThatFits,
   zoomToFill,
 } from "@/plane-web/components/gantt-chart/fit-to-blocks";
+import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
 import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../constants";
 import { currentViewDataWithView } from "../data";
 import type { IMonthBlock, IMonthView, IWeekBlock } from "../views";
@@ -41,7 +42,8 @@ type ChartViewRootProps = {
   enableBlockRightResize: boolean | ((blockId: string) => boolean);
   enableBlockMove: boolean | ((blockId: string) => boolean);
   enableReorder: boolean | ((blockId: string) => boolean);
-  onReorderStart?: () => Promise<void> | void;
+  /** ARRIBADA FIX: may return the frozen sequence — see gantt-chart/root.tsx. */
+  onReorderStart?: () => Promise<TReorderStart | void> | TReorderStart | void;
   enableAddBlock: boolean | ((blockId: string) => boolean);
   enableSelection: boolean | ((blockId: string) => boolean);
   enableDependency: boolean | ((blockId: string) => boolean);
@@ -222,7 +224,13 @@ export const ChartViewRoot = observer(function ChartViewRoot(props: ChartViewRoo
     setTimeout(() => {
       const container = document.querySelector("#gantt-container") as HTMLDivElement | null;
       if (!container) return;
-      const offset = getNumberOfDaysBetweenTwoDates(state.data.startDate, span.start);
+      // `Math.abs`, like its sibling in `updateScrollPosition` below.
+      // `getNumberOfDaysBetweenTwoDates(a, b)` returns a MINUS b, so a span that
+      // starts after the chart's own start date — which is the normal case, since
+      // the payload is generated around the span's midpoint — comes back negative.
+      // `scrollLeftForSpan` clamps at 0, so Fit quietly scrolled to the far left of
+      // the calendar instead of to the plan.
+      const offset = Math.abs(getNumberOfDaysBetweenTwoDates(state.data.startDate, span.start));
       container.scrollLeft = scrollLeftForSpan(offset, VIEW_DAY_WIDTH[view] * factor);
     }, 80);
   };

@@ -13,6 +13,7 @@ import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { GanttGroupBand } from "../group-row";
 import { groupKeyFromRowId, isGroupRowId } from "../grouping";
+import { SubtaskRollupBand } from "../subtask-rollup-band";
 // types
 
 export type GanttChartBlocksProps = {
@@ -63,6 +64,10 @@ export function GanttChartRowList(props: GanttChartBlocksProps) {
               selectionHelpers={selectionHelpers}
               ganttContainerRef={ganttContainerRef}
             />
+            {/* Drawn on the row-background layer, which is painted BEHIND the
+                bars, so a folded parent's rolled-up range sits under its own bar
+                instead of competing with it. */}
+            <SubtaskRollupBand blockId={blockId} />
           </RenderIfVisible>
         )
       )}

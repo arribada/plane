@@ -38,6 +38,70 @@ export const renderFormattedDate = (
 };
 
 /**
+ * A PLAIN DAY AND AN INSTANT ARE NOT THE SAME VALUE, AND THIS IS THE PAIR THAT
+ * KEEPS THEM APART.
+ *
+ * `renderFormattedDate` funnels through `getDate`, which reads `date.substring(0,
+ * 10)` and builds `new Date(year, month - 1, day)` — the first ten characters as
+ * a day, pinned to LOCAL midnight. That is exactly right for a Django `DateField`
+ * ("2026-08-12"), which carries a day and no time and no zone: an invoice dated
+ * the 12th is dated the 12th in Praia and in Portland, and reading it through an
+ * offset is how it would stop being.
+ *
+ * It is silently WRONG for a `DateTimeField`, whose first ten characters are the
+ * UTC day. `2026-08-13T02:30:00Z` truncates to "2026-08-13" and renders "Aug 13"
+ * to a reader in California for whom it is still the 12th at 7:30pm. Nothing
+ * throws, nothing logs; the report just says the wrong day.
+ *
+ * SO: `renderFormattedDate` for a plain day (`DateField` — `incurred_on`,
+ * `needed_by`, `ordered_on`, `start_date`, `rate_captured_on`), and
+ * `renderFormattedInstant` for an instant (`DateTimeField` — anything named
+ * `*_at`: `created_at`, `updated_at`, `decided_at`, `published_at`). Picking the
+ * wrong one of the two is an off-by-one-day for most of the planet — a day early
+ * everywhere west of Greenwich, a day late everywhere far enough east — and it is
+ * invisible to anybody developing or running CI in UTC, which is the only offset
+ * at which the two functions agree.
+ *
+ * @returns {string | undefined} formatted date in the desired format or platform default format (MMM dd, yyyy)
+ * @description Formats an ISO instant in the VIEWER'S OWN timezone. Parses the whole string rather than its first ten characters, so the calendar date shown is the reader's, not UTC's.
+ * @param {Date | string} date an instant — a DateTimeField value
+ * @param {string} formatToken (optional) // default MMM dd, yyyy
+ * @example renderFormattedInstant("2026-08-13T02:30:00Z") // Aug 12, 2026 in Los Angeles, Aug 13, 2026 in Auckland
+ * @example renderFormattedInstant("2026-08-13T02:30:00Z", "MMM dd") // Aug 12 in Los Angeles
+ */
+export const renderFormattedInstant = (
+  date: string | Date | undefined | null,
+  formatToken: string = "MMM dd, yyyy"
+): string | undefined => {
+  // Same guard, and therefore the same contract, as renderFormattedDate: nothing
+  // in, nothing out — never "Invalid Date" and never today's date.
+  if (!date || date === "") return;
+  // `parseISO` and not `getDate`: that is the whole point. It reads the offset
+  // the string carries, so the Date it returns is the right POINT IN TIME, and
+  // `format` below then asks the host for the reader's local calendar.
+  //
+  // Split on the type rather than calling `parseISO` unconditionally, because
+  // `parseISO` takes a string and only a string — handed a Date it throws on
+  // `dateString.split`. A Date is already an instant and passes straight through.
+  // The `String` box is folded in with it because `typeof` calls one "object",
+  // and `getDate` above has always accepted one.
+  // a boxed String is exactly what this has to catch; `typeof` calls one "object", which is why the check cannot be written the way the rule wants.
+  // oxlint-disable-next-line unicorn/no-instanceof-builtins
+  const parsedDate = typeof date === "string" || date instanceof String ? parseISO(String(date)) : date;
+  // Check if the parsed date is valid before formatting
+  if (!isValid(parsedDate)) return; // Return undefined for invalid dates
+  let formattedDate;
+  try {
+    // Format the date in the format provided or default format (MMM dd, yyyy)
+    formattedDate = format(parsedDate, formatToken);
+  } catch (_e) {
+    // Format the date in format (MMM dd, yyyy) in case of any error
+    formattedDate = format(parsedDate, "MMM dd, yyyy");
+  }
+  return formattedDate;
+};
+
+/**
  * @returns {string} formatted date in the format of MMM dd
  * @description Returns date in the formatted format
  * @param {string | Date} date
@@ -284,6 +348,8 @@ export const getDate = (date: string | Date | undefined | null): Date | undefine
   try {
     if (!date || date === "") return;
 
+    // upstream's own check, and a boxed String is precisely the case `typeof` cannot see.
+    // oxlint-disable-next-line unicorn/no-instanceof-builtins
     if (typeof date !== "string" && !(date instanceof String)) return date;
 
     const [yearString, monthString, dayString] = date.substring(0, 10).split("-");
@@ -400,6 +466,8 @@ export const generateDateArray = (startDate: string | Date, endDate: string | Da
   const dateArray = [];
 
   // Use a while loop to generate dates between the range
+  // `start` IS advanced, by `setDate` on the same object further down; the rule only looks for reassignment and cannot see a mutated Date.
+  // oxlint-disable-next-line no-unmodified-loop-condition
   while (start <= end) {
     // Push the current date (converted to ISO string for consistency)
     dateArray.push({

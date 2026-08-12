@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  */
+import { fromEpochDay, toEpochDay, todayIso } from "../gantt-chart/working-days";
 
 // Priority palette (mirrors Plane's issue priority colors).
 export const PRIORITY_COLOR: Record<string, string> = {
@@ -37,13 +38,20 @@ export const projectHealth = (p: {
   const planned = p.target_date;
   const derived = p.derived_target_date;
   if (!planned && !derived) return null; // nothing to judge
-  const today = new Date().toISOString().slice(0, 10);
+  // The reader's own day, not UTC's. `target_date` is a plain day, so the
+  // comparison it is about to be put into has to be against a plain day from the
+  // same calendar. `toISOString()` answers in UTC: at UTC+13 the whole local
+  // morning is yesterday, so a project due today showed a red "Past due" pastille
+  // to everybody in Auckland until lunchtime; at UTC-8 the reverse, and something
+  // genuinely a day late still read "On track" all evening.
+  const today = todayIso();
   const end = derived ?? planned!;
   if (planned && derived && derived > planned) return { color: "#dc2626", label: "Drifting past the plan", glyph: "!" };
   if (end < today) return { color: "#dc2626", label: "Past due", glyph: "!" };
-  const soon = new Date();
-  soon.setDate(soon.getDate() + 7);
-  if (end <= soon.toISOString().slice(0, 10)) return { color: "#f59e0b", label: "Due within a week", glyph: "•" };
+  // A week out, counted on the calendar rather than by adding 7×24 hours to an
+  // instant — the week containing a clock change is 167 or 169 hours long.
+  const soon = fromEpochDay(toEpochDay(today)! + 7);
+  if (end <= soon) return { color: "#f59e0b", label: "Due within a week", glyph: "•" };
   return { color: "#16a34a", label: "On track", glyph: "✓" };
 };
 

@@ -32,7 +32,7 @@ import { cn } from "@plane/utils";
 import { useUserPermissions } from "@/hooks/store/user";
 import { githubSyncToast } from "@/plane-web/components/github-triage/sync-toast";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TProjectDocs } from "@/plane-web/types/arribada";
+import type { TDriveLink, TProjectDocs } from "@/plane-web/types/arribada";
 
 const WIKI_BASE = "https://docs.arribada.org";
 const EMPTY: TProjectDocs = {
@@ -40,6 +40,7 @@ const EMPTY: TProjectDocs = {
   workspace_id: null,
   title: null,
   google_drive_url: null,
+  google_drive_links: [],
   chat_url: null,
   github_repo_urls: [],
 };
@@ -48,6 +49,19 @@ const EMPTY: TProjectDocs = {
 const repoLabel = (url: string): string => {
   const m = url.match(/github\.com\/([^/]+\/[^/?#]+)/i);
   return m ? m[1] : url.replace(/^https?:\/\//, "");
+};
+
+// What to call a Drive link that has no label — which is every link migrated
+// from the old single column, because nobody was ever asked for one.
+//
+// NOT "Open the Drive folder" for all of them: that was fine when there was one
+// and is useless the moment there are three, which is the entire reason this is
+// a list now. The tail of the URL is at least a distinguishing string, and the
+// full address is on the title attribute for anyone who needs to be sure.
+const driveLabel = (link: TDriveLink): string => {
+  if (link.label.trim()) return link.label.trim();
+  const tail = link.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return tail.length > 44 ? `${tail.slice(0, 41)}…` : tail;
 };
 
 export const WikiLinksPanel = observer(function WikiLinksPanel() {
@@ -59,6 +73,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const [draftDoc, setDraftDoc] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDrive, setDraftDrive] = useState("");
+  const [draftDriveLabel, setDraftDriveLabel] = useState("");
   const [draftChat, setDraftChat] = useState("");
   const [draftRepo, setDraftRepo] = useState("");
   const [saving, setSaving] = useState(false);
@@ -85,6 +100,22 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const editable = canEdit && loaded && !loadFailed;
 
   const repos = docs.github_repo_urls ?? [];
+  const drives = docs.google_drive_links ?? [];
+
+  const addDrive = async () => {
+    const url = draftDrive.trim();
+    if (!url) return;
+    // Sent as the whole list, which is also how the repos row works and how the
+    // endpoint reads it. The server de-duplicates, so pasting a link twice is a
+    // no-op rather than a second identical row.
+    if (await persist({ google_drive_links: [...drives, { url, label: draftDriveLabel.trim() }] })) {
+      setDraftDrive("");
+      setDraftDriveLabel("");
+    }
+  };
+  const removeDrive = (url: string) => {
+    void persist({ google_drive_links: drives.filter((l) => l.url !== url) });
+  };
 
   const [syncing, setSyncing] = useState(false);
   const syncGithubNow = async () => {
@@ -144,7 +175,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const persist = async (data: {
     doc_id?: string;
     title?: string;
-    google_drive_url?: string;
+    google_drive_links?: TDriveLink[];
     chat_url?: string;
     github_repo_urls?: string[];
   }): Promise<boolean> => {
@@ -178,7 +209,6 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
 
   // Colanode addresses a doc as /<workspace>/<doc> — any extra segment 404s.
   const wikiLink = docs.doc_id && docs.workspace_id ? `${WIKI_BASE}/${docs.workspace_id}/${docs.doc_id}` : null;
-  const driveLink = docs.google_drive_url;
   const chatLink = docs.chat_url;
 
   const input = "rounded border border-subtle bg-layer-2 px-2 py-1 text-13 outline-none focus:border-accent-strong";
@@ -280,61 +310,85 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
         )}
       </div>
 
-      {/* Google Drive row */}
-      <div className="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-2.5">
-        <FolderOpen className="size-4 flex-shrink-0 text-secondary" />
-        <span className="w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
+      {/* Google Drive row — a list, like the repos below: field data, CAD and the
+          reports that go to a funder are three places with three audiences, and
+          three bare Drive URLs are indistinguishable without a label. */}
+      <div className="flex flex-wrap items-start gap-3 border-t border-subtle px-4 py-2.5">
+        <FolderOpen className="mt-0.5 size-4 flex-shrink-0 text-secondary" />
+        <span className="mt-0.5 w-24 flex-shrink-0 text-12 font-medium tracking-wide text-secondary/80 uppercase">
           Google Drive
         </span>
-        {driveLink ? (
-          <a
-            href={driveLink}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 truncate text-13 font-medium text-accent-primary hover:underline"
+        <div className="flex min-w-0 flex-grow flex-col gap-1.5">
+          {drives.length === 0 &&
+            editing !== "drive" &&
+            emptyRow("Not linked yet — paste the shared Drive link for team access.")}
+          {drives.map((link) => (
+            <span key={link.url} className="flex items-center gap-1.5">
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                title={link.url}
+                className="flex items-center gap-1 truncate text-13 font-medium text-accent-primary hover:underline"
+              >
+                {driveLabel(link)}
+                <ExternalLink className="size-3 flex-shrink-0" />
+              </a>
+              <button
+                type="button"
+                onClick={() => removeDrive(link.url)}
+                disabled={saving || !editable}
+                className="text-tertiary hover:text-danger-primary"
+                title="Remove"
+              >
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ))}
+          {editing === "drive" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={draftDriveLabel}
+                onChange={(e) => setDraftDriveLabel(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addDrive()}
+                placeholder="Label (e.g. Field data)"
+                className={cn(input, "w-40")}
+              />
+              <input
+                value={draftDrive}
+                onChange={(e) => setDraftDrive(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addDrive()}
+                placeholder="https://drive.google.com/…"
+                className={cn(input, "w-64")}
+              />
+              <button
+                type="button"
+                onClick={addDrive}
+                disabled={saving}
+                className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
+              >
+                <Check className="size-3.5" />
+                {saving ? "Saving…" : "Add"}
+              </button>
+              <button type="button" onClick={() => setEditing(null)} className="text-secondary hover:text-primary">
+                <X className="size-4" />
+              </button>
+            </div>
+          )}
+        </div>
+        {editing !== "drive" && editable && (
+          <button
+            type="button"
+            onClick={() => {
+              setDraftDrive("");
+              setDraftDriveLabel("");
+              setEditing("drive");
+            }}
+            className={editBtn}
           >
-            Open the Drive folder
-            <ExternalLink className="size-3.5 flex-shrink-0" />
-          </a>
-        ) : (
-          emptyRow("Not linked yet — paste the shared Drive link for team access.")
-        )}
-        <div className="flex-grow" />
-        {editing === "drive" ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={draftDrive}
-              onChange={(e) => setDraftDrive(e.target.value)}
-              placeholder="https://drive.google.com/…"
-              className={cn(input, "w-64")}
-            />
-            <button
-              type="button"
-              onClick={() => persist({ google_drive_url: draftDrive.trim() })}
-              disabled={saving}
-              className="flex items-center gap-1 rounded bg-accent-primary px-2 py-1 text-13 text-white disabled:opacity-50"
-            >
-              <Check className="size-3.5" />
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button type="button" onClick={() => setEditing(null)} className="text-secondary hover:text-primary">
-              <X className="size-4" />
-            </button>
-          </div>
-        ) : (
-          editable && (
-            <button
-              type="button"
-              onClick={() => {
-                setDraftDrive(docs.google_drive_url ?? "");
-                setEditing("drive");
-              }}
-              className={editBtn}
-            >
-              {driveLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
-              {driveLink ? "Change" : "Add link"}
-            </button>
-          )
+            <Plus className="size-3" />
+            Add Drive link
+          </button>
         )}
       </div>
 

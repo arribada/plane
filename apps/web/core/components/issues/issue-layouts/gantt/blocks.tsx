@@ -16,7 +16,6 @@ import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "@/components/gantt-chart/constant
 // hooks
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useIssues } from "@/hooks/store/use-issues";
-import { useLabel } from "@/hooks/store/use-label";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
@@ -29,8 +28,9 @@ import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-st
 // local imports
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
+import { useGanttColorScale } from "@/plane-web/components/gantt-chart/color-scale";
+import { completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
 import { useProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
-import { ganttBarColor, ganttDisplay } from "@/plane-web/store/gantt-display";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
 import type { GanttStoreType } from "./base-gantt-root";
@@ -47,11 +47,13 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   const workspaceSlug = routerWorkspaceSlug?.toString();
   // store hooks
   const { getProjectStates } = useProjectState();
-  const { getLabelById } = useLabel();
   const {
     issue: { getIssueById },
   } = useIssueDetail();
   const { sidebarWidth, isSidebarCollapsed } = useTimeLineChartStore();
+  // The chart-wide colour scale. Null outside a provider, in which case the bar
+  // keeps its state colour exactly as it always did.
+  const colors = useGanttColorScale();
   // hooks
   const { isMobile } = usePlatformOS();
   const { handleRedirection } = useIssuePeekOverviewRedirection(isEpic);
@@ -63,8 +65,17 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
     issueDetails && getProjectStates(issueDetails?.project_id)?.find((state) => state?.id == issueDetails?.state_id);
 
   const { blockStyle } = getBlockViewDetails(issueDetails, stateDetails?.color ?? "");
-  // user-selected "colour by" (state keeps the default); overrides just the fill.
-  const colorOverride = ganttBarColor(ganttDisplay.colorBy, issueDetails, (id) => getLabelById(id)?.color);
+  /**
+   * The user's "colour by" choice, resolved against the scale the whole chart
+   * shares. It used to be decided here, per bar, by hashing the assignee's uuid
+   * into an HSL hue — which cannot promise that two people differ, because one
+   * bar cannot see the other. See the note at the top of `palette.ts`.
+   *
+   * Null when the chart mounted no provider, or when the dimension is `state` —
+   * a state's colour is the team's own and is what every other screen paints it
+   * with, so it is passed straight through rather than repainted here.
+   */
+  const colorOverride = colors?.colorForIssue?.(issueId) ?? null;
   const fill = colorOverride || stateDetails?.color || "#3b82f6";
   // undefined when this project has no marks at all, which is what makes barLook
   // fall back to the same-day guess rather than declaring nothing a milestone.
@@ -75,7 +86,19 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   // above it: the fill was only ever visible through the 50% veil that used to
   // cover every bar, and removing that veil made it invisible outright.
   const percent = useProjectProgress(issueId);
+  /**
+   * Finished work, drawn distinctly — and only when the reader has asked for it.
+   *
+   * It used to be a 55% veil of the surface colour over the bar, which is the
+   * obvious move and is wrong twice over: it makes the colour-by choice
+   * unreadable exactly where it is most useful ("who finished what"), and on the
+   * dark theme a faded bar and a pale series colour are the same picture. A 45°
+   * hatch in the bar's OWN colour plus a tick says the same thing, keeps the
+   * series legible, and survives a greyscale print.
+   */
+  const showDone = !!look.done && (colors?.showCompleted ?? false);
   const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
+  const barStyle = showDone ? { ...style, backgroundImage: completedFill(fill) } : style;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
 
@@ -99,7 +122,7 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
             // A one-day item is drawn as a diamond by the overlay. The bar behind it
             // is a 3px sliver poking out from under the marker, which reads as a
             // rendering fault — so it steps aside and leaves the shape to the diamond.
-            style={look.milestone ? { ...style, backgroundColor: "transparent" } : style}
+            style={look.milestone ? { ...barStyle, backgroundColor: "transparent" } : barStyle}
             // a real button element would restyle the bar (UA text-align/appearance) and cannot legally wrap these divs
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
             role="button"
@@ -116,7 +139,12 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
                 title={`${percent}% of its sub-items are done`}
               />
             )}
-            {look.done && <div className="absolute top-0 left-0 h-full w-full rounded-sm bg-surface-1/55" />}
+            {/* The veil that used to sit here is gone: it drained every colour-by
+                palette to pastel and, on the dark theme, made a finished bar and a
+                pale series colour the same picture. The hatch on `barStyle` and
+                the tick beside the title say it instead. A finished bar with the
+                toggle OFF is drawn exactly like any other, which is the point of
+                the toggle. */}
             {look.overdue && (
               <div
                 className="ring-danger-primary pointer-events-none absolute top-0 left-0 h-full w-full rounded-sm ring-2 ring-inset"
@@ -125,10 +153,14 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
             )}
             <div
               className="sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
-              // Chosen against the bar's own fill. The 50% veil that used to make one
-              // fixed text colour work also drained every colour-by palette to pastel.
-              style={{ left: `${sidebarPaneWidth}px`, color: look.done ? undefined : look.text }}
+              // Chosen against the bar's own fill, done or not: the hatch keeps the
+              // bar's own colour, so the contrast decision is the same one. The
+              // `look.done ? undefined` that used to be here existed for the veil.
+              style={{ left: `${sidebarPaneWidth}px`, color: look.text }}
             >
+              {/* The glyph, not only the texture. A hatch is invisible on a
+                  three-day bar and gone entirely in a greyscale print. */}
+              {showDone && <span aria-hidden>{DONE_GLYPH} </span>}
               {issueDetails?.name}
             </div>
             {isEpic && (

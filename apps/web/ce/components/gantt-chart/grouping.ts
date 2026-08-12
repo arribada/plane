@@ -34,6 +34,22 @@ export const GROUP_BY_OPTIONS: { value: TGanttGroupBy; label: string; hint?: str
 /** Prefixes a synthetic row id. Real ids are UUIDs, so this can never collide. */
 export const GROUP_ROW_PREFIX = "__ggrp__:";
 export const isGroupRowId = (id: string): boolean => id.startsWith(GROUP_ROW_PREFIX);
+
+/**
+ * Any row in any gantt's id list that stands for a band rather than a work item.
+ *
+ * The portfolio's prefixes are written out here rather than imported, because
+ * this module is imported BY the portfolio's and the cycle would be real. They
+ * are three string constants and the test names all four.
+ *
+ * This exists because `isGroupRowId` is the wrong question at the two places that
+ * count rows: the toolbar's "N work items", and the id list handed to bulk
+ * selection. The portfolio has always put `__folder__:` headers in the same list,
+ * so a board with three swimlanes reported six projects for six, plus three, and
+ * offered three synthetic ids to every bulk action behind "select all".
+ */
+const SYNTHETIC_ROW_PREFIXES = [GROUP_ROW_PREFIX, "__folder__:", "__pstat__:", "__psub__:"];
+export const isSyntheticRowId = (id: string): boolean => SYNTHETIC_ROW_PREFIXES.some((prefix) => id.startsWith(prefix));
 export const groupRowId = (key: string): string => `${GROUP_ROW_PREFIX}${key}`;
 export const groupKeyFromRowId = (id: string): string => id.slice(GROUP_ROW_PREFIX.length);
 

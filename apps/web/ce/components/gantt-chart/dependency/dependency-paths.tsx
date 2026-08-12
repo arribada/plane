@@ -16,9 +16,9 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
+import { edgeOf } from "../edges";
+import { routeDependency, routeParentBracket } from "./routing";
 
-const R = 6; // corner radius
-const HEAD = 6; // arrowhead half-size
 const PARENT_COLOR = "#94a3b8"; // muted slate — hierarchy links, distinct from the coloured dependency arrows
 const CRITICAL_COLOR = "#dc2626";
 
@@ -29,13 +29,6 @@ const CRITICAL_COLOR = "#dc2626";
 const RESTING = { opacity: 0.28, width: 1 };
 const LOUD = { opacity: 0.95, width: 2 };
 const MUTED = { opacity: 0.06, width: 1 };
-
-// Left-side bracket connecting a parent bar's start to a child bar's start (hierarchy,
-// not a temporal dependency), so it reads as "belongs to" without cluttering the arrows.
-function parentElbow(x1: number, y1: number, x2: number, y2: number): string {
-  const rail = Math.max(4, Math.min(x1, x2) - 10);
-  return `M ${x1} ${y1} H ${rail} V ${y2} H ${x2}`;
-}
 
 // Arrow points predecessor -> successor. blocked_by is drawn reversed.
 //
@@ -49,47 +42,21 @@ const COLOR: Record<string, string> = {
   blocked_by: "#64748b",
 };
 
-function edgeEndpoints(rel: TIssueRelationEdge): { from: string; to: string } {
-  if (rel.relation_type === "blocked_by") {
-    return { from: rel.related_issue_id, to: rel.issue_id };
-  }
-  return { from: rel.issue_id, to: rel.related_issue_id };
-}
-
 /**
- * Orthogonal elbow with rounded corners, drawn in whichever direction the pair
- * actually sits — rightwards when the successor is later, leftwards when it is
- * earlier.
+ * `edges.ts` decides which end is the predecessor; this only keeps the shape the
+ * drawing code already expects.
  *
- * It used to always leave the source's right edge and arrive at the target's
- * left, because that is the finish-to-start picture. When the two bars are the
- * other way round on the timeline that forces the line to travel back past both
- * of them, and it lands on the far side of the target — so a task whose
- * dependency sits LATER got an arrow pinned to its left, pointing away from the
- * thing it waits for. Mirroring the elbow makes it a short hop between the two
- * facing edges instead.
+ * The local ternary this replaces special-cased `blocked_by` alone, but
+ * `finish_after` and `start_after` name the successor first as well — so an arrow
+ * for either of those was drawn pointing back up its own chain. An arrow is the
+ * one part of the chart a reader trusts to say which way the work flows.
  *
- * The leftward shape is the exact mirror of the rightward one about a vertical
- * axis, which is why the arc sweep flags are inverted rather than re-derived:
- * mirroring an arc always flips its sweep.
+ * Null for a relation this fork does not schedule on (`relates_to`, `duplicate`)
+ * and for a self-link; the caller skips those rather than drawing a line between
+ * two rows that make no claim about each other.
  */
-function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
-  const down = y2 >= y1 ? 1 : -1;
-  const dir = x2 >= x1 ? 1 : -1;
-  const forwardIn = down > 0 ? 1 : 0;
-  const forwardOut = down > 0 ? 0 : 1;
-  const sweepIn = dir > 0 ? forwardIn : 1 - forwardIn;
-  const sweepOut = dir > 0 ? forwardOut : 1 - forwardOut;
-
-  if (Math.abs(x2 - x1) >= 24) {
-    const midX = dir > 0 ? Math.max(x1 + 12, x2 - 20) : Math.min(x1 - 12, x2 + 20);
-    return `M ${x1} ${y1} H ${midX - dir * R} a ${R} ${R} 0 0 ${sweepIn} ${dir * R} ${down * R} V ${
-      y2 - down * R
-    } a ${R} ${R} 0 0 ${sweepOut} ${dir * R} ${down * R} H ${x2}`;
-  }
-  // The two bars are nearly stacked: no room for an elbow, so step around.
-  const backY = y1 + down * (BLOCK_HEIGHT / 2);
-  return `M ${x1} ${y1} h ${dir * 12} V ${backY} H ${x2 - dir * 12} V ${y2} H ${x2}`;
+function edgeEndpoints(rel: TIssueRelationEdge): { from: string; to: string } | null {
+  return edgeOf(rel);
 }
 
 export const TimelineDependencyPaths = observer(function TimelineDependencyPaths(_props: { isEpic?: boolean }) {
@@ -128,7 +95,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       const y2 = ci * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
       return {
         key: `pc-${parentId}-${childId}`,
-        d: parentElbow(x1, y1, x2, y2),
+        d: routeParentBracket(x1, y1, x2, y2),
         cx: x2,
         cy: y2,
         from: parentId,
@@ -139,29 +106,33 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
 
   const paths = edges
     .map((rel) => {
-      const { from, to } = edgeEndpoints(rel);
+      const endpoints = edgeEndpoints(rel);
+      if (!endpoints) return null;
+      const { from, to } = endpoints;
       const src = store.getBlockById(from);
       const tgt = store.getBlockById(to);
       const si = indexById.get(from);
       const ti = indexById.get(to);
       if (!src?.position || !tgt?.position || si === undefined || ti === undefined) return null;
-      const srcLeft = src.position.marginLeft;
-      const srcRight = srcLeft + src.position.width;
-      const tgtLeft = tgt.position.marginLeft;
-      const tgtRight = tgtLeft + tgt.position.width;
-      // Leave from the edge that faces the other bar. Only when the target sits
-      // ENTIRELY left of the source is the pair genuinely backwards; bars that
-      // merely overlap still read best finish-to-start.
-      const backwards = tgtRight < srcLeft;
-      const x1 = backwards ? srcLeft : srcRight;
-      const y1 = si * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-      const x2 = backwards ? tgtRight : tgtLeft;
-      const y2 = ti * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+      // Which edge to leave from, where to drop, and how to come back round when
+      // the two bars overlap, all live in routeDependency — see the note there
+      // about the one-day gap.
+      const arrow = routeDependency(
+        {
+          left: src.position.marginLeft,
+          right: src.position.marginLeft + src.position.width,
+          y: si * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
+        },
+        {
+          left: tgt.position.marginLeft,
+          right: tgt.position.marginLeft + tgt.position.width,
+          y: ti * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
+        },
+        BLOCK_HEIGHT
+      );
       return {
         key: `${from}-${to}-${rel.relation_type}`,
-        // Stop short of the bar on whichever side we arrive from, so the
-        // arrowhead touches the edge instead of overlapping the bar.
-        d: elbowPath(x1, y1, backwards ? x2 + HEAD : x2 - HEAD, y2),
+        d: arrow.d,
         color: COLOR[rel.relation_type] ?? "#94a3b8",
         from,
         to,

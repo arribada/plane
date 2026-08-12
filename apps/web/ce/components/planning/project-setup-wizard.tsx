@@ -40,6 +40,7 @@ import { SetupTaskPicker } from "./setup-task-picker";
 import { SprintTaskEditor, newSprintTask, type TSprintTask } from "./sprint-task-editor";
 import { useAiSettings } from "./use-ai-settings";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
+import { todayIso } from "@/plane-web/components/gantt-chart/working-days";
 
 type Props = { projectId: string | null; onClose: () => void; onCompleted?: () => void };
 
@@ -83,7 +84,11 @@ const errorMessage = (e: unknown, fallback: string) => {
   return body?.error ?? body?.target_date?.[0] ?? body?.start_date?.[0] ?? apiErrorMessage(e, fallback);
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+/** The reader's own day, which is the one the wizard's date fields are pre-filled
+ *  with and the one a lead reads back. `toISOString()` answers in UTC: a plan
+ *  started on a Monday morning in Auckland opened dated Sunday. `addDays` below
+ *  stays on UTC quite correctly — it operates on a date STRING, not an instant. */
+const today = todayIso;
 
 /** Calendar days, on the date string itself. UTC on purpose: these are dates, not
  *  instants, and going through local midnight is what makes a plan built in
@@ -256,6 +261,13 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           workspace_id: d?.workspace_id ?? null,
           title: d?.title ?? null,
           google_drive_url: d?.google_drive_url ?? null,
+          // The wizard still asks for ONE Drive link, because setting a project up
+          // is the moment you have one folder rather than four. The endpoint maps
+          // `google_drive_url` onto the FIRST entry and leaves any others alone,
+          // so a project that has since grown a list is not flattened by a
+          // re-run — carried here so the "has this changed" comparison below is
+          // made against the same value the panel shows.
+          google_drive_links: d?.google_drive_links ?? [],
           chat_url: d?.chat_url ?? null,
           github_repo_urls: d?.github_repo_urls ?? [],
         });

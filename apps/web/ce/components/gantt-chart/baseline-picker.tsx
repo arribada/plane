@@ -24,6 +24,7 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { getBaselineShared } from "./baseline-request";
+import { resolveBaselineSelection } from "./baseline-selection";
 
 const service = new ArribadaService();
 
@@ -51,7 +52,14 @@ export const BaselinePicker = observer(function BaselinePicker() {
       // Shared with the ghost-bar overlay, which mounts in the same commit and
       // used to make this exact request a second time.
       const payload = await getBaselineShared(slug, pid);
-      setSnapshots(payload?.baselines ?? []);
+      const baselines = payload?.baselines ?? [];
+      setSnapshots(baselines);
+      // Done here rather than in render: the ghost-bar overlay reads the store's
+      // id directly and sends it as `?baseline=`, so a carried-over selection has
+      // to be cleared at the source or that request keeps naming another
+      // project's snapshot. This is the one moment we know which snapshots the
+      // project in front of us actually has.
+      if (resolveBaselineSelection(store.selectedBaselineId, baselines).stale) store.setSelectedBaselineId("");
       setFailure(null);
     } catch (error) {
       // An empty list hides the picker entirely and leaves only the capture
@@ -129,7 +137,15 @@ export const BaselinePicker = observer(function BaselinePicker() {
     }
   };
 
-  const selected = store.selectedBaselineId || snapshots[0]?.id || "";
+  // The store holds ONE selected id for the whole timeline type, so walking from
+  // one project's gantt to another brought the previous project's snapshot id
+  // with it. The server answers an unknown id by falling back to the newest, so
+  // the ghost bars were this project's — while this control held a value matching
+  // none of its own options and rendered blank, with no tooltip and no delete
+  // button. A selection naming no snapshot of the project in front of you is not
+  // a selection; see `baseline-selection.ts`.
+  const choice = resolveBaselineSelection(store.selectedBaselineId, snapshots);
+  const selected = choice.selected;
   const current = snapshots.find((s) => s.id === selected);
 
   return (

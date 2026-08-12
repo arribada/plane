@@ -174,6 +174,22 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
   const setRow = async (item: TPortfolioItem) => {
     const draft = drafts[item.id];
     if (!draft || (!draft.start && !draft.target) || busy) return;
+    /**
+     * An inverted pair is refused HERE, with the reason, and no dialog.
+     *
+     * Everywhere a human picks one date against an existing other — the peek
+     * panel, the work item page — crossing opens "move both, keeping the
+     * duration?". This screen is different in kind: both ends are typed at once,
+     * so there is no "the other one" to offer to move, and it can hold thirty
+     * rows, so a dialog per row would be a worse experience than the silent
+     * refusal it replaces. Before this, an inverted pair went to the server,
+     * came back 400, and the list said "Could not update that work item" —
+     * true, unhelpful, and indistinguishable from the network being down.
+     */
+    if (draft.start && draft.target && draft.start > draft.target) {
+      setError(`"${item.name}" starts after it ends. Swap the two dates, or clear one of them.`);
+      return;
+    }
     setError(null);
     setBusy(true);
     const ok = await writeDates(item, draft.start || null, draft.target || null);

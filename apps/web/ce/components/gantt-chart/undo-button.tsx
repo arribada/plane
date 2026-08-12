@@ -16,8 +16,11 @@ export const GanttUndoButton = observer(function GanttUndoButton({ onUndo }: { o
     <button
       type="button"
       onClick={onUndo}
-      title="Undo last date change (Ctrl+Z)"
-      className="flex items-center gap-1.5 rounded-md border border-subtle bg-layer-1 px-2 py-1 text-12 text-secondary shadow-sm hover:bg-layer-2"
+      // Says what it would put back, not just that it could. One entry can now
+      // hold a whole pushed chain, and "Undo" alone gives no hint that pressing
+      // it is about to move nine bars.
+      title={`Undo ${ganttUndo.lastLabel ?? "the last date change"} (Ctrl+Z)`}
+      className="shadow-sm flex items-center gap-1.5 rounded-md border border-subtle bg-layer-1 px-2 py-1 text-12 text-secondary hover:bg-layer-2"
     >
       <Undo2 className="size-3.5" />
       Undo

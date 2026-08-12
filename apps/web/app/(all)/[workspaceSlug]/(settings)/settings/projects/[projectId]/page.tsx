@@ -19,6 +19,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import type { Route } from "./+types/page";
 import { GeneralProjectSettingsHeader } from "./header";
 import { GeneralProjectSettingsControlSection } from "@/components/project/settings/control-section";
+import { ProjectPlanGovernanceSection } from "@/plane-web/components/projects/settings/plan-governance";
 
 function ProjectSettingsPage({ params }: Route.ComponentProps) {
   // router
@@ -45,6 +46,10 @@ function ProjectSettingsPage({ params }: Route.ComponentProps) {
         ) : (
           <ProjectDetailsFormLoader />
         )}
+        {/* Not gated on `isAdmin`: the project LEAD owns this switch and a lead is
+            often an ordinary Plane member. The control disables itself for anyone
+            the server would refuse — `can_set_governance` on the schedule. */}
+        <ProjectPlanGovernanceSection workspaceSlug={workspaceSlug} projectId={projectId} />
         {isAdmin && <GeneralProjectSettingsControlSection projectId={projectId} />}
       </div>
     </SettingsContentWrapper>

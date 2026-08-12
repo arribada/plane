@@ -33,17 +33,32 @@ export type TPlanLock = {
   locked: boolean;
   allowEditOthers: boolean;
   allowAddItems: boolean;
+  /** Whether this project's plan has been made the lead's. */
+  leadOnlyEdits: boolean;
+  /**
+   * Whether THIS user may change the plan. The server's own answer, carried on
+   * the schedule payload — not `!leadOnlyEdits || amILead` worked out here.
+   *
+   * The reason is the whole point of the setting: the same predicate decides the
+   * 403, so a control drawn on the strength of this is a control the server will
+   * serve. A client that recomputed it would be a second definition of one
+   * permission, and the second definition is always the one that lies.
+   */
+  canEditPlan: boolean;
   /** Null until the settings have loaded — callers must not read the flags yet. */
   loaded: boolean;
   setLocked: (next: boolean) => Promise<TPlanLockWrite>;
   setAllowEditOthers: (next: boolean) => Promise<TPlanLockWrite>;
   setAllowAddItems: (next: boolean) => Promise<TPlanLockWrite>;
+  setLeadOnlyEdits: (next: boolean) => Promise<TPlanLockWrite>;
 };
 
 export function usePlanLock(workspaceSlug: string | undefined, projectId: string | undefined): TPlanLock {
   const [locked, setLockedState] = useState(false);
   const [allowEditOthers, setAllowEditOthersState] = useState(true);
   const [allowAddItems, setAllowAddItemsState] = useState(true);
+  const [leadOnlyEdits, setLeadOnlyEditsState] = useState(false);
+  const [canEditPlan, setCanEditPlanState] = useState(true);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -58,6 +73,8 @@ export function usePlanLock(workspaceSlug: string | undefined, projectId: string
         // backend that has not been redeployed yet must not read as "forbidden".
         setAllowEditOthersState(schedule?.allow_edit_others ?? true);
         setAllowAddItemsState(schedule?.allow_add_items ?? true);
+        setLeadOnlyEditsState(!!schedule?.lead_only_edits);
+        setCanEditPlanState(schedule?.can_edit_plan ?? true);
       } catch {
         // A settings call that fails must not silently lock the board. Failing
         // open is the right default here: the server still enforces every write.
@@ -93,7 +110,7 @@ export function usePlanLock(workspaceSlug: string | undefined, projectId: string
    *  server-side lead check, so they cannot drift apart. */
   const write = useCallback(
     async (
-      field: "timeline_locked" | "allow_edit_others" | "allow_add_items",
+      field: "timeline_locked" | "allow_edit_others" | "allow_add_items" | "lead_only_edits",
       next: boolean,
       apply: (value: boolean) => void
     ): Promise<TPlanLockWrite> => {
@@ -119,6 +136,29 @@ export function usePlanLock(workspaceSlug: string | undefined, projectId: string
     (next: boolean) => write("allow_add_items", next, setAllowAddItemsState),
     [write]
   );
+  const setLeadOnlyEdits = useCallback(
+    async (next: boolean) => {
+      const result = await write("lead_only_edits", next, setLeadOnlyEditsState);
+      // Only the lead can flip this, so whoever just did may still edit the plan.
+      // Said explicitly rather than left to the next fetch: the controls this
+      // gates are on screen, and re-rendering them as forbidden for a moment is
+      // exactly the flicker that makes a permission look broken.
+      if (result.ok) setCanEditPlanState(true);
+      return result;
+    },
+    [write]
+  );
 
-  return { locked, allowEditOthers, allowAddItems, loaded, setLocked, setAllowEditOthers, setAllowAddItems };
+  return {
+    locked,
+    allowEditOthers,
+    allowAddItems,
+    leadOnlyEdits,
+    canEditPlan,
+    loaded,
+    setLocked,
+    setAllowEditOthers,
+    setAllowAddItems,
+    setLeadOnlyEdits,
+  };
 }

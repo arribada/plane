@@ -20,6 +20,27 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
+/**
+ * Pin the clock's ZONE before anything imports a module that touches `Date`.
+ *
+ * Left alone, a test run inherits the machine's zone: UTC on every CI runner. UTC
+ * is the single offset at which almost none of this app's date bugs reproduce —
+ * every `toISOString().slice(0,10)` agrees with the local calendar, every
+ * `Math.floor` over a day boundary lands on a whole number, and a suite that goes
+ * green there is asserting nothing about the people who actually use the software.
+ *
+ * Set here, in module scope, rather than in `vitest.setup.ts`: this file is
+ * evaluated in the main process before any worker is forked, so the workers
+ * inherit it, and it lands ahead of any module-level `new Date()` in a file under
+ * test. Assigning `process.env.TZ` at runtime does re-arm V8's timezone cache on
+ * every platform this repo is developed on, Windows included.
+ *
+ * `??=`, not `=`: CI overrides it per run — see the two-zone loop in
+ * `.github/workflows/arribada-build.yml`. The default is deliberately WESTERN, so
+ * a developer running the suite locally sees what a reader in California sees.
+ */
+process.env.TZ ??= "America/Los_Angeles";
+
 export default defineConfig({
   // The repo's tsconfig already says `react-jsx`; stated here too so a test does
   // not depend on which tsconfig vitest happens to discover from its own cwd.

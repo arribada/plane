@@ -31,10 +31,15 @@ const lockWith = (setLocked: (next: boolean) => Promise<TPlanLockWrite>): TPlanL
   locked: false,
   allowEditOthers: true,
   allowAddItems: true,
+  // The permissive default, which is what every project has until its lead asks
+  // otherwise — this button is about the LOCK, which is not a permission.
+  leadOnlyEdits: false,
+  canEditPlan: true,
   loaded: true,
   setLocked,
   setAllowEditOthers: vi.fn(async () => ({ ok: true }) as TPlanLockWrite),
   setAllowAddItems: vi.fn(async () => ({ ok: true }) as TPlanLockWrite),
+  setLeadOnlyEdits: vi.fn(async () => ({ ok: true }) as TPlanLockWrite),
 });
 
 const press = async (lock: TPlanLock) => {

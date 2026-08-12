@@ -45,6 +45,7 @@ type TSidebarPreferences = {
   showWeekends?: boolean;
   dimDependencies?: boolean;
   zoom?: number;
+  pushDependents?: boolean;
 };
 
 /** How far the day width can be stretched or squeezed either side of a scale's own.
@@ -83,6 +84,15 @@ export interface IBaseTimelineStore {
   /** Multiplier on the current scale's pixels-per-day. The three scales are coarse
    *  steps — 60, 20 and 5 — so this is what makes the granularity continuous. */
   zoom: number;
+  /** Moving a bar takes its dependency chain with it.
+   *
+   *  OFF by default, and that default is the decision, not an oversight: a drag
+   *  that silently rewrites twenty dates is how people stop trusting a chart, and
+   *  this fork already carries a banner that names broken links rather than fixing
+   *  them behind your back. Somebody who wants the chain to follow says so once,
+   *  and the answer is remembered per person like the other display choices. */
+  pushDependents: boolean;
+  togglePushDependents: (value?: boolean) => void;
   //
   setBlockIds: (ids: string[]) => void;
   setLinkingSource: (id: string | null) => void;
@@ -124,6 +134,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
   currentView: TGanttViews = "week";
   showWeekends = true;
   dimDependencies = true;
+  pushDependents = false;
   zoom = 1;
   currentViewData: ChartDataType | undefined = undefined;
   activeBlockId: string | null = null;
@@ -161,6 +172,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       isSidebarCollapsed: observable.ref,
       showWeekends: observable.ref,
       dimDependencies: observable.ref,
+      pushDependents: observable.ref,
       zoom: observable.ref,
       // actions
       setIsDragging: action,
@@ -175,6 +187,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       toggleSidebarCollapsed: action.bound,
       toggleShowWeekends: action.bound,
       toggleDimDependencies: action.bound,
+      togglePushDependents: action.bound,
       setZoom: action.bound,
     });
 
@@ -252,6 +265,13 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
     this.persistSidebarPreferences();
   };
 
+  togglePushDependents = (value?: boolean) => {
+    runInAction(() => {
+      this.pushDependents = value ?? !this.pushDependents;
+    });
+    this.persistSidebarPreferences();
+  };
+
   /** localStorage is unavailable in some browsers/privacy modes, so both sides are best-effort */
   setSelectedBaselineId = (id: string) => {
     this.selectedBaselineId = id;
@@ -271,13 +291,14 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
         return;
       }
 
-      const { width, collapsed, showWeekends, dimDependencies, zoom } = JSON.parse(
+      const { width, collapsed, showWeekends, dimDependencies, zoom, pushDependents } = JSON.parse(
         stored
       ) as Partial<TSidebarPreferences>;
       if (typeof width === "number" && Number.isFinite(width)) this.sidebarWidth = clampSidebarWidth(width);
       if (typeof collapsed === "boolean") this.isSidebarCollapsed = collapsed;
       if (typeof showWeekends === "boolean") this.showWeekends = showWeekends;
       if (typeof dimDependencies === "boolean") this.dimDependencies = dimDependencies;
+      if (typeof pushDependents === "boolean") this.pushDependents = pushDependents;
       if (typeof zoom === "number") this.zoom = clampZoom(zoom);
     } catch {
       // keep the defaults
@@ -291,6 +312,7 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
         collapsed: this.isSidebarCollapsed,
         showWeekends: this.showWeekends,
         dimDependencies: this.dimDependencies,
+        pushDependents: this.pushDependents,
         zoom: this.zoom,
       };
       localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(preferences));
@@ -357,6 +379,14 @@ export class BaseTimeLineStore implements IBaseTimelineStore {
       this.currentViewData = newCurrentViewData;
       this.blocksMap = {};
       this.blockIds = undefined;
+      // A baseline id belongs to ONE project, and this store is a singleton per
+      // timeline type. Carrying the id to the next chart made the picker show a
+      // snapshot the project does not have while the ghosts drew a different one.
+      // Cleared alongside the blocks for the same reason they are: nothing about
+      // the previous chart is true of this one. `BaselinePicker` clears it a
+      // second time once it knows the real list, which covers the case where the
+      // route changes without remounting the gantt.
+      this.selectedBaselineId = "";
     });
   };
 

@@ -29,7 +29,8 @@ import {
   GanttAdditionalLayers,
 } from "@/plane-web/components/gantt-chart";
 import { GanttChartRowList } from "@/plane-web/components/gantt-chart/blocks/block-row-list";
-import { isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
+import { isSyntheticRowId } from "@/plane-web/components/gantt-chart/grouping";
+import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
 import { GanttChartBlocksList } from "@/plane-web/components/gantt-chart/blocks/blocks-list";
 import { IssueBulkOperationsRoot } from "@/plane-web/components/issues/bulk-operations";
 // plane web hooks
@@ -51,7 +52,8 @@ type Props = {
   enableBlockMove: boolean | ((blockId: string) => boolean);
   enableBlockRightResize: boolean | ((blockId: string) => boolean);
   enableReorder: boolean | ((blockId: string) => boolean);
-  onReorderStart?: () => Promise<void> | void;
+  /** ARRIBADA FIX: may return the frozen sequence — see gantt-chart/root.tsx. */
+  onReorderStart?: () => Promise<TReorderStart | void> | TReorderStart | void;
   enableSelection: boolean | ((blockId: string) => boolean);
   enableAddBlock: boolean | ((blockId: string) => boolean);
   enableDependency: boolean | ((blockId: string) => boolean);
@@ -178,7 +180,7 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
           // synthetic ids in made "select all" claim more items than exist and
           // hand ids to every bulk action that follows. The toolbar's own count
           // already filters them; this is the other half of the same guard.
-          [GANTT_SELECT_GROUP]: (blockIds ?? []).filter((id) => !isGroupRowId(id)),
+          [GANTT_SELECT_GROUP]: (blockIds ?? []).filter((id) => !isSyntheticRowId(id)),
         }}
         disabled={!isBulkOperationsEnabled || isEpic}
       >

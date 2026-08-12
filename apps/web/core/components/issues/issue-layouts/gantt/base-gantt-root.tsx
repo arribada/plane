@@ -19,16 +19,39 @@ import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { GanttChartRoot } from "@/components/gantt-chart/root";
 import { GanttToolbarDivider } from "@/components/gantt-chart/chart/header";
 import { GanttColorBy } from "@/plane-web/components/gantt-chart/color-by";
+import { GanttColorScaleProvider, useIssueColorScale } from "@/plane-web/components/gantt-chart/color-scale";
+import { GanttLegend, type TLegendMark } from "@/plane-web/components/gantt-chart/legend";
+import { useProjectDisciplines } from "@/plane-web/components/gantt-chart/use-project-disciplines";
 import { GanttGroupBy } from "@/plane-web/components/gantt-chart/group-by";
 import { GanttGroupContext } from "@/plane-web/components/gantt-chart/group-context";
 import { orderByDependency } from "@/plane-web/components/gantt-chart/dependency-order";
+import { graphEdges } from "@/plane-web/components/gantt-chart/edges";
+import type { TPushOutcome } from "@/plane-web/components/gantt-chart/push-dependents";
+import { describePush, pushDependents as pushDependents_ } from "@/plane-web/components/gantt-chart/push-dependents";
+import { PushDependentsToggle } from "@/plane-web/components/gantt-chart/push-dependents-toggle";
+import { useWorkspaceHolidays } from "@/plane-web/components/gantt-chart/use-workspace-holidays";
+import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { GanttExportButton } from "@/plane-web/components/gantt-chart/export-button";
+import type { TExportScope } from "@/plane-web/components/gantt-chart/export-button";
 import { BaselinePicker } from "@/plane-web/components/gantt-chart/baseline-picker";
+import { shownBaseline } from "@/plane-web/components/gantt-chart/baseline-shown";
 import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/violation-banner";
-import type { TExportEdge, TExportRow } from "@/plane-web/components/gantt-chart/export";
+import { CriticalPathBanner } from "@/plane-web/components/gantt-chart/critical-path-banner";
+import { describeFilters } from "@/plane-web/components/gantt-chart/export";
+import type { TExportEdge, TExportMeta, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
-import { buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
+import { GROUP_BY_OPTIONS, buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
+import { frozenOrder } from "@/plane-web/components/gantt-chart/reorder";
+import {
+  EMPTY_SUBTASK_TREE,
+  buildSubtaskTree,
+  hideCollapsedDescendants,
+  nestGroups,
+  parentIds,
+  subtaskRollup,
+} from "@/plane-web/components/gantt-chart/subtasks";
 import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
+import { useRowSnapshot } from "@/plane-web/components/gantt-chart/row-snapshot";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { useProject } from "@/hooks/store/use-project";
@@ -88,7 +111,12 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const storeType = useIssueStoreType() as GanttStoreType;
   const { issues, issuesFilter } = useIssues(storeType);
   const { fetchIssues, fetchNextIssues, updateIssue, quickAddIssue } = useIssuesActions(storeType);
-  const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.ISSUE);
+  const timeline = useTimeLineChart(GANTT_TIMELINE_TYPE.ISSUE);
+  const { initGantt } = timeline;
+  // Whether a drag carries the chain with it. Read here rather than inside the
+  // handler so the callback is rebuilt when it changes — a stale `false` captured
+  // in a closure is a switch that appears to do nothing.
+  const pushDependents = timeline.pushDependents;
   // store hooks
   const { allowPermissions } = useUserPermissions();
   const { data: currentUser } = useUser();
@@ -128,18 +156,64 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const projectDetails = projectId ? getProjectById(projectId.toString()) : undefined;
   const { getUserDetails } = useMember();
 
-  const { groupBy, collapsedGroups, rowOrder } = ganttDisplay;
+  const { groupBy, collapsedGroups, rowOrder, nestSubtasks, collapsedSubtasks } = ganttDisplay;
+  // Display preferences are per workspace. The store reads the slug off the URL
+  // when it is constructed, so the first paint is already right; this is the
+  // client-side navigation case, where no module is re-imported.
+  useEffect(() => {
+    ganttDisplay.setScope(workspaceSlug?.toString());
+  }, [workspaceSlug]);
   const relations = useProjectRelations(workspaceSlug?.toString(), projectId?.toString());
   const milestones = useProjectMilestones(workspaceSlug?.toString(), projectId?.toString());
+  /**
+   * The relation set as predecessor→successor edges with the kind of constraint
+   * each one is.
+   *
+   * Not the two-way ternary used elsewhere in this file. Three of Plane's five
+   * schedulable relation types name the SUCCESSOR first — `finish_after`,
+   * `start_after` and `blocked_by` — and a ternary that special-cases only
+   * `blocked_by` points the other two backwards. That is survivable for row
+   * ordering; it is not survivable for anything that moves dates, which would
+   * push the wrong end of the chain. See `edges.ts`.
+   */
+  const graph = useMemo(() => graphEdges(relations), [relations]);
+  // Free/total float, and the dates a delivery pins. Already fetched by the
+  // overlay for the slack tails; this is the same shared read, so the floors cost
+  // no extra request.
+  // Also read whole by the export, which puts free and total float in the
+  // spreadsheet — "this can slip four days" is the column a lead reads first.
+  const slack = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
+  const { deliveryFloors } = slack;
+  // Weekends are arithmetic; a workspace closure is not, so a push that steps over
+  // one has to be told about it. Same map the overlay shades with, so the bar and
+  // the band cannot disagree about what a working day is.
+  const holidays = useWorkspaceHolidays(workspaceSlug?.toString());
+
+  /**
+   * What every memo below is really keyed on.
+   *
+   * `issuesIds` is a MobX observable array and a delete splices it IN PLACE, so
+   * `Object.is` says nothing happened; `getIssueById` is a `computedFn`, so it is
+   * one function for the life of the store and the issue objects it returns are
+   * mutated rather than replaced. Both re-render this component and neither
+   * re-keys a memo — which is why dropping a work item on a sprint band left the
+   * row in the band it came from, and why a deleted row stayed on the chart until
+   * a reload.
+   *
+   * `liveIds` is the same ids with an identity that changes when they, or anything
+   * the chart derives from them, actually do. Everything downstream reads it
+   * instead of `issuesIds`; see `row-snapshot.ts`.
+   */
+  const liveIds = useRowSnapshot(issuesIds, getIssueById);
 
   // Along the graph before anything is grouped, so a band's rows read top-to-bottom
   // in the order the work actually has to happen.
   const orderedIds = useMemo(
-    () => (rowOrder === "graph" && relations.length > 0 ? orderByDependency(issuesIds, relations) : issuesIds),
-    [issuesIds, relations, rowOrder]
+    () => (rowOrder === "graph" && relations.length > 0 ? orderByDependency(liveIds, relations) : liveIds),
+    [liveIds, relations, rowOrder]
   );
 
-  const groups = useMemo(
+  const rawGroups = useMemo(
     () =>
       buildGroups(orderedIds, groupBy, {
         getIssue: getIssueById,
@@ -152,12 +226,92 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     [orderedIds, groupBy, getIssueById, getModuleById, getLabelById, getStateById, getCycleById, getUserDetails]
   );
 
-  // The id list both panes walk: unchanged when grouping is off, so nothing about
-  // the ungrouped chart moves.
-  const rowIds = useMemo(
-    () => (groupBy === "none" ? orderedIds : flattenGroups(groups, collapsedGroups)),
-    [orderedIds, groups, groupBy, collapsedGroups]
+  /**
+   * Sub-task nesting, applied AFTER the bands are decided.
+   *
+   * The order matters and it is the whole composition: `buildGroups` says what
+   * belongs in which band, and a band has to keep meaning "everything with this
+   * field value" or the header is a lie. So nesting reorders each band's members
+   * among themselves. A sub-task whose parent is in another band — or in another
+   * project, which is the portfolio case — keeps a row of its own, because the
+   * alternative is a chevron pointing at a row that is not on screen.
+   */
+  const { groups, subtaskTree } = useMemo(() => {
+    if (!nestSubtasks) return { groups: rawGroups, subtaskTree: EMPTY_SUBTASK_TREE };
+    if (groupBy !== "none") {
+      const nested = nestGroups(rawGroups, getIssueById);
+      return { groups: nested.groups, subtaskTree: nested.tree };
+    }
+    return { groups: rawGroups, subtaskTree: buildSubtaskTree(orderedIds, getIssueById) };
+  }, [rawGroups, groupBy, nestSubtasks, orderedIds, getIssueById]);
+
+  /**
+   * The colour scale, computed once over EVERY loaded row rather than per bar.
+   *
+   * The domain is `orderedIds`, not `rowIds`: folding a band shut must not
+   * repaint the bars that are still on screen. Colour follows the entity, never
+   * its rank in whatever subset is visible — see the note at the top of
+   * `palette.ts`.
+   */
+  const disciplines = useProjectDisciplines(
+    workspaceSlug?.toString(),
+    projectId?.toString(),
+    ganttDisplay.colorBy === "discipline"
   );
+  const colorResolvers = useMemo(
+    () => ({
+      getStateById,
+      getLabelById,
+      getCycleById,
+      getModuleById,
+      getMemberName: (id: string) => getUserDetails(id)?.display_name,
+      getDiscipline: (issueId: string) => disciplines[issueId],
+    }),
+    [getStateById, getLabelById, getCycleById, getModuleById, getUserDetails, disciplines]
+  );
+  const colorContext = useIssueColorScale(
+    orderedIds,
+    ganttDisplay.colorBy,
+    getIssueById,
+    colorResolvers,
+    ganttDisplay.showCompleted
+  );
+
+  /** Marks: what the chart draws on top of a bar regardless of its series. Kept
+   *  apart from the series swatches by a rule in the legend, because they answer
+   *  a different question. */
+  const legendMarks = useMemo(() => {
+    const marks: TLegendMark[] = [];
+    if (ganttDisplay.showCompleted)
+      marks.push({
+        key: "done",
+        label: "Finished",
+        kind: "hatch",
+        color: "#64748b",
+        title: "Hatched, with a tick — the item is in a done or cancelled state.",
+      });
+    if (slack.critical.size > 0)
+      marks.push({
+        key: "critical",
+        label: "Critical path",
+        kind: "ring",
+        color: "#dc2626",
+        title: "No slack: if this slips, the project's end date slips with it.",
+      });
+    if (Object.keys(milestones).length > 0)
+      marks.push({ key: "milestone", label: "Deliverable", kind: "diamond", color: "#64748b" });
+    return marks;
+    // showCompleted is read above, so it must be a dependency: without it the
+    // legend went on claiming a hatch the bars had stopped drawing.
+  }, [slack.critical.size, milestones]);
+
+  // The id list both panes walk: unchanged when grouping is off and nesting has
+  // nothing to nest, so nothing about a flat chart moves.
+  const rowIds = useMemo(() => {
+    const rows =
+      groupBy === "none" ? (nestSubtasks ? subtaskTree.order : orderedIds) : flattenGroups(groups, collapsedGroups);
+    return nestSubtasks ? hideCollapsedDescendants(rows, subtaskTree, collapsedSubtasks) : rows;
+  }, [orderedIds, groups, groupBy, collapsedGroups, nestSubtasks, subtaskTree, collapsedSubtasks]);
 
   // Links the current dates break: a successor that starts before its predecessor
   // finishes. Computed from the two things already in hand — the relation set and
@@ -166,96 +320,218 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // quietly wrong either.
   const violations = useMemo(() => {
     const broken: { from: string; to: string }[] = [];
-    for (const edge of relations) {
-      const [from, to] =
-        edge.relation_type === "blocked_by"
-          ? [edge.related_issue_id, edge.issue_id]
-          : [edge.issue_id, edge.related_issue_id];
+    // `graph`, not the raw relations through a local ternary — see the note on
+    // `graph` above. The ternary pointed `finish_after` and `start_after` the wrong
+    // way round, so the banner named the wrong end of those links as the offender
+    // and stayed silent about the end that had actually moved.
+    for (const { from, to, kind } of graph) {
       const predecessor = getIssueById(from);
       const successor = getIssueById(to);
-      if (!predecessor?.target_date || !successor?.start_date) continue;
+      if (!successor?.start_date) continue;
+      // The two kinds break on different dates. An FS successor may not start
+      // until the predecessor has FINISHED; an SS successor may not start before
+      // the predecessor STARTS, and starting on the same day is exactly what the
+      // link asks for. Judging an SS link by the FS rule reported every correctly
+      // scheduled start-to-start pair as broken.
+      if (kind === "SS") {
+        if (predecessor?.start_date && successor.start_date < predecessor.start_date) broken.push({ from, to });
+        continue;
+      }
+      if (!predecessor?.target_date) continue;
       if (successor.start_date <= predecessor.target_date) broken.push({ from, to });
     }
     return broken;
-  }, [relations, getIssueById]);
+    // `liveIds` is here for its identity, not its contents: the walk reads dates
+    // through `getIssueById`, which is one function for the life of the store, so
+    // without it this memo answered with the dates the chart had when it first
+    // rendered — the banner stayed up after a reflow had fixed every link, and
+    // stayed down after an edit had broken one.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [graph, liveIds, getIssueById]);
 
   // Read here rather than further down: the export needs it to know whether the
   // file it is about to build would stop short.
   const nextPageResults = issues.getPaginationData(undefined, undefined)?.nextPageResults;
 
-  // Built at click time, not kept in state: the export must be the chart as it is
-  // at that instant — same order, same bands, same filters — and nothing here is
-  // worth recomputing on every render for a button that is rarely pressed.
-  const collectForExport = useCallback(() => {
-    const hasMilestoneMarks = Object.keys(milestones).length > 0;
-    const parsed = (value: string | null | undefined) => {
-      if (!value) return null;
-      const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? null : date;
-    };
-    // The EXPORT set, not the DISPLAY set. rowIds is what the panes paint, so it
-    // omits a collapsed band's items entirely — and the gantt pages a hundred at a
-    // time, so on a large project it is also only as much as has been scrolled
-    // into view. Exporting it produced a clean-looking CSV / PNG / MS-Project file
-    // that silently stopped at 100 rows, with a success toast. A wrong artefact
-    // that looks right is worse than a refusal, and blueprint-generated
-    // catalogues put >100 items well inside the normal case here.
-    const exportIds =
-      groupBy === "none" ? orderedIds : groups.flatMap((group) => [groupRowId(group.key), ...group.ids]);
-
-    const exportRows: TExportRow[] = exportIds.map((id) => {
-      if (isGroupRowId(id)) {
-        const group = groups.find((g) => g.key === groupKeyFromRowId(id));
-        return { id, kind: "group" as const, label: group?.label ?? "", start: null, end: null };
-      }
-      const issue = getIssueById(id);
-      const state = issue?.state_id ? getStateById(issue.state_id) : null;
-      const owner = issue?.assignee_ids?.[0];
-      return {
-        id,
-        kind: "item" as const,
-        label: issue?.name ?? "",
-        identifier: issue?.sequence_id ? `${projectDetails?.identifier ?? ""}-${issue.sequence_id}` : undefined,
-        start: parsed(issue?.start_date),
-        end: parsed(issue?.target_date),
-        // undefined when this project has no marks at all, so the exporters keep
-        // their old one-day guess rather than declaring nothing a milestone.
-        milestone: hasMilestoneMarks ? !!milestones[id] : undefined,
-        color: state?.color ?? undefined,
-        assignee: owner ? (getUserDetails(owner)?.display_name ?? undefined) : undefined,
-        state: state?.name,
+  /**
+   * The rows the export is OF, built at click time.
+   *
+   * `scope` is the whole point of the rewrite. It used to be one list — every
+   * band at full membership, folds ignored — so somebody who collapsed nine of
+   * ten sprints to get the picture they wanted still got all ten in the file,
+   * and nothing said so. The default is now the chart as it stands: `rowIds` is
+   * literally what the two panes paint, folds and all.
+   *
+   * "all" keeps the old behaviour deliberately, because the other reading of
+   * "export this plan" is just as legitimate; it is now a choice rather than an
+   * assumption, and either way the answer is recorded in the file's own header
+   * rows.
+   *
+   * The truncation this used to guard against has its own guard: `partial` is
+   * true while the server still holds unfetched pages, and the button refuses.
+   * A folded band is a decision somebody made; an unfetched page is not, and
+   * conflating the two is what made the fold impossible to honour.
+   */
+  const collectForExport = useCallback(
+    (scope: TExportScope) => {
+      const hasMilestoneMarks = Object.keys(milestones).length > 0;
+      // What the ghost bars on screen are drawn from, read synchronously. Absent
+      // when no baseline is shown, and the picture then says nothing about one
+      // rather than inventing a comparison.
+      const shownBase = shownBaseline(workspaceSlug?.toString(), projectId?.toString());
+      const parsed = (value: string | null | undefined) => {
+        if (!value) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
       };
-    });
-    const visible = new Set(exportIds);
-    const exportEdges: TExportEdge[] = relations
-      .map((edge) =>
-        edge.relation_type === "blocked_by"
-          ? { from: edge.related_issue_id, to: edge.issue_id }
-          : { from: edge.issue_id, to: edge.related_issue_id }
-      )
-      .filter((edge) => visible.has(edge.from) && visible.has(edge.to));
+      const exportIds =
+        scope === "view"
+          ? rowIds
+          : groupBy === "none"
+            ? orderedIds
+            : groups.flatMap((group) => [groupRowId(group.key), ...group.ids]);
 
-    return {
-      rows: exportRows,
-      edges: exportEdges,
-      title: projectDetails?.name ?? "Timeline",
-      showWeekends: true,
-      // True when the server still has pages the client has not fetched, so the
-      // button can say so rather than hand over a partial plan as a whole one.
-      partial: !!nextPageResults,
-    };
-  }, [
-    orderedIds,
-    groupBy,
-    groups,
-    milestones,
-    nextPageResults,
-    getIssueById,
-    getStateById,
-    getUserDetails,
-    relations,
-    projectDetails,
-  ]);
+      const exportRows: TExportRow[] = exportIds.map((id) => {
+        if (isGroupRowId(id)) {
+          const group = groups.find((g) => g.key === groupKeyFromRowId(id));
+          return { id, kind: "group" as const, label: group?.label ?? "", start: null, end: null };
+        }
+        const issue = getIssueById(id);
+        const state = issue?.state_id ? getStateById(issue.state_id) : null;
+        const float = slack.byIssue[id];
+        const parent = issue?.parent_id ? getIssueById(issue.parent_id) : undefined;
+        const names = (issue?.assignee_ids ?? [])
+          .map((memberId) => getUserDetails(memberId)?.display_name)
+          .filter((name): name is string => !!name);
+        return {
+          id,
+          kind: "item" as const,
+          label: issue?.name ?? "",
+          identifier: issue?.sequence_id ? `${projectDetails?.identifier ?? ""}-${issue.sequence_id}` : undefined,
+          start: parsed(issue?.start_date),
+          end: parsed(issue?.target_date),
+          // undefined when this project has no marks at all, so the exporters keep
+          // their old one-day guess rather than declaring nothing a milestone.
+          milestone: hasMilestoneMarks ? !!milestones[id] : undefined,
+          // The colour the BAR is wearing, not the state's — the whole reported
+          // defect is that pressing Export while looking at a chart coloured by
+          // assignee produced a chart coloured by state.
+          color: colorContext.colorForIssue?.(id) ?? state?.color ?? undefined,
+          seriesLabel: colorContext.seriesLabelForIssue?.(id),
+          // Drawn distinctly only when the screen is drawing it distinctly. The
+          // toggle is a display setting and the file is of the display.
+          done: ganttDisplay.showCompleted ? state?.group === "completed" || state?.group === "cancelled" : undefined,
+          // The frozen plan the ghosts are drawn against — present only when
+          // ghosts were actually on screen. See baseline-shown.ts.
+          baselineStart: parsed(shownBase?.entries[id]?.start),
+          baselineEnd: parsed(shownBase?.entries[id]?.target),
+          slack: float?.free ?? undefined,
+          assignee: names[0],
+          state: state?.name,
+          // The spreadsheet columns. Cheap here — every lookup is a store read
+          // the chart has already paid for — and the difference between a file
+          // somebody can work in and one they have to come back to the app for.
+          project: projectDetails?.name,
+          sprint: issue?.cycle_id ? getCycleById(issue.cycle_id)?.name : undefined,
+          modules: (issue?.module_ids ?? [])
+            .map((moduleId) => getModuleById(moduleId)?.name)
+            .filter(Boolean)
+            .join(", "),
+          parent: parent
+            ? `${parent.sequence_id ? `${projectDetails?.identifier ?? ""}-${parent.sequence_id} ` : ""}${parent.name}`
+            : undefined,
+          assignees: names.join(", "),
+          priority: issue?.priority ?? undefined,
+          labels: (issue?.label_ids ?? [])
+            .map((labelId) => getLabelById(labelId)?.name)
+            .filter(Boolean)
+            .join(", "),
+          freeFloat: float?.free,
+          totalFloat: float?.total,
+          critical: slack.critical.has(id),
+          depth: nestSubtasks ? (subtaskTree.byId.get(id)?.depth ?? 0) : 0,
+        };
+      });
+      const visible = new Set(exportIds);
+      // From `graph` for the third time, and for the reason that matters most
+      // here: these edges become MS Project `PredecessorLink`s and the arrows in
+      // the exported picture. A backwards `finish_after` is a plan that reads as
+      // if the work happens in the opposite order, in the file that leaves the
+      // building.
+      const exportEdges: TExportEdge[] = graph
+        .map(({ from, to }) => ({ from, to }))
+        .filter((edge) => visible.has(edge.from) && visible.has(edge.to));
+
+      const folded =
+        (groupBy === "none" ? 0 : groups.filter((group) => collapsedGroups.has(group.key)).length) +
+        (nestSubtasks ? [...collapsedSubtasks].filter((id) => subtaskTree.byId.has(id)).length : 0);
+
+      return {
+        rows: exportRows,
+        edges: exportEdges,
+        showWeekends: true,
+        // The same entries the on-screen legend is showing, in the same order.
+        // One list, so the picture cannot label its colours differently from the
+        // screen it was taken from.
+        legend: colorContext.scale.entries.map((entry) => ({
+          label: entry.folded ? `${entry.label}: ${entry.folded.join(", ")}` : entry.label,
+          color: entry.color,
+          count: entry.count,
+        })),
+        meta: {
+          title: projectDetails?.name ?? "Timeline",
+          scope,
+          groupBy:
+            groupBy === "none" ? undefined : (GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label ?? groupBy),
+          colorBy: colorContext.dimensionLabel,
+          baselineName:
+            shownBase && Object.keys(shownBase.entries).length > 0
+              ? shownBase.name || "the latest snapshot"
+              : undefined,
+          sortBy: appliedDisplayFilters?.order_by === "sort_order" ? "manual order" : appliedDisplayFilters?.order_by,
+          collapsed: folded,
+          filters: describeFilters(issuesFilter.issueFilters?.richFilters),
+          // Named rather than left for a reader to notice missing. Both live
+          // behind per-item endpoints the timeline does not call, so putting
+          // them in this file would mean one request per row.
+          omissions: ["the discipline each item belongs to", "recorded effort in days"],
+        } satisfies TExportMeta,
+        // True when the server still has pages the client has not fetched, so the
+        // button can say so rather than hand over a partial plan as a whole one.
+        partial: !!nextPageResults,
+      };
+    },
+    [
+      rowIds,
+      orderedIds,
+      groupBy,
+      groups,
+      collapsedGroups,
+      collapsedSubtasks,
+      nestSubtasks,
+      subtaskTree,
+      milestones,
+      nextPageResults,
+      appliedDisplayFilters?.order_by,
+      issuesFilter.issueFilters?.richFilters,
+      slack,
+      getIssueById,
+      getStateById,
+      getUserDetails,
+      getCycleById,
+      getModuleById,
+      getLabelById,
+      graph,
+      projectDetails,
+      // `colorContext` and the route params are read inside but deliberately not
+      // listed. `colorContext` is rebuilt on every render by its provider, so
+      // listing it would rebuild this callback every render and defeat the memo
+      // entirely; the export reads it at the moment the button is pressed, which
+      // is the value on screen by definition. `workspaceSlug` and `projectId`
+      // cannot change without unmounting this route.
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above
+    ]
+  );
 
   /**
    * Dropping a work item on a band moves it into that band — but only where the
@@ -305,38 +581,67 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   );
 
   /**
-   * Runs before a reorder lands. If the view is sorted by anything but the
-   * manual order, the sequence on screen is written down AS the manual order and
-   * the view switched to it — because dragging IS how somebody says "I want this
-   * order", and making them find the sort menu first is a rule nobody discovers.
+   * Runs before a reorder lands. The sequence in front of the reader is written
+   * down AS the manual order, and whatever was producing it — a field sort, a
+   * grouping, or both — is stood down. Dragging IS how somebody says "I want
+   * this order", and making them find a menu first is a rule nobody discovers.
    *
    * The freeze has to come first. Switching to sort_order alone would redraw the
    * list in whatever that column happens to hold, so the drop would appear to
-   * scramble the board rather than move one row.
+   * scramble the board rather than move one row. Same for dropping the bands:
+   * ungrouping without freezing first puts the rows back in the ungrouped order
+   * under the reader's hand.
+   *
+   * The bands are consumed at their full membership, collapsed ones included — a
+   * fold is a display state, not a statement that those rows left the plan.
    */
   const handleReorderStart = useCallback(async () => {
-    if (appliedDisplayFilters?.order_by === "sort_order") return;
     const slug = workspaceSlug?.toString();
     const pid = projectId?.toString();
-    if (!slug || !pid) return;
-    const visible = orderedIds.filter((id) => !isGroupRowId(id));
-    if (visible.length === 0) return;
+    if (!slug || !pid) return undefined;
+
+    const grouped = groupBy !== "none";
+    const sorted = appliedDisplayFilters?.order_by !== "sort_order";
+    if (!grouped && !sorted) return undefined;
+
+    const sequence = (grouped ? groups.flatMap((group) => group.ids) : orderedIds).filter((id) => !isGroupRowId(id));
+    if (sequence.length === 0) return undefined;
+
     try {
-      await arribadaService.freezeIssueOrder(slug, pid, visible);
-      // The fifth argument is the view id: a saved view carries its own
-      // display filters, and omitting it would write the switch onto the
-      // project's filters while the reader is looking at a view.
-      await issuesFilter.updateFilters(
-        slug,
-        pid,
-        EIssueFilterType.DISPLAY_FILTERS,
-        { order_by: "sort_order" },
-        viewId ?? ""
-      );
+      await arribadaService.freezeIssueOrder(slug, pid, sequence);
+      if (sorted) {
+        // The fifth argument is the view id: a saved view carries its own
+        // display filters, and omitting it would write the switch onto the
+        // project's filters while the reader is looking at a view.
+        await issuesFilter.updateFilters(
+          slug,
+          pid,
+          EIssueFilterType.DISPLAY_FILTERS,
+          { order_by: "sort_order" },
+          viewId ?? ""
+        );
+      }
+      if (grouped) {
+        const label = GROUP_BY_OPTIONS.find((option) => option.value === groupBy)?.label ?? groupBy;
+        ganttDisplay.flattenGrouping(groupBy);
+        // Said out loud, and said reversibly. A grouping that disappears on a
+        // drag with no explanation reads as the chart having lost its mind; the
+        // Group control keeps saying "Manual (from Module)" afterwards, so this
+        // toast is the announcement and that label is the record.
+        setToast({
+          type: TOAST_TYPE.INFO,
+          title: `${label} bands folded into a manual order`,
+          message: `The rows kept the order ${label} put them in. Pick ${label} again to bring the bands back.`,
+        });
+      }
+      // The freeze rewrote every sort_order server-side; the store still holds
+      // the old ones. Hand the drop what was actually written.
+      return frozenOrder(sequence);
     } catch {
-      // Leave the sort alone rather than half-switching it.
+      // Leave the sort and the bands alone rather than half-switching them.
+      return undefined;
     }
-  }, [appliedDisplayFilters?.order_by, workspaceSlug, projectId, orderedIds, issuesFilter, viewId]);
+  }, [appliedDisplayFilters?.order_by, workspaceSlug, projectId, orderedIds, groups, groupBy, issuesFilter, viewId]);
 
   const groupContext = useMemo(
     () => ({
@@ -345,8 +650,18 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       toggle: (key: string) => ganttDisplay.toggleGroupCollapsed(key),
       groupBy,
       assign: groupBy === "cycle" || groupBy === "module" ? assignToGroup : null,
+      subtasks: {
+        enabled: nestSubtasks,
+        depthOf: (id: string) => subtaskTree.byId.get(id)?.depth ?? 0,
+        childCountOf: (id: string) => subtaskTree.byId.get(id)?.childIds.length ?? 0,
+        parentOf: (id: string) => subtaskTree.byId.get(id)?.parentId ?? null,
+        isCollapsed: (id: string) => collapsedSubtasks.has(id),
+        toggle: (id: string) => ganttDisplay.toggleSubtaskCollapsed(id),
+        parentIds: parentIds(subtaskTree),
+        rollupOf: (id: string) => subtaskRollup(id, subtaskTree, getIssueById),
+      },
     }),
-    [groups, collapsedGroups, groupBy, assignToGroup]
+    [groups, collapsedGroups, groupBy, assignToGroup, nestSubtasks, subtaskTree, collapsedSubtasks, getIssueById]
   );
 
   const { enableIssueCreation } = issues?.viewFlags || {};
@@ -354,6 +669,22 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const loadMoreIssues = useCallback(() => {
     fetchNextIssues();
   }, [fetchNextIssues]);
+
+  /**
+   * After the server has moved dates the client never wrote.
+   *
+   * "Reflow this project" is one POST that reschedules every work item whose
+   * dependencies it violates — dozens of rows at once, none of which went through
+   * a store, so nothing in `issuesMap` knew. The banner already dropped the caches
+   * for the float tails and the arrows, and the bars themselves kept the dates from
+   * before the reflow until a hard reload; the reflow then had nothing left to do,
+   * so pressing the button again said "moved 0 work items" over a chart still
+   * showing the violations. Same refetch `saved-order.tsx:112` does after applying
+   * a saved arrangement, and for the same reason.
+   */
+  const reloadAfterServerReschedule = useCallback(() => {
+    fetchIssues("mutation", { canGroup: false, perPageCount: 100 }, viewId);
+  }, [fetchIssues, viewId]);
 
   // Grouping and dependency order are statements about the whole project, and the
   // gantt pages a hundred at a time — so a band that really holds forty items would
@@ -374,12 +705,15 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   const updateIssueBlockStructure = async (issue: TIssue, data: IBlockUpdateData) => {
     if (!workspaceSlug) return;
 
-    // record the pre-change dates so Ctrl+Z / Undo can revert a bar drag or resize
+    // The dates before the change, so Ctrl+Z / Undo can put them back. This is
+    // the add-block and reorder path; the DRAG records its own — see
+    // `updateBlockDates`, which is where a bar drag actually lands and which fed
+    // this stack nothing at all until now.
     if (data.start_date !== undefined || data.target_date !== undefined) {
       ganttUndo.push({
         projectId: issue.project_id,
-        issueId: issue.id,
-        prev: { start_date: issue.start_date, target_date: issue.target_date },
+        items: [{ issueId: issue.id, prev: { start_date: issue.start_date, target_date: issue.target_date } }],
+        label: "the dates just set",
       });
     }
 
@@ -390,11 +724,26 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   };
 
   // revert the last recorded bar date edit
+  /** Put back everything the last gesture moved — one entry can hold a whole
+   *  pushed chain, and reverting part of it would leave a plan nobody chose. */
   const handleGanttUndo = useCallback(async () => {
     const entry = ganttUndo.pop();
     if (!entry || !updateIssue) return;
-    await updateIssue(entry.projectId, entry.issueId, entry.prev);
-  }, [updateIssue]);
+    const slug = workspaceSlug?.toString();
+    const pid = projectId?.toString();
+    // Sequential on purpose, and `updateIssue` rather than the bulk date write:
+    // an undo has to be able to restore a NULL date, which `updateIssueDates`
+    // skips (`if (update.start_date)`), and firing the chain's writes at once
+    // races several optimistic mutations of the same issue map.
+    // oxlint-disable-next-line no-await-in-loop
+    for (const item of entry.items) await updateIssue(entry.projectId, item.issueId, item.prev);
+    // The same derived caches the forward move drops. Without this an undo left
+    // the tails and the red arrows describing the state it just reverted.
+    if (slug && pid) {
+      invalidateProjectSlack(slug, pid);
+      invalidateProjectProgress(slug, pid);
+    }
+  }, [updateIssue, workspaceSlug, projectId]);
 
   // Ctrl/Cmd+Z reverts the last bar date edit (ignored while typing in a field)
   useEffect(() => {
@@ -421,7 +770,14 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // Plane's permission is necessary but no longer sufficient. A locked plan stops
   // everyone, the lead included, because the lock says "this is agreed" rather
   // than "you may not" — a lock its owner can ignore by accident is not a lock.
-  const isAllowed = permitted && !planLock.locked;
+  //
+  // `canEditPlan` is the other half and it IS a permission: with
+  // `lead_only_edits` on, a bar drag posts to upstream's issue-dates endpoint and
+  // the middleware in `plane/arribada/plan_guard.py` answers 403. Drawing a
+  // draggable bar for somebody the server will refuse is the failure this fork
+  // has shipped three times; the flag is the server's own answer, so the two
+  // cannot disagree.
+  const isAllowed = permitted && !planLock.locked && planLock.canEditPlan;
   // Adding is gated separately: a project can be open to edits and closed to new
   // items, which is the usual shape once a scope has been agreed with a funder.
   const canAddItems = isAllowed && planLock.allowAddItems;
@@ -442,33 +798,122 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     },
     [isAllowed, planLock.allowEditOthers, getIssueById, currentUser?.id]
   );
+  /**
+   * What a bar drag or resize writes.
+   *
+   * Two things happen here that did not before.
+   *
+   * UNDO NOW COVERS THE DRAG. `ganttUndo` was only ever fed by
+   * `updateIssueBlockStructure`, which a bar drag does not go through — it is
+   * reached by the add-block affordance and the sidebar reorder. So the Undo
+   * button and Ctrl+Z, whose own comment said they revert "a bar drag or
+   * resize", reverted everything except that. The pre-change dates are recorded
+   * here, where the drag actually lands.
+   *
+   * AND THE CHAIN CAN COME WITH IT. With "push dependents" on, everything
+   * downstream of a moved bar is translated by the same number of working days —
+   * see `push-dependents.ts` for why that is a different computation from
+   * `cascade()` and must not be folded into it. The whole gesture, origin and
+   * chain, goes in as ONE undo entry: putting back the bar under the cursor and
+   * leaving its chain moved would produce a plan nobody chose.
+   */
   const updateBlockDates = useCallback(
-    (
+    async (
       updates: {
         id: string;
         start_date?: string;
         target_date?: string;
       }[]
-    ) =>
-      issues
-        .updateIssueDates(workspaceSlug.toString(), updates, projectId.toString())
-        .then(() => {
-          // Float, the critical path and rolled-up progress are all derived from
-          // these dates and cached per project. Without this the tails and the red
-          // arrows keep painting the pre-drag answer until a hard reload — the
-          // module-scope cache survives client-side navigation.
-          invalidateProjectSlack(workspaceSlug.toString(), projectId.toString());
-          invalidateProjectProgress(workspaceSlug.toString(), projectId.toString());
-          return undefined;
-        })
-        .catch(() => {
-          setToast({
-            type: TOAST_TYPE.ERROR,
-            title: t("toast.error"),
-            message: "Error while updating work item dates, Please try again Later",
+    ) => {
+      const slug = workspaceSlug?.toString();
+      const pid = projectId?.toString();
+      if (!slug || !pid || updates.length === 0) return;
+
+      const spanOf = (id: string) => {
+        const issue = getIssueById(id);
+        return { start_date: issue?.start_date, target_date: issue?.target_date };
+      };
+      // Captured BEFORE anything is applied: the store is written optimistically
+      // and the previous dates would be gone by the time we asked for them.
+      const undoItems = updates.map((update) => ({ issueId: update.id, prev: spanOf(update.id) }));
+      let pushed: TPushOutcome | null = null;
+      let payload = updates;
+
+      if (pushDependents && graph.length > 0) {
+        // One origin per gesture. The gantt sends a single-element array for a
+        // drag or a resize; a multi-item payload only arrives from the dependency
+        // helper, which has already decided where everything goes.
+        const [origin] = updates;
+        if (updates.length === 1 && origin) {
+          const spans: Record<string, { start_date?: string | null; target_date?: string | null }> = {};
+          for (const id of issuesIds) spans[id] = spanOf(id);
+          const outcome = pushDependents_({
+            originId: origin.id,
+            before: spanOf(origin.id),
+            after: { start_date: origin.start_date, target_date: origin.target_date },
+            edges: graph,
+            spans,
+            notEditable: new Set(issuesIds.filter((id) => id !== origin.id && !canEditBlock(id))),
+            floors: deliveryFloors,
+            isHoliday: (iso: string) => !!holidays[iso],
           });
-        }),
-    [issues, projectId, workspaceSlug, t]
+          // Reported whenever there is anything to report, not only when
+          // something moved. A chain that was entirely held at a delivery — or
+          // entirely made of items this person may not edit — is the case where
+          // saying nothing is worst: the switch is on, the bar moved, and the
+          // chain visibly did not.
+          if (outcome.moves.length > 0 || outcome.held.length > 0 || outcome.refused.length > 0) {
+            pushed = outcome;
+            payload = [...updates, ...outcome.moves];
+            for (const move of outcome.moves) undoItems.push({ issueId: move.id, prev: spanOf(move.id) });
+          }
+        }
+      }
+
+      try {
+        await issues.updateIssueDates(slug, payload, pid);
+        // Float, the critical path and rolled-up progress are all derived from
+        // these dates and cached per project. Without this the tails and the red
+        // arrows keep painting the pre-drag answer until a hard reload — the
+        // module-scope cache survives client-side navigation.
+        invalidateProjectSlack(slug, pid);
+        invalidateProjectProgress(slug, pid);
+        ganttUndo.push({
+          projectId: pid,
+          items: undoItems,
+          label: undoItems.length > 1 ? `${undoItems.length} work items moved` : "the last date change",
+        });
+        // Said out loud, and reversibly. A drag that quietly rewrote nine dates is
+        // the shape this fork's own violation banner exists to avoid; naming them
+        // afterwards with a one-key way back is the honest version of it.
+        if (pushed)
+          setToast({
+            type: TOAST_TYPE.INFO,
+            title: pushed.moves.length > 0 ? "The chain moved with it" : "The chain did not move",
+            message:
+              pushed.moves.length > 0 ? `${describePush(pushed)} Ctrl+Z puts all of it back.` : describePush(pushed),
+          });
+      } catch {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: t("toast.error"),
+          message: "Error while updating work item dates, Please try again Later",
+        });
+      }
+    },
+    [
+      issues,
+      projectId,
+      workspaceSlug,
+      t,
+      pushDependents,
+      graph,
+      issuesIds,
+      getIssueById,
+      canEditBlock,
+      deliveryFloors,
+      holidays,
+    ]
   );
 
   const quickAdd =
@@ -489,79 +934,98 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   return (
     <IssueLayoutHOC layout={EIssueLayoutTypes.GANTT}>
       <TimeLineTypeContext.Provider value={GANTT_TIMELINE_TYPE.ISSUE}>
-        <div className="relative flex h-full w-full flex-col">
-          {/* Named as soon as it exists, fixed only when asked. A drag that
+        {/* One scale for the whole chart, published to every bar and to the
+            legend, so the two can never disagree about what teal means. */}
+        <GanttColorScaleProvider value={colorContext}>
+          <div className="relative flex h-full w-full flex-col">
+            {/* Named as soon as it exists, fixed only when asked. A drag that
               silently cascaded twenty tasks is how people stop trusting a chart. */}
-          {workspaceSlug && projectId && (
-            <DependencyViolationBanner
-              workspaceSlug={workspaceSlug.toString()}
-              projectId={projectId.toString()}
-              violations={violations}
-            />
-          )}
-          <div className="relative min-h-0 flex-1">
-            <GanttLinkPreview />
-            <GanttGroupContext.Provider value={groupContext}>
-              <GanttChartRoot
-                border={false}
-                // These used to be an absolutely positioned strip floating over the
-                // chart's toolbar. An overlay takes part in no layout: it did not
-                // push the toolbar's own controls aside, it painted on top of them,
-                // and Export landed squarely on the "62 Work items" count. In the
-                // row they are ordinary flex children, so the whole toolbar wraps
-                // as one and nothing can overlap at any width.
-                toolbarLeading={
-                  <>
-                    {/* What is shown */}
-                    <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
-                      <GanttColorBy />
-                      <GanttGroupBy />
-                    </div>
-                    <GanttToolbarDivider />
-                    {/* The plan itself: who may change it, what it was promised to
-                        be, and a way back from the last change. */}
-                    <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
-                      <GanttLockButton lock={planLock} />
-                      <BaselinePicker />
-                      <GanttUndoButton onUndo={handleGanttUndo} />
-                    </div>
-                  </>
-                }
-                // Beside Saved order and Display rather than with the plan controls:
-                // it is about getting this chart out of here, like they are.
-                toolbarActions={<GanttExportButton collect={collectForExport} />}
-                title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-                loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
-                blockIds={rowIds}
-                blockUpdateHandler={updateIssueBlockStructure}
-                blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
-                sidebarToRender={(sidebarProps) => (
-                  <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />
-                )}
-                enableBlockLeftResize={canEditBlock}
-                enableBlockRightResize={canEditBlock}
-                enableBlockMove={canEditBlock}
-                // Dragging to reorder writes a sort_order derived from the rows either
-                // side. With bands on screen those neighbours can be headers, or sit in
-                // another group entirely, so the drag would mean something the user did
-                // not ask for. Grouping and manual order are exclusive.
-                // Draggable whatever the sort: the switch to manual happens
-                // in handleReorderStart, on the first drop.
-                enableReorder={isAllowed && groupBy === "none"}
-                onReorderStart={handleReorderStart}
-                enableAddBlock={canAddItems}
-                enableSelection={isBulkOperationsEnabled && isAllowed}
-                quickAdd={quickAdd}
-                loadMoreBlocks={loadMoreIssues}
-                canLoadMoreBlocks={nextPageResults}
-                updateBlockDates={updateBlockDates}
-                showAllBlocks
-                enableDependency
-                isEpic={isEpic}
+            {workspaceSlug && projectId && (
+              <DependencyViolationBanner
+                workspaceSlug={workspaceSlug.toString()}
+                projectId={projectId.toString()}
+                violations={violations}
+                onFixed={reloadAfterServerReschedule}
               />
-            </GanttGroupContext.Provider>
+            )}
+            {/* Said out loud rather than left to the colour of an arrow. The chain
+              was only ever expressed as a redder dependency line, so a project
+              with no links — which is most of them here — showed nothing at all
+              and the feature read as doing nothing. */}
+            <CriticalPathBanner diagnostics={slack.diagnostics} markedCount={slack.critical.size} />
+            {/* Mandatory the moment two series are on screen: without it the colour
+              is a puzzle rather than an encoding, and there is nowhere on a bar to
+              write "this teal one is Ruby". The marks below the rule are things
+              drawn ON TOP of a bar whatever series it is in. */}
+            <GanttLegend scale={colorContext.scale} dimensionLabel={colorContext.dimensionLabel} marks={legendMarks} />
+            <div className="relative min-h-0 flex-1">
+              <GanttLinkPreview />
+              <GanttGroupContext.Provider value={groupContext}>
+                <GanttChartRoot
+                  border={false}
+                  // These used to be an absolutely positioned strip floating over the
+                  // chart's toolbar. An overlay takes part in no layout: it did not
+                  // push the toolbar's own controls aside, it painted on top of them,
+                  // and Export landed squarely on the "62 Work items" count. In the
+                  // row they are ordinary flex children, so the whole toolbar wraps
+                  // as one and nothing can overlap at any width.
+                  toolbarLeading={
+                    <>
+                      {/* What is shown */}
+                      <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
+                        <GanttColorBy />
+                        <GanttGroupBy />
+                      </div>
+                      <GanttToolbarDivider />
+                      {/* The plan itself: who may change it, what a drag changes,
+                        what it was promised to be, and a way back from the last
+                        change. "Push dependents" belongs here rather than in the
+                        Display menu — it is not about what the chart draws, it is
+                        about what a drag writes. */}
+                      <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
+                        <GanttLockButton lock={planLock} />
+                        <PushDependentsToggle />
+                        <BaselinePicker />
+                        <GanttUndoButton onUndo={handleGanttUndo} />
+                      </div>
+                    </>
+                  }
+                  // Beside Saved order and Display rather than with the plan controls:
+                  // it is about getting this chart out of here, like they are.
+                  toolbarActions={<GanttExportButton collect={collectForExport} />}
+                  title={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+                  loaderTitle={isEpic ? t("epic.label", { count: 2 }) : t("issue.label", { count: 2 })}
+                  blockIds={rowIds}
+                  blockUpdateHandler={updateIssueBlockStructure}
+                  blockToRender={(data: TIssue) => <IssueGanttBlock issueId={data.id} isEpic={isEpic} />}
+                  sidebarToRender={(sidebarProps) => (
+                    <IssueGanttSidebar {...sidebarProps} showAllBlocks isEpic={isEpic} />
+                  )}
+                  enableBlockLeftResize={canEditBlock}
+                  enableBlockRightResize={canEditBlock}
+                  enableBlockMove={canEditBlock}
+                  // Draggable whatever the sort AND whatever the grouping: the
+                  // switch to a plain manual order happens in handleReorderStart,
+                  // on the first drop, which freezes the arrangement on screen
+                  // first so nothing jumps. Grouping and manual order are still
+                  // exclusive — the drag is what resolves them, rather than the
+                  // chart refusing the gesture and saying nothing.
+                  enableReorder={isAllowed}
+                  onReorderStart={handleReorderStart}
+                  enableAddBlock={canAddItems}
+                  enableSelection={isBulkOperationsEnabled && isAllowed}
+                  quickAdd={quickAdd}
+                  loadMoreBlocks={loadMoreIssues}
+                  canLoadMoreBlocks={nextPageResults}
+                  updateBlockDates={updateBlockDates}
+                  showAllBlocks
+                  enableDependency
+                  isEpic={isEpic}
+                />
+              </GanttGroupContext.Provider>
+            </div>
           </div>
-        </div>
+        </GanttColorScaleProvider>
       </TimeLineTypeContext.Provider>
     </IssueLayoutHOC>
   );

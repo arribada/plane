@@ -18,6 +18,7 @@ import { MultipleSelectGroupAction } from "@/components/core/multiple-select";
 // hooks
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
 // constants
 import {
   GANTT_SELECT_GROUP,
@@ -34,7 +35,8 @@ type Props = {
   loadMoreBlocks?: () => void;
   ganttContainerRef: RefObject<HTMLDivElement>;
   enableReorder: boolean | ((blockId: string) => boolean);
-  onReorderStart?: () => Promise<void> | void;
+  /** ARRIBADA FIX: may return the frozen sequence — see gantt-chart/root.tsx. */
+  onReorderStart?: () => Promise<TReorderStart | void> | TReorderStart | void;
   enableSelection: boolean | ((blockId: string) => boolean);
   sidebarToRender: (props: any) => React.ReactNode;
   title: string;

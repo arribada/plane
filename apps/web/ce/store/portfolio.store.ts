@@ -8,7 +8,27 @@ import { set } from "lodash-es";
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
 import { computedFn } from "mobx-utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { reorderWithinSubset } from "@/plane-web/components/gantt-chart/reorder";
+import type { TSubtaskNode, TSubtaskTree } from "@/plane-web/components/gantt-chart/subtasks";
 import type {
+  TPortfolioGroupBy,
+  TPortfolioSubgroup,
+  TPortfolioSubgroupBy,
+} from "@/plane-web/components/portfolio/grouping";
+import {
+  buildSubgroups,
+  projectStatusKey,
+  STATUS_BAND_ORDER,
+  statusBandLabel,
+  subgroupRowId,
+} from "@/plane-web/components/portfolio/grouping";
+import {
+  EMPTY_SUBTASK_TREE,
+  buildSubtaskTree,
+  hideCollapsedDescendants,
+} from "@/plane-web/components/gantt-chart/subtasks";
+import type {
+  TCriticalPathDiagnostics,
   TPortfolioColorBy,
   TPortfolioItem,
   TPortfolioProject,
@@ -62,11 +82,40 @@ export interface IPortfolioStore {
   applyProjectDates: (projectId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
   /** false when the reload failed and the board is showing stale rows. */
   refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<boolean>;
+  /** Re-read the rows and every expanded project's items after a bulk write the
+   *  server made, keeping the reader's arrangement. false when it failed. */
+  refreshLoaded: (workspaceSlug: string) => Promise<boolean>;
   setDisplayedProjectIds: (ids: string[]) => void;
   setColorBy: (value: TPortfolioColorBy) => void;
   setSortBy: (value: TPortfolioSortBy) => void;
   moveProject: (dragId: string, dropId: string) => void;
   setGroupByFolder: (value: boolean) => void;
+  /** Bands over the PROJECT rows: none ("project"), folders, or status. */
+  groupBy: TPortfolioGroupBy;
+  setGroupBy: (value: TPortfolioGroupBy) => void;
+  /** Bands over one project's WORK ITEMS — the rule internal to a project. */
+  subgroupBy: TPortfolioSubgroupBy;
+  setSubgroupBy: (value: TPortfolioSubgroupBy) => void;
+  toggleSubgroupCollapse: (rowId: string) => void;
+  isSubgroupRow: (id: string) => boolean;
+  getSubgroupRow: (id: string) => { label: string; color?: string; count: number; collapsed: boolean } | undefined;
+  /** The latest status per project, pushed in by whoever fetched it, so the
+   *  status bands can be computed in the store rather than in a pane. */
+  setProjectStatuses: (statuses: Record<string, string>) => void;
+  /** The arrangement a drag consumed on its way to the manual order — "Start
+   *  date", "folders", or both — so the toolbar can say where the order came
+   *  from instead of appearing to have thrown the sort away. Null when the order
+   *  has never been anything but manual. */
+  manualFrom: string | null;
+  /** Sub-tasks folded into their parent's row. On by default. */
+  nestSubtasks: boolean;
+  setNestSubtasks: (value: boolean) => void;
+  toggleItemCollapsed: (itemId: string) => void;
+  /** The nesting of every loaded work item, built per project. */
+  itemSubtaskTree: TSubtaskTree;
+  isItemCollapsed: (id: string) => boolean;
+  /** The project sequence the reader is looking at, folder bands consumed. */
+  visibleProjectSequence: string[];
   toggleFolderCollapse: (headerId: string) => void;
   focusFolderId: string | null;
   focusFolderName: string | null;
@@ -83,6 +132,14 @@ export interface IPortfolioStore {
   clearFilters: () => void;
   showCriticalPath: boolean;
   crossEdges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[];
+  /** Why the chain is empty when it is. Null until the first fetch answers, and
+   *  on a backend that predates it — the legend then says nothing rather than
+   *  guessing a cause. */
+  criticalDiagnostics: TCriticalPathDiagnostics | null;
+  /** The chain itself. Exposed because the legend reports how many bars are
+   *  MARKED, and a count taken from the server's own figure would disagree with
+   *  the rings on screen the moment the two definitions drift. */
+  criticalIssueIds: Set<string>;
   isCriticalIssue: (id: string) => boolean;
   setShowCriticalPath: (workspaceSlug: string, value: boolean) => void;
   fetchCriticalPath: (workspaceSlug: string) => Promise<void>;
@@ -114,8 +171,20 @@ const NO_ITEMS: string[] = [];
 
 const ORDER_KEY = "arribada.portfolio.manualOrder";
 const FOLDER_PREFIX = "__folder__:";
+const STATUS_PREFIX = "__pstat__:";
+const SUBGROUP_PREFIX = "__psub__:";
 const NO_FOLDER = FOLDER_PREFIX + "none";
 type TFolder = { id: string; name: string; parent_id: string | null; project_ids: string[] };
+
+/** Only for the sentence the toolbar prints after a drag has consumed a sort.
+ *  The toolbar's own SORT_OPTIONS is the display list; duplicating four words
+ *  here is cheaper than a component importing from a store or the reverse. */
+const SORT_LABEL: Record<string, string> = {
+  start_date: "Start date",
+  target_date: "Target date",
+  name: "Name",
+  undated: "Undated first",
+};
 
 // Date comparator for row sorting: dated rows come before undated ones.
 const cmpDate = (a: string | null, b: string | null) => {
@@ -145,7 +214,13 @@ export class PortfolioStore implements IPortfolioStore {
   loadFailed = false;
   foldersFailed = false;
   folders: TFolder[] = [];
-  groupByFolder = false;
+  groupBy: TPortfolioGroupBy = "project";
+  subgroupBy: TPortfolioSubgroupBy = "none";
+  collapsedSubgroupIds: Set<string> = new Set();
+  projectStatuses: Record<string, string> = {};
+  manualFrom: string | null = null;
+  nestSubtasks = true;
+  collapsedItemIds: Set<string> = new Set();
   collapsedFolderIds: Set<string> = new Set();
   focusFolderId: string | null = null; // when set, the portfolio shows only this folder's projects
   // item-level filters (apply to loaded task rows)
@@ -155,6 +230,9 @@ export class PortfolioStore implements IPortfolioStore {
   // cross-project critical path
   showCriticalPath = false;
   criticalIssueIds: Set<string> = new Set();
+  /** Why the chain is what it is, so the toggle can explain an empty answer
+   *  rather than look broken. Null until the first fetch answers. */
+  criticalDiagnostics: TCriticalPathDiagnostics | null = null;
   crossEdges: { from: string; to: string; kind: string; cross_project: boolean; critical: boolean }[] = [];
   // per-user focus (profile "Timeline" tab); null on the portfolio, always
   focusUserId: string | null = null;
@@ -180,7 +258,13 @@ export class PortfolioStore implements IPortfolioStore {
       loadFailed: observable.ref,
       foldersFailed: observable.ref,
       folders: observable,
-      groupByFolder: observable.ref,
+      groupBy: observable.ref,
+      subgroupBy: observable.ref,
+      collapsedSubgroupIds: observable,
+      projectStatuses: observable,
+      manualFrom: observable.ref,
+      nestSubtasks: observable.ref,
+      collapsedItemIds: observable,
       collapsedFolderIds: observable,
       focusFolderId: observable.ref,
       priorityFilter: observable,
@@ -188,6 +272,7 @@ export class PortfolioStore implements IPortfolioStore {
       meUserId: observable.ref,
       showCriticalPath: observable.ref,
       criticalIssueIds: observable,
+      criticalDiagnostics: observable.ref,
       crossEdges: observable,
       focusUserId: observable.ref,
       userTotalCount: observable.ref,
@@ -212,11 +297,20 @@ export class PortfolioStore implements IPortfolioStore {
       applyItemDates: action,
       applyProjectDates: action,
       refreshProjectItems: action,
+      refreshLoaded: action,
       setDisplayedProjectIds: action,
       setColorBy: action,
       setSortBy: action,
       moveProject: action,
       setGroupByFolder: action,
+      setGroupBy: action,
+      setSubgroupBy: action,
+      toggleSubgroupCollapse: action,
+      setProjectStatuses: action,
+      setNestSubtasks: action,
+      toggleItemCollapsed: action,
+      itemSubtaskTree: computed,
+      visibleProjectSequence: computed,
       toggleFolderCollapse: action,
       setFocusFolder: action,
       togglePriorityFilter: action,
@@ -386,6 +480,70 @@ export class PortfolioStore implements IPortfolioStore {
     return this.itemIdsByProject.get(projectId) ?? NO_ITEMS;
   }
 
+  /**
+   * Sub-task nesting for the work items under an expanded project.
+   *
+   * Built per project and merged, not globally: a portfolio spans a workspace, and
+   * a sub-task whose parent lives in another project would otherwise be drawn
+   * under a row that is not on this project's list at all — or, worse, be pulled
+   * out of its own project's block and into somebody else's. A cross-project child
+   * keeps a top-level row under its own project, which is where it belongs.
+   */
+  get itemSubtaskTree(): TSubtaskTree {
+    if (!this.nestSubtasks) return EMPTY_SUBTASK_TREE;
+    const byId = new Map<string, TSubtaskNode>();
+    const order: string[] = [];
+    for (const [projectId, ids] of this.itemIdsByProject) {
+      if (ids.length === 0) continue;
+      // The scope is the band, not the project, whenever there are bands: a
+      // sub-task in a different band from its parent stays a top-level row of
+      // its own band, exactly as on the work-item timeline. A chevron pointing
+      // at a row inside another band is a chevron pointing off screen.
+      const scopes = this.subgroupBy === "none" ? [ids] : this.subgroupsOf(projectId).map((band) => band.itemIds);
+      for (const scope of scopes) {
+        const tree = buildSubtaskTree(scope, (id) => this.itemMap[id]);
+        for (const [id, node] of tree.byId) byId.set(id, node);
+        order.push(...tree.order);
+      }
+    }
+    return { order, byId };
+  }
+
+  isItemCollapsed = computedFn((id: string): boolean => this.collapsedItemIds.has(id));
+
+  /**
+   * A project's rows in the order the chart draws them: banded by the subgroup
+   * axis, nested inside each band, with anything behind a folded parent or a
+   * folded band left out.
+   *
+   * The order of the three is the whole composition, and it is the same one the
+   * work-item timeline uses: band first (so a band keeps meaning "everything
+   * with this value"), then nest inside it, then hide what is folded.
+   */
+  private displayItemIds(projectId: string): string[] {
+    const ids = this.sortedItemIds(projectId);
+    if (ids.length === 0) return ids;
+    if (this.subgroupBy === "none") return this.nestAndFold(ids);
+
+    const out: string[] = [];
+    for (const band of this.subgroupsOf(projectId)) {
+      const rowId = subgroupRowId(projectId, band.key);
+      out.push(rowId);
+      if (this.collapsedSubgroupIds.has(rowId)) continue;
+      out.push(...this.nestAndFold(band.itemIds));
+    }
+    return out;
+  }
+
+  /** Nesting and its folds, over one scope — a whole project, or one band of it. */
+  private nestAndFold(ids: string[]): string[] {
+    if (!this.nestSubtasks) return ids;
+    const tree = this.itemSubtaskTree;
+    const inScope = new Set(ids);
+    const nested = tree.order.filter((id) => inScope.has(id));
+    return hideCollapsedDescendants(nested, tree, this.collapsedItemIds);
+  }
+
   // Projects the focused user has loaded rows in, kept in board order. Reads
   // itemIdsByProject rather than itemMap so it can never disagree with the rows the
   // gantt draws under each project header.
@@ -451,20 +609,81 @@ export class PortfolioStore implements IPortfolioStore {
     return groups;
   }
 
+  /**
+   * Bands over the project rows, for whichever group axis is in force.
+   *
+   * `folder` delegates to folderGroups, which walks the folder tree; `status`
+   * bands by the latest project update, worst first, because a portfolio is read
+   * to find what is going wrong. `project` produces no bands at all — the board
+   * as it has always been, which is why it is the default.
+   */
+  get bandGroups(): { headerId: string; name: string; projectIds: string[] }[] {
+    if (this.groupBy === "folder") return this.folderGroups;
+    if (this.groupBy !== "status") return [];
+
+    const sorted = this.sortedProjectIds;
+    const byKey = new Map<string, string[]>();
+    for (const pid of sorted) {
+      const key = projectStatusKey(this.projectMap[pid], (id) => this.projectStatuses[id]);
+      const bucket = byKey.get(key);
+      if (bucket) bucket.push(pid);
+      else byKey.set(key, [pid]);
+    }
+    return STATUS_BAND_ORDER.filter((key) => byKey.has(key)).map((key) => ({
+      headerId: STATUS_PREFIX + key,
+      name: statusBandLabel(key),
+      projectIds: byKey.get(key) as string[],
+    }));
+  }
+
+  /** One project's work items banded by the subgroup axis. Computed from the raw
+   *  per-project list, so the bands are decided before anything is nested — the
+   *  same order of operations the work-item timeline uses, and for the same
+   *  reason: a band has to keep meaning "everything with this value". */
+  subgroupsOf = computedFn((projectId: string): TPortfolioSubgroup[] =>
+    buildSubgroups(this.sortedItemIds(projectId), (id) => this.itemMap[id], this.subgroupBy, {
+      getState: () => undefined,
+    })
+  );
+
+  isSubgroupRow = computedFn((id: string): boolean => id.startsWith(SUBGROUP_PREFIX));
+
+  getSubgroupRow = computedFn(
+    (id: string): { label: string; color?: string; count: number; collapsed: boolean } | undefined => {
+      if (!id.startsWith(SUBGROUP_PREFIX)) return undefined;
+      // `__psub__:<projectId>:<key>` — the project scopes the id, so the same
+      // module under two projects is two independently collapsible bands.
+      const rest = id.slice(SUBGROUP_PREFIX.length);
+      const split = rest.indexOf(":");
+      if (split === -1) return undefined;
+      const projectId = rest.slice(0, split);
+      const key = rest.slice(split + 1);
+      const band = this.subgroupsOf(projectId).find((b) => b.key === key);
+      if (!band) return undefined;
+      return {
+        label: band.label,
+        color: band.color,
+        count: band.itemIds.length,
+        collapsed: this.collapsedSubgroupIds.has(id),
+      };
+    }
+  );
+
   // The flat id list the gantt renders. Expanding a project injects its item ids
   // right after it, so the sidebar and the grid stay in lockstep automatically.
-  // With grouping on, a folder-header row precedes each swimlane's projects.
+  // With a group axis in force, a band header precedes each swimlane's projects;
+  // with a subgroup axis, a band header precedes each run of a project's items.
   get ganttBlockIds(): string[] {
     const ids: string[] = [];
     const pushProject = (pid: string) => {
       ids.push(pid);
-      if (this.expandedProjectIds.has(pid)) ids.push(...this.sortedItemIds(pid));
+      if (this.expandedProjectIds.has(pid)) ids.push(...this.displayItemIds(pid));
     };
-    if (!this.groupByFolder) {
+    if (this.groupBy === "project") {
       for (const pid of this.sortedProjectIds) pushProject(pid);
       return ids;
     }
-    for (const g of this.folderGroups) {
+    for (const g of this.bandGroups) {
       ids.push(g.headerId);
       if (this.collapsedFolderIds.has(g.headerId)) continue;
       for (const pid of g.projectIds) pushProject(pid);
@@ -488,21 +707,31 @@ export class PortfolioStore implements IPortfolioStore {
     return this.itemProjectId[id];
   });
 
-  isFolderRow = computedFn((id: string): boolean => id.startsWith(FOLDER_PREFIX));
+  isFolderRow = computedFn((id: string): boolean => id.startsWith(FOLDER_PREFIX) || id.startsWith(STATUS_PREFIX));
 
+  /** The header of a band over PROJECT rows, whichever axis produced it. Named
+   *  for folders because that is what it started as and what the sidebar still
+   *  calls it; a status band draws identically and collapses the same way. */
   getFolderRow = computedFn((id: string): { name: string; projectCount: number; collapsed: boolean } | undefined => {
-    if (!id.startsWith(FOLDER_PREFIX)) return undefined;
-    const g = this.folderGroups.find((x) => x.headerId === id);
+    if (!id.startsWith(FOLDER_PREFIX) && !id.startsWith(STATUS_PREFIX)) return undefined;
+    const g = this.bandGroups.find((x) => x.headerId === id);
     if (!g) return undefined;
     return { name: g.name, projectCount: g.projectIds.length, collapsed: this.collapsedFolderIds.has(id) };
   });
 
   getRowById = computedFn((id: string): TGanttRow | undefined => {
-    if (id.startsWith(FOLDER_PREFIX)) {
-      // folder header: a row with no dates, so the gantt draws no bar for it
+    // Every synthetic header — folder, status band, subgroup band — is a row with
+    // no dates, so the gantt draws no bar for it but still gives it a row of the
+    // standard height. That height is not cosmetic: both panes map over the same
+    // id list and every dependency arrow computes its y from a row's index in it.
+    if (id.startsWith(FOLDER_PREFIX) || id.startsWith(STATUS_PREFIX) || id.startsWith(SUBGROUP_PREFIX)) {
       return {
         id,
-        name: this.getFolderRow(id)?.name ?? "",
+        name:
+          this.getFolderRow(id)?.name ??
+          this.bandGroups.find((band) => band.headerId === id)?.name ??
+          this.getSubgroupRow(id)?.label ??
+          "",
         sort_order: null,
         start_date: null,
         target_date: null,
@@ -718,7 +947,7 @@ export class PortfolioStore implements IPortfolioStore {
     this.displayedProjectIds = [];
     this.priorityFilter = new Set();
     this.assignedToMeOnly = false;
-    this.groupByFolder = false;
+    this.groupBy = "project";
     if (this.preFocusSortBy) this.sortBy = this.preFocusSortBy;
     if (this.preFocusColorBy) this.colorBy = this.preFocusColorBy;
     this.preFocusSortBy = null;
@@ -817,6 +1046,63 @@ export class PortfolioStore implements IPortfolioStore {
     }
   };
 
+  /**
+   * Re-read everything the board is currently showing, after the SERVER changed it.
+   *
+   * The two bulk actions in the toolbar are the case: "reflow" auto-schedules every
+   * project in scope and "capture baseline" snapshots them. Neither writes through
+   * this store, so afterwards `projectMap` holds the pre-reflow windows and the
+   * pre-capture baseline fields — which is what the drift badge is computed from,
+   * so the board went on reporting drift against a baseline that had been replaced.
+   * Reflow refetched the rows but not the items, so the task bars it had just moved
+   * kept their old dates.
+   *
+   * Deliberately NOT fetchPortfolio(): that rebuilds `displayedProjectIds` from the
+   * API and force-flips `sortBy` to "manual" whenever a saved order exists, so a
+   * reflow visibly reshuffled the board and silently changed the sort. Same reason
+   * `refreshProjectItems` above exists. The arrangement is the reader's; only the
+   * data is the server's.
+   *
+   * Items are refetched for every project the reader has expanded — a capture
+   * changes none of them, and pays one request per open project for the sake of
+   * having one answer to "the server moved things underneath us".
+   *
+   * @returns false when the board is still showing stale rows.
+   */
+  refreshLoaded = async (workspaceSlug: string): Promise<boolean> => {
+    const loaded = [...this.loadedItemProjects];
+    try {
+      const [projects, itemLists] = await Promise.all([
+        this.service.getPortfolio(workspaceSlug),
+        Promise.all(loaded.map((projectId) => this.service.getProjectItems(workspaceSlug, projectId))),
+      ]);
+      runInAction(() => {
+        const nextProjects: Record<string, TPortfolioProject> = {};
+        for (const project of projects) nextProjects[project.id] = project;
+        this.projectMap = nextProjects;
+
+        // Rebuilt rather than merged, so a work item deleted since the last load
+        // stops being drawn. A project nobody has expanded keeps no items either
+        // way, so it contributes nothing here.
+        const nextItems: Record<string, TPortfolioItem> = {};
+        const nextOwner: Record<string, string> = {};
+        loaded.forEach((projectId, index) => {
+          for (const item of itemLists[index] ?? []) {
+            nextItems[item.id] = item;
+            nextOwner[item.id] = projectId;
+          }
+        });
+        this.itemMap = nextItems;
+        this.itemProjectId = nextOwner;
+      });
+      return true;
+    } catch {
+      // Same contract as refreshProjectItems: the prior rows stay on screen and the
+      // caller is the only one that can tell the reader they are out of date.
+      return false;
+    }
+  };
+
   setDisplayedProjectIds = (ids: string[]): void => {
     this.displayedProjectIds = ids;
   };
@@ -827,10 +1113,42 @@ export class PortfolioStore implements IPortfolioStore {
 
   setSortBy = (value: TPortfolioSortBy): void => {
     this.sortBy = value;
+    // Picking an order by hand answers "where did my sort go?" itself.
+    this.manualFrom = null;
   };
 
+  /** Kept because "group by folder" is a real, separate thing a caller asks for
+   *  (focusing a folder turns it on). It is now one value of `groupBy` rather
+   *  than a switch of its own, so there is one answer to "how is this banded". */
+  get groupByFolder(): boolean {
+    return this.groupBy === "folder";
+  }
+
   setGroupByFolder = (value: boolean): void => {
-    this.groupByFolder = value;
+    this.setGroupBy(value ? "folder" : "project");
+  };
+
+  setGroupBy = (value: TPortfolioGroupBy): void => {
+    this.groupBy = value;
+    // A fold names a header from the banding being left behind.
+    this.collapsedFolderIds = new Set();
+    if (value !== "project") this.manualFrom = null;
+  };
+
+  setSubgroupBy = (value: TPortfolioSubgroupBy): void => {
+    this.subgroupBy = value;
+    this.collapsedSubgroupIds = new Set();
+  };
+
+  toggleSubgroupCollapse = (rowId: string): void => {
+    const next = new Set(this.collapsedSubgroupIds);
+    if (next.has(rowId)) next.delete(rowId);
+    else next.add(rowId);
+    this.collapsedSubgroupIds = next;
+  };
+
+  setProjectStatuses = (statuses: Record<string, string>): void => {
+    this.projectStatuses = statuses;
   };
 
   toggleFolderCollapse = (headerId: string): void => {
@@ -851,7 +1169,7 @@ export class PortfolioStore implements IPortfolioStore {
     //
     // Still a switch: anybody who wants the flat list turns it off in Display,
     // and that choice survives until the next focus.
-    if (folderId) this.groupByFolder = true;
+    if (folderId) this.groupBy = "folder";
   };
 
   togglePriorityFilter = (priority: string): void => {
@@ -877,10 +1195,15 @@ export class PortfolioStore implements IPortfolioStore {
   isCriticalIssue = computedFn((id: string): boolean => this.showCriticalPath && this.criticalIssueIds.has(id));
 
   /** Highlights the critical chain. It does not decide whether dependencies are
-   *  drawn at all — the board loads its edges up front now. */
+   *  drawn at all — the board loads its edges up front now.
+   *
+   *  The fetch runs whenever the diagnostics are missing, not only when the id
+   *  set is empty. An empty set is the ANSWER on a workspace with no dependency
+   *  links, so gating on it meant the one case that most needs an explanation
+   *  re-asked the server on every toggle and still had nothing to say. */
   setShowCriticalPath = (workspaceSlug: string, value: boolean): void => {
     this.showCriticalPath = value;
-    if (value && this.criticalIssueIds.size === 0) void this.fetchCriticalPath(workspaceSlug);
+    if (value && !this.criticalDiagnostics) void this.fetchCriticalPath(workspaceSlug);
   };
 
   fetchCriticalPath = async (workspaceSlug: string): Promise<void> => {
@@ -889,23 +1212,66 @@ export class PortfolioStore implements IPortfolioStore {
       runInAction(() => {
         this.criticalIssueIds = new Set(r.issue_ids);
         this.crossEdges = r.edges ?? [];
+        this.criticalDiagnostics = r.diagnostics ?? null;
       });
     } catch {
       // leave prior state; the toggle just won't highlight anything
     }
   };
 
-  // Drag reorder: drop `dragId` at the position of `dropId`, switch to manual sort.
+  /**
+   * Drag reorder: drop `dragId` where `dropId` sits, and take the arrangement on
+   * screen with you.
+   *
+   * This used to reorder `displayedProjectIds` — the SAVED order — while the
+   * reader was looking at a date sort or a set of folder swimlanes, then switch
+   * to manual. The row landed at the index it had in a list nobody was looking
+   * at, and every other row jumped at the same time, so the one gesture that is
+   * supposed to be direct manipulation was the one that scrambled the board.
+   * Dragging was therefore offered only in manual mode, which meant the answer to
+   * "can I just move this one" was no.
+   *
+   * Now the visible sequence — sorted, folder-banded, whatever produced it — IS
+   * the order that gets written down, and the move is applied to that. Nothing
+   * moves except the row under the hand. Where the arrangement came from is kept
+   * in `manualFrom` so the toolbar can say so rather than appear to have
+   * discarded it.
+   */
   moveProject = (dragId: string, dropId: string): void => {
     if (dragId === dropId) return;
-    const ids = [...this.displayedProjectIds];
-    const from = ids.indexOf(dragId);
-    const to = ids.indexOf(dropId);
-    if (from === -1 || to === -1) return;
-    ids.splice(from, 1);
-    ids.splice(to, 0, dragId);
-    this.displayedProjectIds = ids;
+    const visible = this.visibleProjectSequence;
+    // Projects outside the current scope — a focused folder, another page of the
+    // board — are not on screen and must keep their saved places.
+    const next = reorderWithinSubset(this.displayedProjectIds, visible, dragId, dropId);
+    if (next === this.displayedProjectIds) return;
+
+    const fromSort = this.sortBy === "manual" ? null : (SORT_LABEL[this.sortBy] ?? this.sortBy);
+    const fromBands = this.groupBy === "folder" ? "folders" : this.groupBy === "status" ? "status bands" : null;
+    this.displayedProjectIds = next;
     this.sortBy = "manual";
+    this.groupBy = "project";
+    this.manualFrom = fromBands ? (fromSort ? `${fromSort}, inside ${fromBands}` : fromBands) : fromSort;
     this.persistOrder();
+  };
+
+  /** What the reader sees, folder bands consumed: the same projects in the same
+   *  places, with the headers taken out. */
+  get visibleProjectSequence(): string[] {
+    if (this.groupBy === "project") return this.sortedProjectIds;
+    return this.bandGroups.flatMap((group) => group.projectIds);
+  }
+
+  setNestSubtasks = (value: boolean): void => {
+    this.nestSubtasks = value;
+    // A fold means nothing once the rows are flat, and a stale one would hide
+    // rows the moment nesting came back on.
+    if (!value) this.collapsedItemIds = new Set();
+  };
+
+  toggleItemCollapsed = (itemId: string): void => {
+    const next = new Set(this.collapsedItemIds);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    this.collapsedItemIds = next;
   };
 }

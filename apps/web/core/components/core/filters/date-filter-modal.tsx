@@ -46,7 +46,11 @@ export function DateFilterModal({ title, handleClose, isOpen, onSelect }: Props)
   };
 
   const date1 = getDate(watch("date1"));
-  const date2 = getDate(watch("date1"));
+  // `date2`, not `date1` again. Watching the same field twice made `isInvalid`
+  // compare a date with itself, which is never greater, so the inverted-range
+  // guard below could not fire and the modal happily submitted an "after 30 Sep,
+  // before 1 Sep" filter that matches nothing.
+  const date2 = getDate(watch("date2"));
 
   const isInvalid = watch("filterType") === "range" && date1 && date2 ? date1 > date2 : false;
 

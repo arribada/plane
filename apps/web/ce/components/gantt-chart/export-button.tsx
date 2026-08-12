@@ -3,17 +3,38 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * "Export" for the work-item timeline. Builds the file from the rows the chart is
- * currently showing — same order, same bands, same filters — so what comes out is
- * what was on screen, not a different query that happens to look similar.
+ * "Export" for the work-item timeline.
+ *
+ * The menu offers a SCOPE before it offers a format, and the default is the
+ * chart as it stands — same order, same bands, same folds, same filters. That
+ * ordering is the fix: the export used to be a second pass over the whole
+ * project that merely resembled what was on screen, so folding a band changed
+ * the picture and changed nothing about the file. Somebody who has spent ten
+ * minutes arranging a view expects the file to be OF that view.
+ *
+ * "Everything" is still one click away, because the other reasonable
+ * expectation — "give me the whole plan regardless of what I folded" — is just
+ * as common, and guessing between them is what produced the complaint. It is
+ * offered rather than assumed, and whichever is picked is written into the file.
  */
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
-import { CalendarDays, Download, FileCode2, FileImage, FileSpreadsheet, GanttChartSquare } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  Download,
+  FileCode2,
+  FileImage,
+  FileSpreadsheet,
+  GanttChartSquare,
+  Table2,
+} from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
+import { cn } from "@plane/utils";
 import {
   buildGanttCsv,
   buildGanttSvg,
+  buildGanttWorkbook,
   buildIcs,
   buildMsProjectXml,
   CanvasTooLargeError,
@@ -21,7 +42,10 @@ import {
   downloadPng,
   downloadSvg,
   downloadText,
+  downloadXlsx,
   type TExportEdge,
+  type TExportLegendEntry,
+  type TExportMeta,
   type TExportRow,
 } from "./export";
 
@@ -33,21 +57,35 @@ const slug = (name: string) =>
     .replace(/(^-|-$)/g, "")
     .slice(0, 60) || "timeline";
 
+export type TExportScope = "view" | "all";
+
+export type TExportPayload = {
+  rows: TExportRow[];
+  edges: TExportEdge[];
+  meta: TExportMeta;
+  showWeekends: boolean;
+  /** The series swatches the chart is showing. Handed straight to the drawn
+   *  formats so the file's legend and the screen's are the same list — a picture
+   *  whose colours mean something only to the person who pressed the button is
+   *  the defect this whole pass exists for. */
+  legend?: TExportLegendEntry[];
+  /** The server has pages the client has not fetched — the file would stop short. */
+  partial?: boolean;
+};
+
 type Props = {
-  /** Rebuilt on demand so the export always reflects the chart as it is now. */
-  collect: () => {
-    rows: TExportRow[];
-    edges: TExportEdge[];
-    title: string;
-    showWeekends: boolean;
-    /** The server has pages the client has not fetched — the file would stop short. */
-    partial?: boolean;
-  };
+  /**
+   * Rebuilt on demand so the export always reflects the chart as it is now, and
+   * takes the scope so "as shown" and "everything" are two different row lists
+   * rather than one list the formats interpret differently.
+   */
+  collect: (scope: TExportScope) => TExportPayload;
 };
 
 export const GanttExportButton = observer(function GanttExportButton({ collect }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scope, setScope] = useState<TExportScope>("view");
 
   useEffect(() => {
     if (!open) return undefined;
@@ -58,16 +96,17 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const run = async (kind: "svg" | "png" | "csv" | "mpp" | "ics") => {
+  const run = async (kind: "svg" | "png" | "csv" | "xlsx" | "mpp" | "ics") => {
     setOpen(false);
     setBusy(true);
     try {
-      const { rows, edges, title, showWeekends, partial } = collect();
+      const { rows, edges, meta, showWeekends, legend, partial } = collect(scope);
       if (partial) {
         // Refusing beats handing over a plan that looks whole and is not. The
         // server still has pages the client has not fetched, so the file would
-        // stop wherever scrolling stopped — and nothing in a CSV or an MS-Project
-        // XML says how much is missing.
+        // stop wherever scrolling stopped — and nothing in a CSV or an
+        // MS-Project XML says how much is missing. A folded band is a CHOICE and
+        // is recorded as one in the file; an unfetched page is neither.
         setToast({
           type: TOAST_TYPE.WARNING,
           title: "Not everything is loaded yet",
@@ -76,25 +115,30 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
         });
         return;
       }
-      const name = slug(title);
+      const name = slug(meta.title);
+      const suffix = scope === "all" ? "-full" : "";
       if (kind === "csv") {
-        downloadCsv(buildGanttCsv(rows), `${name}.csv`);
+        downloadCsv(buildGanttCsv(rows, meta), `${name}${suffix}.csv`);
+        return;
+      }
+      if (kind === "xlsx") {
+        downloadXlsx(buildGanttWorkbook(rows, meta), `${name}${suffix}.xlsx`);
         return;
       }
       if (kind === "mpp") {
-        const xml = buildMsProjectXml(rows, edges, title);
+        const xml = buildMsProjectXml(rows, edges, meta.title);
         if (!xml) {
           setToast({ type: TOAST_TYPE.WARNING, title: "Nothing to export", message: "No dated work items." });
           return;
         }
-        downloadText(xml, `${name}.xml`, "application/xml");
+        downloadText(xml, `${name}${suffix}.xml`, "application/xml");
         return;
       }
       if (kind === "ics") {
-        downloadText(buildIcs(rows, title), `${name}.ics`, "text/calendar");
+        downloadText(buildIcs(rows, meta.title), `${name}${suffix}.ics`, "text/calendar");
         return;
       }
-      const svg = buildGanttSvg(rows, edges, { title, showWeekends });
+      const svg = buildGanttSvg(rows, edges, { title: meta.title, showWeekends, legend, meta });
       if (!svg) {
         // The chart can be full of rows and still have nothing to draw: an item
         // with no dates has no bar. Saying so beats handing over a blank file.
@@ -105,8 +149,8 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
         });
         return;
       }
-      if (kind === "svg") downloadSvg(svg, `${name}.svg`);
-      else await downloadPng(svg, `${name}.png`);
+      if (kind === "svg") downloadSvg(svg, `${name}${suffix}.svg`);
+      else await downloadPng(svg, `${name}${suffix}.png`);
     } catch (error) {
       // A long plan can exceed what a browser will allocate for a canvas, and
       // toBlob answers that with a blank image rather than an error — so this is
@@ -125,6 +169,30 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
   };
 
   const item = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-2";
+
+  const scopeRow = (value: TExportScope, label: string, hint: string) => (
+    <button
+      type="button"
+      onClick={() => setScope(value)}
+      aria-pressed={scope === value}
+      className={cn("flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-2", {
+        "bg-accent-primary/10": scope === value,
+      })}
+    >
+      <span
+        className={cn("mt-0.5 flex size-4 flex-shrink-0 items-center justify-center rounded-full border", {
+          "border-accent-strong bg-accent-primary text-white": scope === value,
+          "border-subtle": scope !== value,
+        })}
+      >
+        {scope === value && <Check className="size-2.5" />}
+      </span>
+      <span>
+        {label}
+        <span className="block text-11 text-tertiary">{hint}</span>
+      </span>
+    </button>
+  );
 
   return (
     <div className="relative">
@@ -146,7 +214,32 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
             className="fixed inset-0 z-20 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1">
+          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-layer-1 p-1">
+            {/* Scope first, because it changes what every format below contains. */}
+            <div className="px-2 pt-1 pb-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
+              What to include
+            </div>
+            {scopeRow("view", "This view", "The bands, folds and filters on screen")}
+            {scopeRow("all", "Everything", "Every work item, whatever is folded")}
+            <div className="my-1 border-t border-subtle" />
+            <div className="px-2 pb-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
+              As a spreadsheet
+            </div>
+            <button type="button" className={item} onClick={() => void run("xlsx")}>
+              <Table2 className="size-3.5 text-tertiary" />
+              <span>
+                Excel workbook
+                <span className="block text-11 text-tertiary">One row per work item, dates and float</span>
+              </span>
+            </button>
+            <button type="button" className={item} onClick={() => void run("csv")}>
+              <FileSpreadsheet className="size-3.5 text-tertiary" />
+              CSV (same columns)
+            </button>
+            <div className="my-1 border-t border-subtle" />
+            <div className="px-2 pb-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
+              As a picture
+            </div>
             <button type="button" className={item} onClick={() => void run("png")}>
               <FileImage className="size-3.5 text-tertiary" />
               PNG image
@@ -154,10 +247,6 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
             <button type="button" className={item} onClick={() => void run("svg")}>
               <FileCode2 className="size-3.5 text-tertiary" />
               SVG (stays sharp)
-            </button>
-            <button type="button" className={item} onClick={() => void run("csv")}>
-              <FileSpreadsheet className="size-3.5 text-tertiary" />
-              CSV (dates and owners)
             </button>
             <div className="my-1 border-t border-subtle" />
             <button type="button" className={item} onClick={() => void run("mpp")}>

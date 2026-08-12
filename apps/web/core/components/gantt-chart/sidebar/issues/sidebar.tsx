@@ -21,6 +21,8 @@ import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { useGanttGroups } from "@/plane-web/components/gantt-chart/group-context";
 import { GanttGroupHeader } from "@/plane-web/components/gantt-chart/group-row";
 import { groupKeyFromRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
+import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
+import { ROOT_DRAG_SCOPE } from "@/plane-web/components/gantt-chart/subtasks";
 // local imports
 import { useTimeLineChart } from "../../../../hooks/use-timeline-chart";
 import { GanttDnDHOC } from "../gantt-dnd-HOC";
@@ -33,12 +35,13 @@ type Props = {
   loadMoreBlocks?: () => void;
   ganttContainerRef: RefObject<HTMLDivElement>;
   blockIds: string[];
-  enableReorder: boolean;
+  enableReorder: boolean | ((blockId: string) => boolean);
   enableSelection: boolean;
   showAllBlocks?: boolean;
-  /** Runs before the move is applied, so a view sorted by something else can
-   *  become the manual order first. */
-  onReorderStart?: () => Promise<void> | void;
+  /** Runs before the move is applied, so a view sorted — or grouped — by
+   *  something else can become the manual order first, and hands back the
+   *  sequence it froze. */
+  onReorderStart?: () => Promise<TReorderStart | void> | TReorderStart | void;
   selectionHelpers?: TSelectionHelper;
   isEpic?: boolean;
 };
@@ -80,6 +83,12 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
 
   const isPaginating = !!getIssueLoader();
 
+  // ARRIBADA FIX: the prop has always been typed `boolean | (id) => boolean` at
+  // the gantt's own root and was flattened to `boolean` on the way in here, so a
+  // per-row answer read as "always true". Resolved once, at the row.
+  const canReorder = (blockId: string) =>
+    typeof enableReorder === "function" ? enableReorder(blockId) : enableReorder;
+
   useIntersectionObserver(
     ganttContainerRef,
     isPaginating ? null : intersectionElement,
@@ -92,13 +101,26 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     droppedBlockId: string | undefined,
     dropAtEndOfList: boolean
   ) => {
-    // Awaited first: when the view is sorted by something other than the manual
-    // order, this writes the sequence on screen down AS the manual order and
-    // switches to it. Applying the move before that would compute neighbours
-    // from a sort_order nobody is looking at, and the row would land somewhere
-    // else entirely.
-    await onReorderStart?.();
-    handleOrderChange(draggingBlockId, droppedBlockId, dropAtEndOfList, blockIds, getBlockById, blockUpdateHandler);
+    // Awaited first: when the view is sorted — or grouped — by something other
+    // than the manual order, this writes the sequence on screen down AS the
+    // manual order and switches to it. Applying the move before that would
+    // compute neighbours from a sort_order nobody is looking at, and the row
+    // would land somewhere else entirely.
+    //
+    // ARRIBADA FIX: and it hands the frozen sequence back. `blockIds` here is the
+    // prop from the render that is now one state change out of date — with the
+    // group headers still in it — so the move has to be computed against what
+    // the freeze actually wrote.
+    const frozen = await onReorderStart?.();
+    handleOrderChange(
+      draggingBlockId,
+      droppedBlockId,
+      dropAtEndOfList,
+      frozen?.blockIds ?? blockIds,
+      getBlockById,
+      blockUpdateHandler,
+      frozen?.sortOrderOf
+    );
     if (draggingBlockId) {
       setLandedId(draggingBlockId);
       if (landedTimer.current) window.clearTimeout(landedTimer.current);
@@ -163,8 +185,17 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                   // Draggable either to reorder, or — when the chart is grouped
                   // by something a work item can actually belong to — to drop on
                   // a band header and join it.
-                  isDragEnabled={enableReorder || !!groups.assign}
-                  isReorderTarget={enableReorder}
+                  isDragEnabled={canReorder(block.id) || !!groups.assign}
+                  isReorderTarget={canReorder(block.id)}
+                  // ARRIBADA FIX: with sub-tasks nested, a row's order is decided
+                  // among its own siblings — the tree is rebuilt from parent_id on
+                  // every render, so dropping a child between two unrelated rows
+                  // would write a sort_order and change nothing anyone can see.
+                  // Scoping the drop to the siblings makes the refusal visible
+                  // (no drop line) instead of silent.
+                  dragScope={
+                    groups.subtasks.enabled ? (groups.subtasks.parentOf(block.id) ?? ROOT_DRAG_SCOPE) : undefined
+                  }
                   onDrop={(a, b, c) => void handleOnDrop(a, b, c)}
                 >
                   {(isDragging: boolean) => (

@@ -25,6 +25,7 @@ import { AlertTriangle, Flag, Github, RefreshCw, ShoppingCart, TrendingDown } fr
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
+import { todayIso } from "@/plane-web/components/gantt-chart/working-days";
 import { githubSyncToast } from "@/plane-web/components/github-triage/sync-toast";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -75,7 +76,10 @@ function useWidgetLoad<T>(slug: string | undefined, load: (slug: string) => Prom
 const daysBetween = (earlier: string, later: string) =>
   Math.round((new Date(later).getTime() - new Date(earlier).getTime()) / 86_400_000);
 
-const today = () => new Date().toISOString().slice(0, 10);
+/** The reader's own day. `toISOString()` answers in UTC, which at UTC+13 stamps
+ *  the whole local morning as yesterday — and every widget on this page compares
+ *  it against plain-day plan dates. */
+const today = todayIso;
 
 /** Grouped digits and the currency's own symbol where the browser knows one. */
 const money = (amount: number, currency: string) => {

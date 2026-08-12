@@ -10,9 +10,11 @@
  */
 import { useEffect, useState } from "react";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import type { TCriticalPathDiagnostics } from "@/plane-web/types/arribada";
 import { bumpProjectRevision, useProjectRevision } from "./derived-revision";
 
 export type TIssueSlack = { free: number; total: number; critical: boolean };
+export type { TCriticalPathDiagnostics };
 
 export type TProjectSlack = {
   /**
@@ -31,11 +33,20 @@ export type TProjectSlack = {
    */
   critical: Set<string>;
   byIssue: Record<string, TIssueSlack>;
+  /** ISO date an item may not start before, because a part it needs is not there
+   *  yet. Rides along with the graph rather than on its own request: the client
+   *  that pushes a dependency chain has to stop at the same floor the
+   *  auto-schedule button stops at, and two round trips is two chances for them
+   *  to disagree. Empty on every project that has not asked for it. */
+  deliveryFloors: Record<string, string>;
+  /** null until the first answer arrives, and on an older server that does not
+   *  send it — the banner draws nothing rather than guessing a cause. */
+  diagnostics: TCriticalPathDiagnostics | null;
 };
 
 type Entry = { promise: Promise<TProjectSlack>; value: TProjectSlack | null };
 
-const EMPTY: TProjectSlack = { critical: new Set(), byIssue: {} };
+const EMPTY: TProjectSlack = { critical: new Set(), byIssue: {}, deliveryFloors: {}, diagnostics: null };
 const cache = new Map<string, Entry>();
 const service = new ArribadaService();
 
@@ -75,6 +86,8 @@ export const useProjectSlack = (workspaceSlug: string | undefined, projectId: st
               // enough not to send slack at all.
               critical: new Set(fromSlack.length > 0 ? fromSlack : (res?.issue_ids ?? [])),
               byIssue,
+              deliveryFloors: res?.delivery_floors ?? {},
+              diagnostics: res?.diagnostics ?? null,
             };
           })
           .catch(() => {

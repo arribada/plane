@@ -10,6 +10,7 @@ import { observer } from "mobx-react";
 import type { IBlockUpdateData, IBlockUpdateDependencyData } from "@plane/types";
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
 import { ChartViewRoot } from "./chart/root";
 
 type GanttChartRootProps = {
@@ -30,8 +31,14 @@ type GanttChartRootProps = {
   enableReorder?: boolean | ((blockId: string) => boolean);
   /** Fires before a reorder is applied. The gantt uses it to turn the view's
    *  current sequence INTO the manual order when the view is sorted by
-   *  something else, so the drag lands on the list in front of the reader. */
-  onReorderStart?: () => Promise<void> | void;
+   *  something else — or GROUPED by something else — so the drag lands on the
+   *  list in front of the reader.
+   *
+   *  ARRIBADA FIX: may now return the sequence it froze, and the sort_order it
+   *  gave each id. React has not re-rendered by the time the drop runs, so the
+   *  `blockIds` prop is still the grouped list and the store still holds the
+   *  pre-freeze sort orders. See `@/plane-web/components/gantt-chart/reorder`. */
+  onReorderStart?: () => Promise<TReorderStart | void> | TReorderStart | void;
   enableAddBlock?: boolean | ((blockId: string) => boolean);
   enableSelection?: boolean | ((blockId: string) => boolean);
   enableDependency?: boolean | ((blockId: string) => boolean);

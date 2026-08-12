@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  FileSpreadsheet,
   Filter,
   Flag,
   Folder,
@@ -21,24 +22,43 @@ import {
   MoreHorizontal,
   Route,
   SlidersHorizontal,
+  Table2,
   Wand2,
   X,
 } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
+import { criticalPathMessage } from "@/plane-web/components/gantt-chart/critical-path-banner";
+// The same "what day is it here" the exporters stamp inside the file with, so a
+// filename and the provenance line it wraps can never name different days.
+import { todayIso } from "@/plane-web/components/gantt-chart/export";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TPortfolioColorBy, TPortfolioProject, TPortfolioSortBy } from "@/plane-web/types/arribada";
+import type { TPortfolioProject, TPortfolioSortBy } from "@/plane-web/types/arribada";
 import { CloneProjectModal } from "./clone-project-modal";
-import { buildPortfolioSvg, downloadPng, downloadSvg } from "./export";
+import { ganttDisplay } from "@/plane-web/store/gantt-display";
+import { isProjectDone, PORTFOLIO_COLOR_OPTIONS } from "./color";
+import { projectColor } from "./colors";
+import { PORTFOLIO_GROUP_OPTIONS, subgroupOptionsFor } from "./grouping";
+import {
+  buildPortfolioCsv,
+  buildPortfolioSvg,
+  buildPortfolioWorkbook,
+  downloadPng,
+  downloadPortfolioCsv,
+  downloadPortfolioWorkbook,
+  downloadSvg,
+  portfolioMeta,
+  portfolioRows,
+  type TPortfolioScope,
+} from "./export";
 import { PublishedLinksModal } from "./published-links-modal";
 import { UndatedItemsModal } from "./undated-items-modal";
 
-const COLOR_OPTIONS: { value: TPortfolioColorBy; label: string }[] = [
-  { value: "project", label: "Project" },
-  { value: "priority", label: "Priority" },
-];
+/** Same axes, same words, as the work-item timeline's own Colour control and as
+ *  this board's Subgroup control — see portfolio/color.ts. */
+const COLOR_OPTIONS = PORTFOLIO_COLOR_OPTIONS;
 
 const SORT_OPTIONS: { value: TPortfolioSortBy; label: string }[] = [
   { value: "start_date", label: "Start date" },
@@ -97,17 +117,94 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
   const toggle = (m: TMenu) => setOpenMenu((v) => (v === m ? null : m));
   const close = () => setOpenMenu(null);
 
+  /**
+   * The day this file was made, in the READER's calendar.
+   *
+   * Was `new Date().toISOString().slice(0, 10)`, which reads an instant back in
+   * Greenwich's calendar: at UTC+12 the whole local morning named the file for
+   * yesterday, so `portfolio-2026-08-12.xlsx` was downloaded on the 13th and
+   * landed next to a PDF whose own footer said the 13th. `todayIso` is the one
+   * the exporters stamp the provenance line with, so the filename and the line
+   * inside the file are now the same day by construction.
+   */
+  const stampToday = () => todayIso();
+
   const exportTimeline = async (format: "png" | "svg") => {
-    const displayed = portfolio.allProjects.filter((p) => portfolio.displayedProjectIds.includes(p.id));
-    const svg = buildPortfolioSvg(displayed.length ? displayed : portfolio.allProjects);
-    if (!svg) return;
-    const stamp = new Date().toISOString().slice(0, 10);
+    // In the board's own order, not the order the API happened to answer in. The
+    // picture and the screen were sorted differently, which is half of why an
+    // export did not look like what it was taken from.
+    const displayed = portfolio.sortedProjectIds
+      .map((id) => portfolio.getProject(id))
+      .filter((p): p is TPortfolioProject => !!p);
+    /**
+     * The picture carries the view it was taken from, not just its bars: how the
+     * board is banded, what the colour means, what was filtered out, and a
+     * legend. A recipient who was not in the room has no other way to learn that
+     * the teal ones are Ruby's, and an export that silently drops what the
+     * reader was looking at is the defect being reported.
+     */
+    const svg = buildPortfolioSvg(displayed.length ? displayed : portfolio.allProjects, "Portfolio timeline", {
+      meta: {
+        // The same provenance block the spreadsheets carry — one source, so the
+        // picture and the workbook cannot describe the same export differently.
+        // Only the three that are machine values there are respelled here, in the
+        // words the toolbar itself uses.
+        ...portfolioMeta(portfolio, "view", []),
+        groupBy: PORTFOLIO_GROUP_OPTIONS.find((o) => o.value === portfolio.groupBy)?.label,
+        colorBy: PORTFOLIO_COLOR_OPTIONS.find((o) => o.value === portfolio.colorBy)?.label,
+        sortBy: SORT_OPTIONS.find((o) => o.value === portfolio.sortBy)?.label,
+        omissions: [
+          // The picture is one row per project. Expanding a project shows its work
+          // items on screen and they are not drawn here — say so rather than let a
+          // reader assume the project is empty.
+          ...(portfolio.expandedProjectIds.size > 0 ? ["the work items inside an expanded project"] : []),
+          "float, state and effort — a picture answers when, not how much",
+        ],
+      },
+      // Project bars only, so the scale never has to answer for a work item.
+      colorOf: (id) => (portfolio.colorBy === "project" ? projectColor(id) : undefined),
+      doneOf: (id) => ganttDisplay.showCompleted && isProjectDone(portfolio.getProject(id)),
+    });
+    if (!svg) {
+      setToast({
+        type: TOAST_TYPE.WARNING,
+        title: "Nothing to draw",
+        message: "None of the projects on this board have both a start and an end date.",
+      });
+      return;
+    }
+    const stamp = stampToday();
     try {
       if (format === "svg") downloadSvg(svg, `portfolio-${stamp}.svg`);
       else await downloadPng(svg, `portfolio-${stamp}.png`);
     } catch {
       if (format === "png") downloadSvg(svg, `portfolio-${stamp}.svg`);
     }
+  };
+
+  /**
+   * The board as a table.
+   *
+   * "This view" walks the board's own row list, so a folded project is a folded
+   * project in the file and an expanded one brings its work items — which is
+   * what "ça doit exporter avec la vue configurée dans le navigateur" asks for.
+   * "Everything" gives one row per project in scope regardless. Either way the
+   * arrangement, the filters and what was left out ride along inside the file.
+   */
+  const exportTable = (format: "csv" | "xlsx", scope: TPortfolioScope) => {
+    const { rows, collapsedProjects } = portfolioRows(portfolio, scope);
+    if (rows.length === 0) {
+      setToast({
+        type: TOAST_TYPE.WARNING,
+        title: "Nothing to export",
+        message: "This board has no projects in scope. Pick some under Projects and try again.",
+      });
+      return;
+    }
+    const meta = portfolioMeta(portfolio, scope, collapsedProjects);
+    const name = `portfolio-${stampToday()}${scope === "all" ? "-full" : ""}`;
+    if (format === "csv") downloadPortfolioCsv(buildPortfolioCsv(rows, meta), `${name}.csv`);
+    else downloadPortfolioWorkbook(buildPortfolioWorkbook(rows, meta), `${name}.xlsx`);
   };
 
   // Both bulk actions act on scopedProjectIds, NOT displayedProjectIds: the timeline
@@ -129,7 +226,11 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       count === 1
         ? "Name this snapshot of the plan."
         : `Name this snapshot. It will be taken for all ${count} projects in scope.`,
-      `Baseline ${new Date().toISOString().slice(0, 10)}`
+      // The reader's day, not Greenwich's: this name is what a funder is later
+      // shown to identify WHICH plan was frozen, and a snapshot taken on the 13th
+      // called "Baseline 2026-08-12" is a snapshot nobody can line up with a
+      // meeting. Same helper as the filename stamp, so the two agree.
+      `Baseline ${stampToday()}`
     );
     if (name === null) return;
 
@@ -143,12 +244,19 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         portfolio.scopedProjectIds.map((id) => service.captureBaseline(workspaceSlug.toString(), id, name.trim()))
       );
       const failed = failedProjects(outcomes, portfolio.scopedProjectIds, portfolio);
+      // The drift badge beside every project name is computed from the baseline
+      // fields on the row, and the snapshot that was just taken replaced them.
+      // Without this the board went on reporting drift against the PREVIOUS
+      // baseline — a number a funder is shown — until the page was reloaded.
+      const refreshed = await portfolio.refreshLoaded(workspaceSlug.toString());
       if (failed.length === 0) {
         setCapturedAt(new Date().toLocaleTimeString());
         setToast({
           type: TOAST_TYPE.SUCCESS,
           title: `"${name.trim()}" captured`,
-          message: `${count} project${count === 1 ? "" : "s"} snapshotted.`,
+          message: refreshed
+            ? `${count} project${count === 1 ? "" : "s"} snapshotted.`
+            : `${count} project${count === 1 ? "" : "s"} snapshotted. The board couldn't be refreshed, so the drift shown is still measured against the previous baseline — reload the page.`,
         });
       } else {
         setToast({
@@ -178,12 +286,19 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
       );
       setReflowResult(moved);
       const failed = failedProjects(outcomes, scope, portfolio);
+      // The reflow moved work items, so the expanded projects' task bars are as
+      // stale as the project windows. fetchPortfolio only reloaded the latter —
+      // and rebuilt displayedProjectIds while it was there, which force-flipped
+      // the sort to "manual" and visibly reshuffled the board under the reader.
+      const refreshed = await portfolio.refreshLoaded(workspaceSlug.toString());
       setToast(
         failed.length === 0
           ? {
               type: TOAST_TYPE.SUCCESS,
               title: moved > 0 ? `Moved ${moved} work item${moved === 1 ? "" : "s"}` : "Nothing needed moving",
-              message: `Across ${scope.length} project${scope.length === 1 ? "" : "s"}.`,
+              message: refreshed
+                ? `Across ${scope.length} project${scope.length === 1 ? "" : "s"}.`
+                : `Across ${scope.length} project${scope.length === 1 ? "" : "s"}. The board couldn't be refreshed, so it may still show the old dates — reload the page.`,
             }
           : {
               type: TOAST_TYPE.ERROR,
@@ -191,7 +306,6 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
               message: `${failed.join(", ")} kept their dates. ${moved} work item${moved === 1 ? " was" : "s were"} moved elsewhere.`,
             }
       );
-      await portfolio.fetchPortfolio(workspaceSlug.toString());
     } finally {
       setReflowing(false);
     }
@@ -372,23 +486,48 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
             <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5">
               <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Colour by</div>
-              <div className="mb-2 flex gap-1 px-1">
-                {COLOR_OPTIONS.map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => portfolio.setColorBy(o.value)}
+              {/* A radio list rather than the old pill row: seven axes will not
+                  sit side by side in a 224px menu, and the list is the shape the
+                  Order and Group sections already use. */}
+              {COLOR_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => portfolio.setColorBy(o.value)}
+                  title={o.hint}
+                  className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                >
+                  <span
                     className={cn(
-                      "flex-1 rounded px-2 py-1 text-12",
-                      portfolio.colorBy === o.value
-                        ? "bg-accent-primary/10 font-medium text-accent-primary"
-                        : "text-secondary hover:bg-layer-2"
+                      "size-3 flex-shrink-0 rounded-full border",
+                      portfolio.colorBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle"
                     )}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
+                  />
+                  {o.label}
+                </button>
+              ))}
+              {/* Done-ness is a STATE, not a seventh series — a hatch and a tick,
+                  never its own hue. Off is a real answer: a board being read for
+                  what is LEFT wants the finished bars to stop shouting. The
+                  preference lives on the shared gantt display store, so the two
+                  timelines cannot disagree about whether the hatch is on. */}
+              <button
+                type="button"
+                onClick={() => ganttDisplay.setShowCompleted(!ganttDisplay.showCompleted)}
+                title="Hatch finished work and mark it with a tick, so what is done reads at a glance"
+                className="mt-1 flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+              >
+                <span
+                  className={cn(
+                    "flex size-4 flex-shrink-0 items-center justify-center rounded border",
+                    ganttDisplay.showCompleted ? "border-accent-strong bg-accent-primary text-white" : "border-subtle"
+                  )}
+                >
+                  {ganttDisplay.showCompleted && <Check className="size-3" />}
+                </span>
+                Show finished work
+              </button>
+              <div className="my-1.5 h-px bg-layer-2" />
               <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Order by</div>
               {SORT_OPTIONS.map((o) => (
                 <button
@@ -404,23 +543,77 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                     )}
                   />
                   {o.label}
+                  {/* Where a manual order came from, when a drag made it. The bands
+                      and the sort are gone and the rows did not move — saying so is
+                      the difference between a feature and the board misbehaving. */}
+                  {o.value === "manual" && portfolio.manualFrom && portfolio.sortBy === "manual" && (
+                    <span className="ml-auto text-11 text-tertiary">from {portfolio.manualFrom}</span>
+                  )}
                 </button>
               ))}
               <div className="mt-1.5 border-t border-subtle pt-1.5">
+                {/* Two levels, over two different kinds of row. The group axis is
+                    what a PROJECT has; the subgroup axis is what a WORK ITEM has,
+                    in the work-item timeline's own words. See the reasoning in
+                    portfolio/grouping.ts — offering "group by priority" over
+                    project rows would offer a field projects do not have. */}
+                <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Group</div>
+                {PORTFOLIO_GROUP_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => portfolio.setGroupBy(o.value)}
+                    title={o.hint}
+                    className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                  >
+                    <span
+                      className={cn(
+                        "size-3 flex-shrink-0 rounded-full border",
+                        portfolio.groupBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle"
+                      )}
+                    />
+                    {o.label}
+                  </button>
+                ))}
+
+                <div className="mt-1.5 mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">
+                  Subgroup
+                  <span className="ml-1 text-tertiary normal-case">— inside each project</span>
+                </div>
+                {subgroupOptionsFor(portfolio.groupBy).map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => portfolio.setSubgroupBy(o.value)}
+                    title={o.hint}
+                    className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
+                  >
+                    <span
+                      className={cn(
+                        "size-3 flex-shrink-0 rounded-full border",
+                        portfolio.subgroupBy === o.value ? "border-accent-strong bg-accent-primary" : "border-subtle"
+                      )}
+                    />
+                    {o.label}
+                  </button>
+                ))}
+                {/* On by default. A project's work items are mostly parents with a
+                    couple of sub-tasks each, and drawn flat under the project they
+                    read as a list three times the length of the plan. */}
                 <button
                   type="button"
-                  onClick={() => portfolio.setGroupByFolder(!portfolio.groupByFolder)}
+                  onClick={() => portfolio.setNestSubtasks(!portfolio.nestSubtasks)}
                   className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
                 >
                   <span
                     className={cn(
                       "flex size-4 items-center justify-center rounded border",
-                      portfolio.groupByFolder ? "border-accent-strong bg-accent-primary text-white" : "border-subtle"
+                      portfolio.nestSubtasks ? "border-accent-strong bg-accent-primary text-white" : "border-subtle"
                     )}
                   >
-                    {portfolio.groupByFolder && <Check className="size-3" />}
+                    {portfolio.nestSubtasks && <Check className="size-3" />}
                   </span>
-                  Group by folder
+                  Nest sub-tasks
                 </button>
                 {/* Grouping by folders that could not be read draws every project
                     ungrouped — indistinguishable from a workspace that has none. */}
@@ -553,14 +746,53 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 Published links
               </button>
               <div className="my-1 h-px bg-layer-2" />
-              <div className="px-2 py-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
-                Export timeline
-              </div>
+              <div className="px-2 py-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">Export</div>
+              {/* The spreadsheets first. A picture answers "when"; a funder,
+                  a grant report and a planning meeting all want rows. */}
               <button
                 type="button"
                 onClick={() => {
                   close();
-                  exportTimeline("png");
+                  exportTable("xlsx", "view");
+                }}
+                title="One row per project, plus the work items of every project you have expanded"
+                className={menuRow}
+              >
+                <Table2 className="size-3.5 text-secondary" />
+                <span>
+                  Excel — this view
+                  <span className="block text-11 text-tertiary">Folders, order and expansions as on screen</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  exportTable("csv", "view");
+                }}
+                className={menuRow}
+              >
+                <FileSpreadsheet className="size-3.5 text-secondary" />
+                CSV — this view
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  exportTable("xlsx", "all");
+                }}
+                title="One row per project in scope, whatever is folded"
+                className={menuRow}
+              >
+                <Table2 className="size-3.5 text-secondary" />
+                Excel — every project
+              </button>
+              <div className="my-1 h-px bg-layer-2" />
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  void exportTimeline("png");
                 }}
                 className={menuRow}
               >
@@ -571,7 +803,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 type="button"
                 onClick={() => {
                   close();
-                  exportTimeline("svg");
+                  void exportTimeline("svg");
                 }}
                 className={menuRow}
               >
@@ -619,9 +851,18 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           <span className="flex items-center gap-1.5">
             <span className="bg-neutral-400 inline-block h-[2px] w-4 rounded" /> In-project link
           </span>
-          {portfolio.crossEdges.length === 0 && (
-            <span className="text-warning-primary">
-              No task dependencies yet — add “blocked by” links between tasks to see the critical path.
+          {/* The sentence, from the server's own counts. The old hint fired on
+              `crossEdges.length === 0` and said one thing for four different
+              situations — and said nothing at all in the case that most needed
+              it, where the chain was empty but some links did exist. */}
+          {portfolio.criticalDiagnostics && (
+            <span
+              className={cn({
+                "text-warning-primary":
+                  criticalPathMessage(portfolio.criticalDiagnostics, portfolio.criticalIssueIds.size).tone === "warn",
+              })}
+            >
+              {criticalPathMessage(portfolio.criticalDiagnostics, portfolio.criticalIssueIds.size).text}
             </span>
           )}
         </div>

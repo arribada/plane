@@ -17,10 +17,12 @@ import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import { BLOCK_HEIGHT } from "@/components/gantt-chart/constants";
 import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { useWorkspaceHolidays } from "../use-workspace-holidays";
+import { routeDependency } from "../dependency/routing";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { getBaselineShared } from "../baseline-request";
+import { clearShownBaseline, publishShownBaseline } from "../baseline-shown";
 
 type Props = {
   itemsContainerWidth: number;
@@ -64,6 +66,8 @@ const DependencyArrows: FC<{ blockIds: string[] }> = observer(function Dependenc
     path: string;
     hx: number;
     hy: number;
+    /** +1 when the arrow arrives travelling rightwards; the head is mirrored for -1. */
+    hdir: 1 | -1;
     color: string;
     width: number;
     dash?: string;
@@ -80,28 +84,34 @@ const DependencyArrows: FC<{ blockIds: string[] }> = observer(function Dependenc
     const ba = store.getBlockById(e.from);
     const bb = store.getBlockById(e.to);
     if (!ba?.position || !bb?.position) continue;
-    const x1 = ba.position.marginLeft + (ba.position.width ?? 0); // predecessor end
-    const x2 = bb.position.marginLeft; // successor start
-    const y1 = ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-    const y2 = ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
-    // Rounded elbow: drop just before the successor's start, then arrive pointing
-    // into it. Square corners at this density read as a circuit diagram.
-    const midx = Math.max(x1 + 8, x2 - 10);
-    const r = Math.min(5, Math.abs(y2 - y1) / 2, Math.max(0, midx - x1));
-    const down = y2 >= y1 ? 1 : -1;
-    const path =
-      r > 1
-        ? `M ${x1} ${y1} H ${midx - r} a ${r} ${r} 0 0 ${down > 0 ? 1 : 0} ${r} ${down * r} V ${y2 - down * r} a ${r} ${r} 0 0 ${down > 0 ? 0 : 1} ${r} ${down * r} H ${x2}`
-        : `M ${x1} ${y1} H ${midx} V ${y2} H ${x2}`;
+    // Shared with the per-project chart. This used to be its own copy of the
+    // elbow arithmetic, complete with its own copy of the short-gap defect:
+    // `Math.max(x1 + 8, x2 - 10)` puts the drop to the RIGHT of the successor's
+    // start whenever the two are less than 18px apart, so the arrow ran back
+    // under the bar it was pointing at.
+    const arrow = routeDependency(
+      {
+        left: ba.position.marginLeft,
+        right: ba.position.marginLeft + (ba.position.width ?? 0),
+        y: ia * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
+      },
+      {
+        left: bb.position.marginLeft,
+        right: bb.position.marginLeft + (bb.position.width ?? 0),
+        y: ib * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
+      },
+      BLOCK_HEIGHT
+    );
     // Red is the critical chain and nothing else; a cross-project link is dashed
     // because crossing a project boundary is a fact about the link, not a severity.
     const highlighted = portfolio.showCriticalPath && e.critical;
     const related = active === e.from || active === e.to;
     const color = highlighted ? "#ef4444" : e.cross_project ? "#8b5cf6" : "#94a3b8";
     arrows.push({
-      path,
-      hx: x2,
-      hy: y2,
+      path: arrow.d,
+      hx: arrow.endX,
+      hy: arrow.endY,
+      hdir: arrow.dir,
       color,
       width: highlighted ? 2 : related ? 1.75 : 1,
       dash: e.cross_project && !highlighted ? "4 2" : undefined,
@@ -124,7 +134,9 @@ const DependencyArrows: FC<{ blockIds: string[] }> = observer(function Dependenc
           style={{ transition: "opacity .12s" }}
         >
           <path d={a.path} fill="none" stroke={a.color} strokeWidth={a.width} strokeDasharray={a.dash} />
-          <path d={`M ${a.hx} ${a.hy} l -5 -3 l 0 6 z`} fill={a.color} />
+          {/* Mirrored with the route. A head drawn pointing right on an arrow
+              that arrived from the right points away from the bar it means. */}
+          <path d={`M ${a.hx} ${a.hy} l ${-5 * a.hdir} -3 l 0 6 z`} fill={a.color} />
         </g>
       ))}
     </>
@@ -136,7 +148,7 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   const { workspaceSlug, projectId } = useParams();
   const store = useTimeLineChartStore();
   // Shared with the arrows, which colour the critical chain from the same answer.
-  const { byIssue: slackByIssue } = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
+  const { byIssue: slackByIssue, critical } = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
   // This overlay is shared by every gantt (issues/cycles/modules); the portfolio-only
   // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
   const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
@@ -164,6 +176,13 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
             if (r.issue_id) map[r.issue_id] = { start: r.start_date, target: r.target_date };
           }
           setBaseline(map);
+          // Published so the exporters can carry the ghosts the reader is
+          // looking at. It is deliberately written HERE and nowhere else: the
+          // rule is "the file has a baseline when, and only when, the screen was
+          // showing one". See baseline-shown.ts.
+          const chosen = payload?.selected || selectedBaseline || "";
+          const named = payload?.baselines?.find((b) => b.id === chosen) ?? payload?.baselines?.[0];
+          publishShownBaseline(ws, pid, chosen, named?.name ?? "", map);
           return undefined;
         })
         .catch(() => {
@@ -173,6 +192,10 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
           // "Baselines unavailable" chip that says the ghost bars are missing for
           // that reason rather than because nothing was ever frozen.
           if (!cancelled) setBaseline({});
+          // An empty set is a real answer, and it must clear whatever the
+          // previous snapshot left behind — otherwise an export taken after a
+          // failed read would carry the last project's ghosts.
+          clearShownBaseline(ws, pid);
         });
     }
     return () => {
@@ -218,6 +241,33 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
         y: i * BLOCK_HEIGHT + BLOCK_HEIGHT / 2,
         w: calendarDays * dayWidthForTails,
         days: info.free,
+      });
+    }
+  }
+
+  /**
+   * The critical chain, on the bars.
+   *
+   * It used to exist only as the colour of a dependency arrow — so the answer to
+   * "which work is critical" was legible as a slightly redder line between two
+   * bars, and on a project with no links there was nothing to colour at all.
+   * Outlining the bar itself is what makes the chain findable by looking at the
+   * chart rather than by knowing to look at the arrows.
+   *
+   * An outline rather than a fill: the bar's colour already carries the state or
+   * whatever colour-by is set to, and overriding it would trade one fact for
+   * another. `CriticalPathBanner` above the chart is the legend for the red.
+   */
+  const criticalBars: { x: number; y: number; w: number }[] = [];
+  if (critical.size > 0) {
+    for (let i = 0; i < blockIds.length; i++) {
+      if (!critical.has(blockIds[i])) continue;
+      const block = store.getBlockById(blockIds[i]);
+      if (!block?.position?.width) continue;
+      criticalBars.push({
+        x: block.position.marginLeft,
+        y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2,
+        w: block.position.width,
       });
     }
   }
@@ -320,6 +370,20 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
             </text>
           )}
         </g>
+      ))}
+      {criticalBars.map((bar) => (
+        <rect
+          key={`cp-${bar.x}-${bar.y}`}
+          x={bar.x - 1.5}
+          y={bar.y - 1.5}
+          width={bar.w + 3}
+          height={BAR + 3}
+          rx={4}
+          fill="none"
+          stroke="#dc2626"
+          strokeWidth={1.75}
+          opacity={0.95}
+        />
       ))}
       {typeof todayX === "number" && (
         <g>

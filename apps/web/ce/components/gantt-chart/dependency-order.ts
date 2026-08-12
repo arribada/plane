@@ -11,12 +11,7 @@
  * other. This does.
  */
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
-
-/** predecessor -> successor, matching the direction the arrows are drawn. */
-const edgeEndpoints = (rel: TIssueRelationEdge): { from: string; to: string } =>
-  rel.relation_type === "blocked_by"
-    ? { from: rel.related_issue_id, to: rel.issue_id }
-    : { from: rel.issue_id, to: rel.related_issue_id };
+import { edgeOf } from "./edges";
 
 /**
  * Kahn's algorithm, with the incoming order as the tie-break.
@@ -35,7 +30,15 @@ export const orderByDependency = (ids: string[], edges: TIssueRelationEdge[]): s
   const inDegree = new Map<string, number>(ids.map((id) => [id, 0] as const));
 
   for (const edge of edges) {
-    const { from, to } = edgeEndpoints(edge);
+    // `edges.ts` and not a local ternary. `finish_after`, `start_after` and
+    // `blocked_by` all name the SUCCESSOR first, so special-casing only
+    // `blocked_by` ordered the other two upside down — the thing a task waits on
+    // sat BELOW it. It also treated `relates_to` and `duplicate` as sequencing
+    // statements, which they are not; those are now dropped, so a plain "see also"
+    // no longer drags a row up the chart.
+    const endpoints = edgeOf(edge);
+    if (!endpoints) continue;
+    const { from, to } = endpoints;
     // Edges to rows that are filtered out or on another page are not constraints
     // on what is drawn, and counting them would leave those rows stuck at zero.
     if (!present.has(from) || !present.has(to) || from === to) continue;

@@ -23,12 +23,18 @@ type Props = {
    *  can be dropped on a band header, while reordering between rows stays off —
    *  a drop between two rows of another group has no meaning. */
   isReorderTarget?: boolean;
+  /** ARRIBADA FIX: rows only accept each other when their scopes match. Used by
+   *  sub-task nesting, where a row's position is decided among its siblings and
+   *  a drop anywhere else would write a sort_order that changes nothing on
+   *  screen. `undefined` on either side means "no scope", which is every drag
+   *  this component had before and still the default. */
+  dragScope?: string;
   children: (isDragging: boolean) => React.ReactNode;
   onDrop: (draggingBlockId: string | undefined, droppedBlockId: string | undefined, dropAtEndOfList: boolean) => void;
 };
 
 export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
-  const { id, isLastChild, children, onDrop, isDragEnabled, isReorderTarget = true } = props;
+  const { id, isLastChild, children, onDrop, isDragEnabled, isReorderTarget = true, dragScope } = props;
   // states
   const [isDragging, setIsDragging] = useState(false);
   const [instruction, setInstruction] = useState<"DRAG_OVER" | "DRAG_BELOW" | undefined>(undefined);
@@ -44,7 +50,7 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
       draggable({
         element,
         canDrag: () => isDragEnabled,
-        getInitialData: () => ({ id, dragInstanceId: "GANTT_REORDER" }),
+        getInitialData: () => ({ id, dragInstanceId: "GANTT_REORDER", dragScope }),
         onDragStart: () => {
           setIsDragging(true);
         },
@@ -55,7 +61,11 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
       dropTargetForElements({
         element,
         canDrop: ({ source }) =>
-          isReorderTarget && source?.data?.id !== id && source?.data?.dragInstanceId === "GANTT_REORDER",
+          isReorderTarget &&
+          source?.data?.id !== id &&
+          source?.data?.dragInstanceId === "GANTT_REORDER" &&
+          // ARRIBADA FIX: same-scope only, when either side declares one.
+          (source?.data?.dragScope ?? undefined) === dragScope,
         getData: ({ input, element: target }) => {
           const data = { id };
 
@@ -104,7 +114,7 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
     // runtime, and a target registered under the old value would keep accepting
     // (or refusing) drops until the row happened to remount. blockRef.current is
     // not a dependency React can track — the mount is what schedules this.
-  }, [id, isLastChild, onDrop, isDragEnabled, isReorderTarget]);
+  }, [id, isLastChild, onDrop, isDragEnabled, isReorderTarget, dragScope]);
 
   useOutsideClickDetector(blockRef, () => blockRef?.current?.classList?.remove(HIGHLIGHT_WITH_LINE));
 
@@ -118,10 +128,14 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
       ref={blockRef}
       onDragStart={() => {
         if (!isDragEnabled) {
+          // ARRIBADA FIX: this used to say "only enabled when sorted by manual",
+          // which stopped being true when the drag itself started switching the
+          // view to manual. What is left is the case it never covered: the row
+          // cannot be moved by this reader at all.
           setToast({
             title: "Warning!",
             type: TOAST_TYPE.WARNING,
-            message: "Drag and drop is only enabled when sorted by manual",
+            message: "This row cannot be moved — the plan is locked, or it is not yours to edit",
           });
         }
       }}

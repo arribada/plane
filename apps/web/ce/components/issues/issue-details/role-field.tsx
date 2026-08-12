@@ -22,6 +22,7 @@ import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/prop
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
+import { invalidateProjectDisciplines } from "@/plane-web/components/gantt-chart/use-project-disciplines";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -88,6 +89,10 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
     try {
       const saved = await service.setIssueRole(workspaceSlug, projectId, issueId, next || null);
       setRole(saved.role);
+      // The timeline can be coloured by discipline, and that map is one fetch per
+      // project cached at module scope. Nothing dropped it, so a bar kept the
+      // colour of the discipline it used to have.
+      invalidateProjectDisciplines(workspaceSlug, projectId);
       if (saved.assigned) {
         // Say so rather than letting an assignee appear on its own. A tool that
         // staffs work silently is one people stop trusting with staffing.

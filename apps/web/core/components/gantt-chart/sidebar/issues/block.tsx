@@ -19,6 +19,7 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 // local imports
 import { useParams } from "next/navigation";
 import { MilestoneToggle } from "@/plane-web/components/gantt-chart/milestone-toggle";
+import { SubtaskToggle } from "@/plane-web/components/gantt-chart/subtask-toggle";
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { BLOCK_HEIGHT, GANTT_SELECT_GROUP } from "../../constants";
 
@@ -92,6 +93,11 @@ export const IssuesSidebarBlock = observer(function IssuesSidebarBlock(props: Pr
             />
           </div>
         )}
+        {/* ARRIBADA FIX: sub-task nesting. Inside the Row rather than wrapped
+            around it, so the indent is covered by the row's own hover and
+            selection background instead of sitting outside it. Renders nothing
+            at all when nesting is off or the plan has no sub-tasks. */}
+        <SubtaskToggle blockId={block.id} />
         <div className="flex h-full flex-grow items-center justify-between gap-2 truncate">
           <div className="flex-grow truncate">
             <IssueGanttSidebarBlock issueId={block.data.id} isEpic={isEpic} />

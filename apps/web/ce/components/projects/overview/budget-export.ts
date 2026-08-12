@@ -17,6 +17,7 @@
  * that reaches the funder. The display currency and its rate travel in the header
  * rows instead, so the conversion is reproducible rather than baked in.
  */
+import { renderFormattedInstant } from "@plane/utils";
 import { cell } from "@/plane-web/components/gantt-chart/export";
 import type { TProcurementRequest, TProjectExpense } from "@/plane-web/types/arribada";
 
@@ -33,6 +34,13 @@ const CSV_HEADER = [
   "Supplier",
   "Requested by",
   "Decided by",
+  // The only INSTANT in this file. Every other date column is a DateField —
+  // a day somebody typed, which is the same day everywhere — where this one is
+  // stamped `timezone.now()` and stored as UTC. It used to go out as the raw
+  // `2026-08-13T02:30:00.123456+00:00`, which sorts and reads as the 13th
+  // beside a column of plain days, for a decision taken on the evening of the
+  // 12th by the person who exported the file. Rendered in the reader's own zone
+  // instead, and the header rows say so.
   "Decided at",
   // The two columns a reorder is actually placed from. A purchase request has
   // neither yet — it is a question, not a thing anybody has sourced — so those
@@ -70,6 +78,21 @@ export const buildBudgetCsv = (
     lines.push(
       `# The page was being read in ${context.displayCurrency} at 1 EUR = ${context.rate} GBP (${provenance}).`
     );
+  }
+  // The zone, but only when a row actually carries a moment. Every other column
+  // is a day a person typed and means the same thing to every reader; "Decided
+  // at" is a UTC instant rendered into whatever zone the machine that exported
+  // this file was in, so two people can produce two files that disagree by an
+  // hour or by a day. Said out loud, in the same rows the currency rate uses,
+  // because a timestamp with no zone on it is the kind of thing that only gets
+  // questioned during a reconciliation.
+  //
+  // Conditional so a project that has never decided a purchase request is not
+  // made to read a caveat about an empty column — the same rule the sibling
+  // exporter's legend follows: only describe what is actually in the file.
+  if (requests.some((request) => request.decided_at)) {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "this machine's local time";
+    lines.push(`# "Decided at" is a moment in time, shown in ${zone}. Every other date column is a plain day.`);
   }
   lines.push(CSV_HEADER);
 
@@ -111,7 +134,9 @@ export const buildBudgetCsv = (
         cell(request.supplier ?? ""),
         cell(request.requested_by_name ?? ""),
         cell(request.decided_by_name ?? ""),
-        cell(request.decided_at ?? ""),
+        // Day AND time kept, so nothing the column carried is dropped — only the
+        // zone it is expressed in changes, from UTC to the exporter's.
+        cell(renderFormattedInstant(request.decided_at, "yyyy-MM-dd HH:mm") ?? ""),
         cell(""),
         cell(""),
         cell(request.decision_note ?? request.justification ?? ""),

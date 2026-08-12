@@ -23,6 +23,7 @@
  * never a measurement of the header DOM) is untouched.
  */
 import { months } from "@/components/gantt-chart/data";
+import { localEpochDay } from "./working-days";
 
 /* -------------------------------------------------------------------------- */
 /* text measurement                                                           */
@@ -126,9 +127,13 @@ export const dayNumberStep = (dayWidth: number | undefined): number => {
 };
 
 /** Whole days since the epoch, from the local calendar date. DST-proof, and it
- *  does not mutate the Date it is handed the way the chart's own helpers do. */
-const dayNumber = (date: Date): number =>
-  Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+ *  does not mutate the Date it is handed the way the chart's own helpers do.
+ *
+ *  This file worked out the right form independently and then kept its own copy;
+ *  the copy is now `localEpochDay` in working-days.ts, which is the one place this
+ *  fork does day arithmetic. Two correct implementations of the same rule are one
+ *  edit away from being one correct and one wrong. */
+const dayNumber = localEpochDay;
 
 /**
  * Whether this day gets a number at the given step.

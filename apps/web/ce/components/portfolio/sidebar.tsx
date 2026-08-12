@@ -28,6 +28,7 @@ import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatusUpdate } from "@/plane-web/types/arribada";
 import { baselineDrift, projectColor, projectHealth } from "./colors";
+import { INDENT_CAP_LEVELS } from "./grouping";
 import { ProjectStatusModal, STATUS_META } from "./project-status-modal";
 import { UndatedItemsModal } from "./undated-items-modal";
 
@@ -59,12 +60,19 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
   const { setPeekIssue } = useIssueDetail();
   const isProject = portfolio.isProjectRow(blockId);
   const folder = portfolio.getFolderRow(blockId);
+  const subgroup = portfolio.getSubgroupRow(blockId);
   const project = portfolio.getProject(blockId);
   const item = portfolio.getItem(blockId);
   const isExpanded = portfolio.expandedProjectIds.has(blockId);
-  // Only drag in manual mode: under a date/name sort the visible order differs from
-  // displayedProjectIds, so a drop would reshuffle into an order the user never saw.
-  const canDrag = isProject && portfolio.sortBy === "manual";
+  // Draggable under any sort and any grouping. It used to be manual-only, because
+  // a drop wrote into `displayedProjectIds` — an order nobody was looking at — and
+  // the whole board jumped. `moveProject` now takes the visible sequence as the
+  // order and applies the move to that, so the drag can just be offered.
+  const canDrag = isProject;
+  const subtaskNode = portfolio.nestSubtasks ? portfolio.itemSubtaskTree.byId.get(blockId) : undefined;
+  const subtaskDepth = subtaskNode?.depth ?? 0;
+  const subtaskChildren = subtaskNode?.childIds.length ?? 0;
+  const itemCollapsed = portfolio.isItemCollapsed(blockId);
 
   return (
     <div
@@ -101,7 +109,9 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
             <span className="truncate text-13 font-semibold tracking-wide text-primary uppercase">{folder.name}</span>
             <span className="rounded bg-layer-2 px-1.5 text-11 text-secondary">{folder.projectCount}</span>
           </button>
-          {blockId !== "__folder__:none" && (
+          {/* Only a real folder can be focused. A status band is a view of a
+              field, and there is no URL that means "the portfolio, off track". */}
+          {blockId.startsWith("__folder__:") && blockId !== "__folder__:none" && (
             <button
               type="button"
               title="Open only this folder"
@@ -115,6 +125,32 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
             </button>
           )}
         </div>
+      ) : subgroup ? (
+        // A band INSIDE one project. Deliberately quieter than the folder header
+        // above it — indented one step, sentence case, a hairline rather than a
+        // filled band — so two levels of banding read as two levels rather than
+        // as two competing headers. See the indent scheme in portfolio/grouping.ts.
+        <button
+          type="button"
+          onClick={() => portfolio.toggleSubgroupCollapse(blockId)}
+          aria-expanded={!subgroup.collapsed}
+          className="flex h-full w-full items-center gap-1.5 border-b-[0.5px] border-subtle bg-layer-2/25 pr-2 pl-3 text-left"
+        >
+          {subgroup.collapsed ? (
+            <ChevronRight className="size-3.5 flex-shrink-0 text-tertiary" />
+          ) : (
+            <ChevronDown className="size-3.5 flex-shrink-0 text-tertiary" />
+          )}
+          {subgroup.color && (
+            <span
+              className="size-2 flex-shrink-0 rounded-full"
+              style={{ backgroundColor: subgroup.color }}
+              aria-hidden
+            />
+          )}
+          <span className="truncate text-12 font-medium text-secondary">{subgroup.label}</span>
+          <span className="flex-shrink-0 rounded-full bg-layer-1 px-1.5 text-11 text-tertiary">{subgroup.count}</span>
+        </button>
       ) : isProject ? (
         <>
           <GripVertical
@@ -238,18 +274,50 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
           )}
         </>
       ) : (
-        <button
-          type="button"
-          // TPortfolioItem carries no project_id — the owner has to come from the store
-          onClick={() => {
-            const projectId = portfolio.getRowProjectId(blockId);
-            if (workspaceSlug && projectId)
-              setPeekIssue({ workspaceSlug: workspaceSlug.toString(), projectId, issueId: blockId });
-          }}
-          className="flex flex-grow items-center gap-2 truncate pl-8 text-left"
-        >
-          <span className="flex-grow truncate text-13 text-secondary hover:text-primary">{item?.name}</span>
-        </button>
+        <>
+          {/* Sub-task nesting. A portfolio row is already one level in (under its
+              project), so the depth from the tree is added to that indent rather
+              than replacing it. */}
+          <span
+            className="flex flex-shrink-0 items-center"
+            // The indent scheme, written out in portfolio/grouping.ts: an item
+            // sits one step in from its project, one more when there is a
+            // subgroup band above it, and one per level of parent nesting —
+            // capped, because past four levels an indent stops being an indent
+            // and starts being a margin.
+            style={{
+              paddingLeft: `${(portfolio.subgroupBy === "none" ? 8 : 22) + Math.min(subtaskDepth, INDENT_CAP_LEVELS) * 14}px`,
+            }}
+          >
+            {subtaskChildren > 0 ? (
+              <button
+                type="button"
+                onClick={() => portfolio.toggleItemCollapsed(blockId)}
+                aria-expanded={!itemCollapsed}
+                aria-label={itemCollapsed ? `Show ${subtaskChildren} sub-tasks` : `Hide ${subtaskChildren} sub-tasks`}
+                title={`${subtaskChildren} sub-task${subtaskChildren > 1 ? "s" : ""}`}
+                className="relative flex size-4 items-center justify-center rounded text-tertiary after:absolute after:-inset-2 after:content-[''] hover:bg-layer-1 hover:text-secondary"
+              >
+                {itemCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+              </button>
+            ) : (
+              // The chevron's width, so a leaf's title lines up with its siblings'.
+              <span className="size-4" />
+            )}
+          </span>
+          <button
+            type="button"
+            // TPortfolioItem carries no project_id — the owner has to come from the store
+            onClick={() => {
+              const projectId = portfolio.getRowProjectId(blockId);
+              if (workspaceSlug && projectId)
+                setPeekIssue({ workspaceSlug: workspaceSlug.toString(), projectId, issueId: blockId });
+            }}
+            className="flex flex-grow items-center gap-2 truncate text-left"
+          >
+            <span className="flex-grow truncate text-13 text-secondary hover:text-primary">{item?.name}</span>
+          </button>
+        </>
       )}
     </div>
   );
@@ -272,6 +340,12 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
       .getWorkspaceStatuses(workspaceSlug.toString())
       .then((r) => {
         setStatuses(r || {});
+        // The store needs them too: "group by status" is a band over project
+        // rows, and the row list is a store getter. Pushed rather than fetched
+        // twice — this component was already the only caller.
+        portfolio.setProjectStatuses(
+          Object.fromEntries(Object.entries(r || {}).map(([id, value]) => [id, value.status]))
+        );
         setStatusesFailed(false);
         return undefined;
       })
@@ -282,6 +356,10 @@ export const PortfolioSidebar = observer(function PortfolioSidebar({ blockIds }:
         setStatuses({});
         setStatusesFailed(true);
       });
+    // `portfolio` is the MobX store — one object for the life of the app, only
+    // written to here. Listing it would not change when this runs and would
+    // suggest it might.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [workspaceSlug, service]);
 
   const statusProjectName = statusProjectId ? portfolio.getProject(statusProjectId)?.name : undefined;

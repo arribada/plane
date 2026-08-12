@@ -6,6 +6,7 @@
 
 import type { ChartDataType, IGanttBlock } from "@plane/types";
 import { addDaysToDate, findTotalDaysInRange, getDate } from "@plane/utils";
+import { localEpochDay, localWeekday } from "@/plane-web/components/gantt-chart/working-days";
 import { DEFAULT_BLOCK_WIDTH } from "../constants";
 
 /**
@@ -31,19 +32,30 @@ export const getNumberOfDaysInMonth = (month: number, year: number) => {
 
 /**
  * Returns week number from date
+ *
+ * Counted in whole CALENDAR days, via `working-days.ts`, and not by dividing a
+ * span of milliseconds. The original did the latter, and a millisecond span is not
+ * a multiple of a day once a clock change falls inside it: from the spring change
+ * in late March to the autumn one in late October, the elapsed time since the
+ * year's first week start is one hour short of a whole number of weeks, the
+ * quotient lands just under the boundary, and `Math.floor` gives the PREVIOUS
+ * week. The ruler above the chart therefore read one too low for seven months of
+ * every year, for every reader whose zone observes summer time.
+ *
+ * The week rule itself is unchanged and is upstream's: weeks start on Sunday, and
+ * week 1 is the one containing 1 January.
+ *
  * @param date
  * @returns
  */
 export const getWeekNumberByDate = (date: Date) => {
   const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-  const daysOffset = firstDayOfYear.getDay();
 
-  const firstWeekStart = firstDayOfYear.getTime() - daysOffset * 24 * 60 * 60 * 1000;
-  const weekStart = new Date(firstWeekStart);
+  // Back up from 1 January to the Sunday that starts its week. Both operands are
+  // integer day counts, so this is exact.
+  const firstWeekStart = localEpochDay(firstDayOfYear) - localWeekday(firstDayOfYear);
 
-  const weekNumber = Math.floor((date.getTime() - weekStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
-
-  return weekNumber;
+  return Math.floor((localEpochDay(date) - firstWeekStart) / 7) + 1;
 };
 
 /**
@@ -75,8 +87,9 @@ export const getDateFromPositionOnGantt = (position: number, chartData: ChartDat
 
   const newDate = addDaysToDate(chartData.data.startDate, numberOfDaysSinceStart);
 
-  if (!newDate) undefined;
-
+  // (Removed a bare `if (!newDate) undefined;` that evaluated an expression and
+  // threw it away. It read as a guard and was not one — the function already
+  // returns `newDate` on the next line, undefined included.)
   return newDate;
 };
 
@@ -110,7 +123,16 @@ export const getItemPositionWidth = (chartData: ChartDataType, itemData: IGanttB
   if (itemStartDate && itemTargetDate) {
     // get width of block
     const widthTimeDifference: number = itemStartDate.getTime() - itemTargetDate.getTime();
-    const widthDaysDifference: number = Math.abs(Math.floor(widthTimeDifference / (1000 * 60 * 60 * 24)));
+    // ROUNDED, never floored. Both operands are LOCAL midnight, so the quotient is
+    // a whole number of days only when no clock change falls inside the span. Across
+    // an autumn fall-back the day is 25 hours long and the quotient is -10.0417 for
+    // an eleven-column bar; `Math.floor` rounds away from zero to -11 and the bar is
+    // drawn one column too wide. That width is not cosmetic — `getUpdatedPositionAfterDrag`
+    // turns `marginLeft + width` back into `target_date`, and `handleMouseUp` in
+    // use-gantt-resizable.ts fires it for a plain click as well as a drag, so merely
+    // opening a bar's peek used to push its target date a day later, and again on the
+    // next click, permanently. `workload/scale.ts:dayOffset` rounds for the same reason.
+    const widthDaysDifference: number = Math.abs(Math.round(widthTimeDifference / (1000 * 60 * 60 * 24)));
     scrollWidth = (widthDaysDifference + 1) * chartData.data.dayWidth;
   }
 

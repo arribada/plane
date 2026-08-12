@@ -16,7 +16,7 @@
  * caveats attached to the numbers they qualify rather than sitting in a tooltip.
  */
 import { Document, Page, StyleSheet, Text, View, pdf } from "@react-pdf/renderer";
-import { renderFormattedDate } from "@plane/utils";
+import { renderFormattedDate, renderFormattedInstant } from "@plane/utils";
 import type {
   TProcurementRequest,
   TProjectBudget,
@@ -111,8 +111,14 @@ function ReportDocument({ overview, budget, expenses, requests, milestones, mone
           <>
             <Text style={styles.section}>Where the project stands</Text>
             <Text style={styles.narrative}>{overview.status.message}</Text>
+            {/* An INSTANT, not a day: ProjectStatusUpdate.created_at is a
+                DateTimeField and arrives as a full ISO timestamp. Read as a day
+                it took the UTC date, so a status posted at 7:30pm in California
+                was attributed to the following morning — and this line is the
+                one a funder uses to judge how current the narrative above it is.
+                See renderFormattedInstant in @plane/utils. */}
             <Text style={styles.caveat}>
-              Status recorded {renderFormattedDate(overview.status.created_at)}
+              Status recorded {renderFormattedInstant(overview.status.created_at)}
               {overview.status.author ? ` by ${overview.status.author}` : ""}.
             </Text>
           </>

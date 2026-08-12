@@ -22,6 +22,11 @@ export type TPortfolioProject = {
   undated_item_count: number;
   completed_item_count: number;
   baseline_target_date: string | null;
+  /** That project's plan is frozen (`ProjectSchedule.timeline_locked`), so its bar
+   *  refuses a drag here exactly as it does on the project's own timeline.
+   *  Optional: a backend that has not been redeployed yet must read as unlocked
+   *  rather than as forbidden. */
+  timeline_locked?: boolean;
 };
 
 // A person assigned to a work item, shown as an avatar on the timeline.
@@ -38,6 +43,16 @@ export type TPortfolioItem = {
   parent_id: string | null;
   priority: "urgent" | "high" | "medium" | "low" | "none";
   assignees: TItemAssignee[];
+  /** The axes the portfolio's subgrouping bands by. Optional because an older
+   *  API — or the per-user timeline's payload — does not send them, and a missing
+   *  field must read as "not in one" rather than crashing the band. `cycle` is
+   *  Plane's field name; in this fork it is always a sprint. */
+  cycle?: { id: string; name: string } | null;
+  /** The lowest-named module the item is in. An item can be in several and can
+   *  only be drawn on one row, so the server picks the same one the work-item
+   *  timeline would. */
+  module?: { id: string; name: string } | null;
+  disciplines?: string[];
 };
 
 // One dated work item on somebody's personal timeline. It is a portfolio item that
@@ -67,12 +82,23 @@ export type TMyWorkItem = {
   project_name: string;
 };
 
-// Where a project's documentation lives: a wiki doc + a Google Drive URL.
+// One place a project's files live. The label may be empty — every link migrated
+// from the old single column has an empty one, because nobody was ever asked.
+export type TDriveLink = {
+  url: string;
+  label: string;
+};
+
+// Where a project's documentation lives: a wiki doc, the Drive folders, the chat
+// channel and the GitHub repos.
 export type TProjectDocs = {
   doc_id: string | null;
   workspace_id: string | null;
   title: string | null;
+  /** @deprecated A server-derived mirror of `google_drive_links[0].url`, kept so a
+   *  client built before the list existed still shows a link. Read the list. */
   google_drive_url: string | null;
+  google_drive_links: TDriveLink[];
   chat_url: string | null;
   github_repo_urls: string[];
 };
@@ -121,6 +147,20 @@ export type TProjectSchedule = {
   allow_edit_others?: boolean;
   /** Whether a member may add work items at all. */
   allow_add_items?: boolean;
+  /** Whether only the lead may change the plan — dates, effort estimates,
+   *  disciplines, parents, dependencies, sprint and module membership, and the
+   *  planning tools. Unlike `timeline_locked` this IS a permission, so it does
+   *  not apply to the lead or to a workspace admin. */
+  lead_only_edits?: boolean;
+  /** Whether THIS caller may change the plan — the server's own answer to
+   *  `lead_only_edits`, so a control the client draws is one the server will
+   *  serve. Never derive this from `lead_only_edits` and a roster call: two
+   *  definitions of one permission drift, and the client's is the one that lies. */
+  can_edit_plan?: boolean;
+  /** Whether this caller may change WHO may change the plan. A different question
+   *  from `can_edit_plan`, and a narrower answer: the governance switches are the
+   *  lead's alone, where the plan itself also admits a workspace admin. */
+  can_set_governance?: boolean;
   id: string;
   project: string;
   start_date: string | null;
@@ -303,6 +343,29 @@ export type TPlannedTask = {
   critical?: boolean;
 };
 
+/**
+ * Why the critical path is what it is.
+ *
+ * An empty chain looks identical on the chart whatever the cause — nothing
+ * dated, nothing linked, everything linked in a loop — and a chart that draws
+ * nothing reads as a feature that does nothing. That is exactly how it was
+ * reported. These counts are what the banner and the portfolio legend turn into
+ * a sentence; `status` is an enum because the wording belongs on the screen that
+ * knows whose screen it is, not in the API.
+ */
+export type TCriticalPathDiagnostics = {
+  status: "ok" | "no_dependencies" | "dependencies_undated" | "cycles_only" | "no_dated_items";
+  dated_count: number;
+  undated_count: number;
+  /** Sequencing links that exist at all. */
+  relation_count: number;
+  /** …and the ones both of whose ends are dated, so the chart can use them. */
+  usable_relation_count: number;
+  linked_count: number;
+  cycle_count: number;
+  critical_count: number;
+};
+
 // Someone the plan may hand a task to: a roster entry with a Plane account that
 // the project would actually accept as an assignee.
 export type TPlanPerson = {
@@ -365,7 +428,16 @@ export type TAiDraft = {
   model: string;
 };
 
-export type TPortfolioColorBy = "project" | "priority";
+/**
+ * What the portfolio's bars are coloured by.
+ *
+ * `project` and `priority` are the two this board shipped with. The rest are the
+ * work-item timeline's own axes, in the work-item timeline's own words — `cycle`
+ * stays Plane's field name and is spelled "Sprint" everywhere a reader can see
+ * it. Sharing the vocabulary is the point: a board grouped by module and
+ * coloured by module must not offer two different lists of modules.
+ */
+export type TPortfolioColorBy = "project" | "state" | "priority" | "assignee" | "cycle" | "module" | "discipline";
 export type TPortfolioSortBy = "start_date" | "target_date" | "name" | "undated" | "manual";
 
 // A raw dependency edge between two issues. relation_type is kept as a plain

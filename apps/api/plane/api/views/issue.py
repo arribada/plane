@@ -84,7 +84,7 @@ from plane.bgtasks.storage_metadata_task import get_asset_object_metadata
 from .base import BaseAPIView
 from plane.utils.host import base_host
 from plane.utils.issue_relation_mapper import get_actual_relation
-from plane.bgtasks.webhook_task import model_activity
+from plane.bgtasks.webhook_task import model_activity, webhook_activity  # ARRIBADA FIX: issue.deleted
 from plane.app.permissions import ROLE
 from plane.utils.openapi import (
     work_item_docs,
@@ -872,6 +872,26 @@ class IssueDetailAPIEndpoint(BaseAPIView):
             project_id=str(project_id),
             current_instance=current_instance,
             epoch=int(timezone.now().timestamp()),
+        )
+        # ARRIBADA FIX: emit the `issue` / `deleted` webhook. `issue_activity` above writes
+        # the in-app activity feed and notifications; it does NOT reach subscribers outside
+        # Plane. Creates and updates get there through `model_activity`, but no delete path
+        # called anything that did — only project deletion emitted a delete webhook — so a
+        # subscriber that had been told about an item's creation and every edit was never
+        # told it had gone. For the wiki that means a page for a work item that no longer
+        # exists, kept for ever, with nothing to reconcile it against.
+        webhook_activity.delay(
+            event="issue",
+            verb="deleted",
+            field=None,
+            old_value=None,
+            new_value=None,
+            actor_id=request.user.id,
+            slug=slug,
+            current_site=base_host(request=request, is_app=True),
+            event_id=str(pk),
+            old_identifier=None,
+            new_identifier=None,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 

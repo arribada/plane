@@ -49,6 +49,10 @@ from plane.db.models import (
     IssueLabel,
     IssueAssignee,
 )
+# ARRIBADA FIX: the failure policy for a webhook endpoint, kept in our own app so that the
+# drift in this upstream file stays down to the call sites. Safe at module scope — it
+# imports no models itself (see `_health_model`), so it cannot run before the app registry.
+from plane.arribada import webhook_health
 from plane.license.utils.instance_value import get_email_configuration
 from plane.utils.email import generate_plain_text_from_html
 from plane.utils.exception_logger import log_exception
@@ -192,6 +196,14 @@ def send_webhook_deactivation_email(webhook_id: str, receiver_id: str, current_s
     """
     Send an email notification when a webhook is deactivated.
 
+    ARRIBADA FIX — this task has no caller in this fork. It was invoked from
+    `webhook_send_task` when a failing endpoint was auto-deactivated, and nothing is
+    auto-deactivated any more (see the ARRIBADA FIX in that task, and
+    `plane/arribada/webhook_health.py`). It is left in place rather than deleted: it is
+    upstream's, deleting it would widen the merge diff for no gain, and the template it
+    renders says "has been deactivated" — which would now be untrue for every case that
+    reaches it, so it is not reused for the breaker's alerts either. Those go to Zulip.
+
     Args:
         webhook_id (str): ID of the deactivated webhook
         receiver_id (str): ID of the user to receive the notification
@@ -286,7 +298,16 @@ def webhook_send_task(
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "Autopilot",
-            "X-Plane-Delivery": str(uuid.uuid4()),
+            # ARRIBADA FIX: the delivery id must be STABLE across this delivery's retries.
+            # `uuid.uuid4()` is evaluated inside the task body, which Celery re-executes on
+            # every retry, so a receiver saw a fresh id each time the same event was
+            # re-sent and had nothing to deduplicate on. Now that a non-2xx actually
+            # retries (see below), that is the difference between a retried event being
+            # applied once and being applied six times. `self.request.id` is the Celery
+            # task id, which `Task.retry` preserves across attempts and which differs
+            # between genuinely distinct deliveries — exactly the identity a delivery has.
+            # The uuid4 fallback covers an eager or direct call, where there is no request.
+            "X-Plane-Delivery": str(self.request.id or uuid.uuid4()),
             "X-Plane-Event": event,
         }
 
@@ -326,6 +347,15 @@ def webhook_send_task(
         return
 
     try:
+        # ARRIBADA FIX: do not make a request to an endpoint that is known to be failing.
+        # While the breaker is open this raises CircuitOpen (a RequestException, so it
+        # rides the retry policy already declared on this task) and the delivery waits on
+        # its normal backoff instead of adding another doomed request. One delivery per
+        # probe interval is let through to test the endpoint; a 2xx closes the breaker and
+        # everything still in its retry window goes out. See plane/arribada/webhook_health.py.
+        if not webhook_health.should_attempt(webhook):
+            raise webhook_health.CircuitOpen(f"delivery paused: {webhook.url} is not answering")
+
         # Re-validate the webhook URL at send time to prevent DNS-rebinding attacks
         validate_url(
             webhook.url,
@@ -335,6 +365,16 @@ def webhook_send_task(
 
         # Send the webhook event
         response = requests.post(webhook.url, headers=headers, json=payload, timeout=30)
+
+        # ARRIBADA FIX: a non-2xx is a FAILED delivery. Without this, `requests` returns
+        # the 500 like any other response, the log below records it as the outcome of a
+        # successful send, and the event is never retried — the receiver being broken was
+        # indistinguishable from it being fine. Raising here routes it into the same
+        # handler as a transport error, so the real status is logged once, the failure is
+        # counted, and the delivery retries. Raised BEFORE the log on purpose: the handler
+        # below reads the status off the exception's response, so there is still exactly
+        # one log row per attempt and it carries the true status rather than a flat 500.
+        response.raise_for_status()
 
         # Log the webhook request
         save_webhook_log(
@@ -348,34 +388,63 @@ def webhook_send_task(
             retry_count=self.request.retries,
             event_type=event,
         )
+        # ARRIBADA FIX: a success ends any failure streak and closes the breaker, which is
+        # what makes recovery automatic. No-op (one SELECT, no write) when nothing is wrong.
+        webhook_health.record_success(webhook)
         logger.info(f"Webhook {webhook.id} sent successfully")
+    except webhook_health.CircuitOpen as e:
+        # ARRIBADA FIX: this clause must come before the RequestException one below.
+        # A deferred attempt is not new evidence about the endpoint — the streak that
+        # opened the breaker already counted it — so it is neither logged as a delivery
+        # attempt nor counted again. The event is not dropped either: it retries on the
+        # backoff it already had.
+        logger.info(f"Webhook {webhook.id} deferred: {e}")
+        if self.request.retries >= self.max_retries:
+            return
+        raise
     except requests.RequestException as e:
+        # ARRIBADA FIX: log the REAL response when there was one. `raise_for_status` raises
+        # an HTTPError carrying its response, so a 500 from the receiver is now recorded as
+        # a 500 with the receiver's body, instead of the hardcoded 500 and stringified
+        # exception that a transport error produces. A person reading webhook logs to work
+        # out why the wiki stopped updating needs to be able to tell those two apart.
+        failed_response = getattr(e, "response", None)
         # Log the failed webhook request
         save_webhook_log(
             webhook=webhook,
             request_method=action,
             request_headers=headers,
             request_body=payload,
-            response_status=500,
-            response_headers="",
-            response_body=str(e),
+            response_status=(failed_response.status_code if failed_response is not None else 500),
+            response_headers=(failed_response.headers if failed_response is not None else ""),
+            response_body=(failed_response.text if failed_response is not None else str(e)),
             retry_count=self.request.retries,
             event_type=event,
         )
         logger.error(f"Webhook {webhook.id} failed with error: {e}")
-        # Retry logic
+        # ARRIBADA FIX: count the failure instead of deactivating the webhook.
+        #
+        # What was here set `is_active=False` as soon as ONE delivery exhausted its
+        # retries, and emailed the creator. That ended the integration for an outage of a
+        # few hours, needed a human who had not been told to go and switch it back on, and
+        # the email was the entire notice — this fork's audit found the durable error log
+        # empty for a month for exactly that reason. Deactivation is now never automatic:
+        # `is_active` is a human's decision only. Sustained failure instead opens a circuit
+        # breaker that pauses requests, announces itself in the Zulip channel the
+        # infrastructure alerts already go to, probes the endpoint on a fixed interval and
+        # re-arms itself the moment it answers.
+        #
+        # The retry ceiling below is UNCHANGED and deliberately so: it is what bounds the
+        # queue. Not deactivating is affordable because the probe rate is decoupled from
+        # the event rate, not because retrying forever became acceptable.
+        webhook_health.record_failure(webhook, e)
         if self.request.retries >= self.max_retries:
-            Webhook.objects.filter(pk=webhook.id).update(is_active=False)
-            if webhook:
-                # send email for the deactivation of the webhook
-                send_webhook_deactivation_email.delay(
-                    webhook_id=webhook.id,
-                    receiver_id=webhook.created_by_id,
-                    reason=str(e),
-                    current_site=current_site,
-                )
             return
-        raise requests.RequestException()
+        # ARRIBADA FIX: re-raise the original rather than a bare `requests.RequestException()`.
+        # Same retry behaviour, but the cause survives into the retry log and into the
+        # alert, where "500 Server Error for url ..." is the whole diagnosis and an empty
+        # exception is none of it.
+        raise
 
     except Exception as e:
         log_exception(e)

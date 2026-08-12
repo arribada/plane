@@ -251,12 +251,12 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 600 is MEASURED — this exact command, in this exact image, against a
+              # 648 is MEASURED — this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
-              # 2026-08-12 alongside the external-edits work: pristine HEAD collects
-              # 580 and this tree collects 600, both read off this line, so the delta
-              # happens to agree with the 20 tests test_external_edits.py adds. That
-              # agreement is a check on the measurement, not the source of it.
+              # 2026-08-12 alongside the webhook-delivery work: the parent commit
+              # collects 600 and this tree collects 648, both read off this line, so the
+              # delta happens to agree with the 48 tests test_webhook_delivery.py adds.
+              # That agreement is a check on the measurement, not the source of it.
               #
               # Four agents raised it in parallel during one session, each adding its
               # own count to whatever number it happened to find. That is how a floor
@@ -271,11 +271,21 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 600 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 600 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 648 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 648 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
-              python -m pytest plane/arribada/
+              # `--create-db`: pytest.ini carries `--reuse-db --nomigrations`, and the pair
+              # is a trap on any database that outlives one commit. `--reuse-db` keeps the
+              # database, `--nomigrations` builds the schema with `migrate --run-syncdb`,
+              # and run_syncdb creates MISSING TABLES but never adds MISSING COLUMNS. So a
+              # reused database silently picks up a new model and silently misses a new
+              # field: verifying this commit locally against a database created before
+              # `external_edits` landed produced 53 failures and 36 errors in two files
+              # nobody had touched, all of them "column does not exist". CI builds a fresh
+              # Postgres service per run so it was never exposed, but the flag makes the
+              # job say what it depends on instead of relying on that.
+              python -m pytest plane/arribada/ --create-db
             '
 
       - name: Push image

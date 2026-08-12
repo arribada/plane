@@ -1561,3 +1561,80 @@ class IssueChecklistItem(models.Model):
 
     def __str__(self):
         return f"{self.owner_id} ✓ {self.member_id}"
+
+
+class WebhookDeliveryHealth(models.Model):
+    """How a webhook endpoint has been behaving, so a dead one can be noticed rather than binned.
+
+    Upstream's answer to a failing endpoint was `Webhook.is_active = False` after ONE
+    delivery exhausted its retries, plus an email to whoever created it. That is a
+    silent deactivation in every way that matters: the row goes quiet, the integration
+    stops, and the only notice is a mail nobody reads. An hour of the wiki being down
+    ended the sync permanently, and the next person to wonder why the pages had stopped
+    updating had no reason to look at a boolean in a settings page.
+
+    This replaces it with a circuit breaker that never touches `is_active`, so a human
+    remains the only thing that can turn a webhook off. It lives in this app's own
+    migration graph rather than as columns on `db.Webhook` for the usual reason —
+    upstream owns that table and a merge must not have to reconcile our columns with
+    theirs.
+
+    The row is created LAZILY, on the first failure. A healthy endpoint therefore costs
+    one indexed SELECT per delivery and no writes at all, which matters because this sits
+    on the path of every webhook the instance sends.
+
+    There is deliberately no `last_success_at`. Recording it would mean a write on every
+    successful delivery, and the question it answers ("when did this endpoint last work?")
+    is already answered durably by `WebhookLog`, which records every attempt. A field that
+    costs a write per event to duplicate a fact we already store is not worth having, and
+    one updated only sometimes is worse than absent — it reads as authoritative and is not.
+    """
+
+    id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True)
+
+    # CASCADE: the health of a webhook that no longer exists is not a fact about anything.
+    webhook = models.OneToOneField(
+        "db.Webhook", on_delete=models.CASCADE, related_name="arribada_delivery_health"
+    )
+
+    # Consecutive FAILED ATTEMPTS with no success in between — not failed deliveries.
+    # The distinction is what makes one poisoned event harmless: while the wiki 500s on a
+    # single malformed payload through all six of that delivery's attempts, every other
+    # event still succeeds and resets this to zero, so the streak never builds. It only
+    # climbs when nothing at all is getting through, which is the condition worth acting on.
+    consecutive_failures = models.PositiveIntegerField(default=0)
+
+    # When the current streak began, and when it last extended. Kept as two fields because
+    # "failing since 09:00" and "last tried at 14:32" answer different questions, and a
+    # human reading this row during an incident wants both.
+    first_failure_at = models.DateTimeField(null=True, blank=True)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+
+    # The breaker. True means: stop making requests to this endpoint, except one probe per
+    # interval. It is NOT `is_active` — delivery resumes by itself the moment a probe gets
+    # a 2xx, with nobody logging in to flip anything back.
+    circuit_open = models.BooleanField(default=False)
+    opened_at = models.DateTimeField(null=True, blank=True)
+
+    # The probe clock. Claimed with a conditional UPDATE so that concurrent workers cannot
+    # each decide they are the probe — see `webhook_health.should_attempt`.
+    last_probe_at = models.DateTimeField(null=True, blank=True)
+
+    # When a human was last told. Bounds the re-announcement of a long outage to something
+    # readable; a channel that repeats itself every ten minutes gets muted, and a muted
+    # alert is the same silence this whole model exists to remove.
+    last_alert_at = models.DateTimeField(null=True, blank=True)
+
+    # The most recent error, so the row explains itself without cross-referencing the log.
+    last_error = models.TextField(blank=True, default="")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "arribada_webhook_delivery_health"
+        verbose_name = "Webhook delivery health"
+        verbose_name_plural = "Webhook delivery health"
+
+    def __str__(self):
+        state = "open" if self.circuit_open else "closed"
+        return f"{self.webhook_id} [{state}] {self.consecutive_failures} consecutive failures"

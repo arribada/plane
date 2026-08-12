@@ -24,6 +24,38 @@ logger = logging.getLogger(__name__)
 class WebhookSerializer(DynamicBaseSerializer):
     url = serializers.URLField(validators=[validate_schema, validate_domain])
 
+    def __init__(self, *args, **kwargs):
+        # ARRIBADA FIX (secret leak): remember the field allowlist the caller asked for,
+        # because `DynamicBaseSerializer.__init__` throws it away.
+        #
+        # That base class does `fields = self.expand` at `serializers/base.py:18`,
+        # overwriting the caller's `fields=` with the (usually empty) expand list, so
+        # `_filter_fields([])` returns every field on the model. The two read endpoints in
+        # `views/webhook/base.py` pass an allowlist that deliberately omits `secret_key` —
+        # and get it back anyway, on every GET and every PATCH, to any workspace admin.
+        # That key is the HMAC secret the receiver verifies deliveries with; anyone holding
+        # it can forge a payload the receiver will trust.
+        #
+        # The base-class line is the real bug and it is UPSTREAM's, but fixing it there
+        # changes 37 other call sites at once, from "returns everything" to "returns only
+        # what was listed" — a product-wide response change that this fork's frontend has
+        # never been tested against. So the leak is closed here, where the blast radius is
+        # this one serializer, and the base-class bug is reported separately rather than
+        # fixed by side effect.
+        self._requested_fields = kwargs.get("fields") or None
+        super().__init__(*args, **kwargs)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # ARRIBADA FIX: honour the allowlist for the secret specifically. A caller that
+        # passed no `fields` is one of the two endpoints whose whole job is to hand the
+        # secret over once — POST and the regenerate endpoint — so they are untouched.
+        # A caller that passed an allowlist and did not name `secret_key` asked not to
+        # have it, and now does not.
+        if self._requested_fields and "secret_key" not in self._requested_fields:
+            data.pop("secret_key", None)
+        return data
+
     def _validate_webhook_url(self, url):
         """Validate a webhook URL against SSRF and disallowed domain rules."""
         try:

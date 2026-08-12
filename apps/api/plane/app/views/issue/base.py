@@ -43,7 +43,7 @@ from plane.app.serializers import (
 from plane.bgtasks.issue_activities_task import issue_activity
 from plane.bgtasks.issue_description_version_task import issue_description_version_task
 from plane.bgtasks.recent_visited_task import recent_visited_task
-from plane.bgtasks.webhook_task import model_activity
+from plane.bgtasks.webhook_task import model_activity, webhook_activity  # ARRIBADA FIX: issue.deleted
 from plane.db.models import (
     CycleIssue,
     FileAsset,
@@ -723,6 +723,23 @@ class IssueViewSet(BaseViewSet):
             notification=True,
             origin=base_host(request=request, is_app=True),
             subscriber=False,
+        )
+        # ARRIBADA FIX: emit the `issue` / `deleted` webhook — see the same fix on the v1
+        # endpoint (`plane/api/views/issue.py`). This is the path the web UI's delete takes,
+        # and it is the one a person actually clicks, so a subscriber that only heard about
+        # deletions made through the API would still miss almost all of them.
+        webhook_activity.delay(
+            event="issue",
+            verb="deleted",
+            field=None,
+            old_value=None,
+            new_value=None,
+            actor_id=request.user.id,
+            slug=slug,
+            current_site=base_host(request=request, is_app=True),
+            event_id=str(pk),
+            old_identifier=None,
+            new_identifier=None,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 

@@ -6,6 +6,7 @@
 
 // store
 import { CoreRootStore } from "@/store/root.store";
+import { mirrorIssueDatesIntoPortfolio } from "./portfolio-issue-dates";
 import { PortfolioStore } from "./portfolio.store";
 import type { IPortfolioStore } from "./portfolio.store";
 import type { ITimelineStore } from "./timeline";
@@ -22,5 +23,9 @@ export class RootStore extends CoreRootStore {
     // reads rootStore.portfolio.getRowById in its autorun.
     this.portfolio = new PortfolioStore();
     this.timelineStore = new TimeLineStore(this);
+    // Wired here rather than inside PortfolioStore because it is the join between
+    // two stores and this is the first place both exist. The disposer is dropped
+    // on purpose: it lives as long as the tab.
+    mirrorIssueDatesIntoPortfolio(this);
   }
 }

@@ -19,6 +19,7 @@ import { Avatar } from "@plane/ui";
 import { cn, getFileURL } from "@plane/utils";
 import { useMember } from "@/hooks/store/use-member";
 import { apiErrorStatus } from "@/plane-web/services/api-error";
+import { invalidateProjectRoles } from "@/plane-web/components/projects/use-project-roles";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TTeamMember } from "@/plane-web/types/arribada";
 
@@ -346,6 +347,12 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
       if (r.roles_vocabulary?.length) setVocabulary(r.roles_vocabulary);
       setRemovedIds([]);
       setEditing(false);
+      // The disciplines under every name in an assignee dropdown come from this
+      // roster, cached at module scope for the life of the page. Without this the
+      // dropdown kept labelling people with the roles they had before the save —
+      // and it is what makes "who does H.C.C" answerable, so a stale answer there
+      // is the whole point of the roster gone.
+      invalidateProjectRoles(slug, projectId);
       onSaved?.();
     } catch (e) {
       // The editor stays open so nothing typed is lost with the error.

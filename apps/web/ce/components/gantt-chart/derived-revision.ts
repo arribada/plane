@@ -3,8 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * A revision counter per project, for the three module-scope caches that hold
- * everything the timeline derives from dates: relations, slack, progress.
+ * A revision counter per project, for the module-scope caches that hold everything
+ * derived from a project rather than fetched with it: relations, slack, progress,
+ * milestone marks, and the roster the assignee dropdowns label people from.
+ *
+ * One counter for all of them on purpose. It means "something about this project
+ * changed", and a hook whose own cache entry is still valid re-runs its effect,
+ * finds the entry, and sets the same object back — which React does not re-render
+ * for. The alternative is a counter per cache and five ways to get it wrong.
  *
  * Dropping a cache entry is not enough on its own. Each hook fetches inside a
  * `useEffect` keyed on `${slug}/${projectId}`, so a component already mounted

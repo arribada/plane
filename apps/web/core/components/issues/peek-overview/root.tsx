@@ -20,6 +20,8 @@ import { useIssues } from "@/hooks/store/use-issues";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useIssueStoreType } from "@/hooks/use-issue-layout-store";
 import { useWorkItemProperties } from "@/plane-web/hooks/use-issue-properties";
+import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
+import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 // local imports
 import type { TIssueOperations } from "../issue-detail";
 import { IssueView } from "./view";
@@ -70,9 +72,9 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: IWor
         try {
           setError(false);
           await fetchIssue(workspaceSlug, projectId, issueId);
-        } catch (error) {
+        } catch (caught) {
           setError(true);
-          console.error("Error fetching the parent issue", error);
+          console.error("Error fetching the parent issue", caught);
         }
       },
       update: async (workspaceSlug: string, projectId: string, issueId: string, data: Partial<TIssue>) => {
@@ -81,6 +83,19 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: IWor
             .updateIssue(workspaceSlug, projectId, issueId, data)
             .then(async () => {
               fetchActivities(workspaceSlug, projectId, issueId);
+              // ARRIBADA: the float tails, the red critical arrows and the rolled-up
+              // parent progress are all derived from these dates, computed by the
+              // server and cached per project at module scope. Dragging a bar drops
+              // those caches (`base-gantt-root.tsx` updateBlockDates); changing the
+              // same date in this panel did not, so the timeline behind the panel
+              // kept drawing the pre-edit answer until a hard reload. Only on the
+              // fields they are derived from, and only once the PATCH above has
+              // resolved — a refetch before the server has the new dates would just
+              // cache the old answer again.
+              if ("start_date" in data || "target_date" in data) {
+                invalidateProjectSlack(workspaceSlug, projectId);
+                invalidateProjectProgress(workspaceSlug, projectId);
+              }
               return;
             })
             .catch((_error) => {
@@ -110,8 +125,8 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: IWor
         try {
           if (!issues?.archiveIssue) return;
           await issues.archiveIssue(workspaceSlug, projectId, issueId);
-        } catch (error) {
-          console.error("Error archiving the issue", error);
+        } catch (caught) {
+          console.error("Error archiving the issue", caught);
         }
       },
       restore: async (workspaceSlug: string, projectId: string, issueId: string) => {
@@ -169,8 +184,8 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: IWor
           });
           await removeFromCyclePromise;
           fetchActivities(workspaceSlug, projectId, issueId);
-        } catch (error) {
-          console.error("Error removing issue from cycle", error);
+        } catch (caught) {
+          console.error("Error removing issue from cycle", caught);
         }
       },
       changeModulesInIssue: async (
@@ -206,8 +221,8 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: IWor
           });
           await removeFromModulePromise;
           fetchActivities(workspaceSlug, projectId, issueId);
-        } catch (error) {
-          console.error("Error removing issue from module", error);
+        } catch (caught) {
+          console.error("Error removing issue from module", caught);
         }
       },
     }),

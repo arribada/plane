@@ -7,8 +7,16 @@ session can continue without re-deriving anything.
 
 Production `plane.arribada.org` serves **`c77edfad9e`** — image tag
 `v1.3.1-arribada.89`, backend image id `7d7b3e85559a`, frontend `976196a923c8`,
-deployed 2026-08-12 10:57. **Everything committed is deployed**, with the
-docs-only commits that need no deploy:
+deployed 2026-08-12 10:57. Everything committed **up to and including
+`c77edfad9e`** is deployed, with the docs-only commits that need no deploy.
+
+**No longer true above that line.** The two commits on top of `c77edfad9e` —
+the three-pass frontend integration (gantt state groups, gestures, arrows) and
+the CI floor that goes with it — are committed, verified and **neither built
+nor deployed**. They are frontend-only, so shipping them means a `web` build,
+which is the `workflow_dispatch` job gated on `build_web: true`; see the first
+trap below. A backend pass (wiki-sync `external_edits`, migrations `0042` and
+`0043`) was still being written when they landed and is not in either commit.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -214,3 +222,14 @@ scheduler reads the dates, so the dates are the fact.
   `Remove-Item -Recurse` the broken `.pnpm` entry and re-run `pnpm install
 --frozen-lockfile` — a plain re-install will NOT repair it, because pnpm sees the
   directory and believes the package is already there.
+- **`TZ=… <command>` does nothing from Git Bash on Windows**, and it fails as a FALSE
+  GREEN. MSYS strips `TZ` when it spawns a native Windows process, so `process.env.TZ`
+  arrives `undefined`, `vitest.config.ts`'s `??=` default takes over, and BOTH halves of
+  the two-zone loop run under `America/Los_Angeles`. Turbo is then right to hash them
+  the same, hits its cache on the second, and prints `FULL TURBO` in under a second —
+  which looks like the cache doing its job and is really the eastern zone never
+  executing. The tell is the replayed run reporting the SAME `Start at` timestamp and
+  the same duration as the first. Nothing is wrong on CI, which is Linux. To check both
+  zones on Windows use PowerShell, which does not strip it:
+  `$env:TZ='Pacific/Auckland'; pnpm turbo run test --filter=web`. Confirm with
+  `node -e "console.log(process.env.TZ)"` before trusting a two-zone result.

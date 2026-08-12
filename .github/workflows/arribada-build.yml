@@ -88,15 +88,37 @@ jobs:
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
-          # 569 is MEASURED — `vitest list | grep -c " > "` on the committed tree,
+          # 725 is MEASURED — `vitest list | grep -c " > "` on the committed tree,
           # the same command as the line above — and not the previous floor plus a
           # delta. Four agents raised this in parallel in one session, each adding
           # its own count to whatever number it found, which is how a floor ends up
           # ABOVE the true count and fails CI in the direction that breaks rather
           # than the direction that loosens. Re-derive it the same way; do not
           # increment it.
-          if [ "$N" -lt 569 ]; then
-            echo "::error::only $N web tests collected, expected at least 569 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          #
+          # The frontend landed as THREE passes written against one tree, so the
+          # earlier 610 — correct for one of them in isolation — is not the number
+          # for the tree that ships. Neither is any figure written while the passes
+          # were still moving: all three said so themselves, because each was
+          # editing test files while the others were counting.
+          #
+          # 725 is the count on the MERGED tree, taken at integration time with the
+          # command on the line above, once all three had stopped. `vitest run`
+          # agrees — 725 passed in 62 test files (55 tracked at the parent commit
+          # plus 7 new; 6 of the tracked ones were rewritten, one of those a
+          # rename). Both zones below collect the same 725: the count does not
+          # depend on TZ.
+          #
+          # Do not try to reproduce it by grepping `it(` in the changed files. An
+          # `it.each` collects at its RUNTIME size — `routing.test.ts` alone turns
+          # 12 `it(` lines into 21 collected tests, and it was 14 into 23 at the
+          # parent commit, so it went DOWN by two while the tree went up. That is
+          # the same trap the backend floor below documents.
+          #
+          # If a fourth pass lands on top of this one, MEASURE AGAIN rather than
+          # adding the numbers up.
+          if [ "$N" -lt 725 ]; then
+            echo "::error::only $N web tests collected, expected at least 725 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
           for ZONE in America/Los_Angeles Pacific/Auckland; do

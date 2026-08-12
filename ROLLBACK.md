@@ -42,16 +42,18 @@ every push.
 Labels only exist on images built after this change, so for anything older this table is the
 record:
 
-| Image                                                | Image id       | Commit                      | Notes                                                                                      |
-| ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
-| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built 2026-08-10 07:10          |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), CI artifact of run 31364698124 |
-| `arribada/plane-backend:v1.3.1-arribada.87`          | `59d2c947c519` | `170c639e7b`                | the previous serve; **the roll-forward/back target for this deploy**                       |
-| `arribada/plane-frontend:v1.3.1-arribada.87`         | `7bbff227cf0b` | `170c639e7b`                | the previous serve; pair it with the backend above                                         |
-| `arribada/plane-backend:rollback-94f7adddea`         | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                   |
-| `arribada/plane-frontend:rollback-94f7adddea`        | `6a65bd4702e1` | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                           |
-| `arribada/plane-backend:rollback-20260730`           | `e2ce98341ca1` | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                                |
-| `arribada/plane-frontend:rollback-20260730`          | `a60822d87386` | (undated)                   | also tagged `v1.3.1-arribada.1`                                                            |
+| Image                                                | Image id       | Commit                      | Notes                                                                                            |
+| ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-08-12 10:45 |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), CI artifact of run 31588685459       |
+| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | the previous serve; **the roll-back target for this deploy**, built 2026-08-10 07:10             |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | the previous serve; pair it with the backend above                                               |
+| `arribada/plane-backend:v1.3.1-arribada.87`          | `59d2c947c519` | `170c639e7b`                | one before that                                                                                  |
+| `arribada/plane-frontend:v1.3.1-arribada.87`         | `7bbff227cf0b` | `170c639e7b`                | one before that; pair it with the backend above                                                  |
+| `arribada/plane-backend:rollback-94f7adddea`         | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                         |
+| `arribada/plane-frontend:rollback-94f7adddea`        | `6a65bd4702e1` | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                                 |
+| `arribada/plane-backend:rollback-20260730`           | `e2ce98341ca1` | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                                      |
+| `arribada/plane-frontend:rollback-20260730`          | `a60822d87386` | (undated)                   | also tagged `v1.3.1-arribada.1`                                                                  |
 
 Why the numbered tags cannot be trusted as history: `v1.3.1-arribada.5` is dated 2026-08-05,
 five days _after_ `.4`, and `.77`, `.78`, `.79` and `.80` are all the single image id
@@ -120,12 +122,36 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
-> **2026-08-10.** `e75cd9a12f` is deployed and carries migration `0039_roster_lookup_indexes`.
-> It is `AddIndex` only — no columns, no `RunPython`, nothing to undo badly — so rolling the
-> code back to `.87` and leaving `0039` applied costs nothing at all. A pre-deploy dump was
-> taken anyway and verified:
-> `/opt/backups/archive/plane-db-predeploy-2026-08-10_070951.sql.gz` (gzip clean, ends with
-> `PostgreSQL database dump complete`, 1,222,442 bytes compressed / 7,200,501 raw).
+> **2026-08-12.** `c77edfad9e` is deployed and carries **two** migrations, `0040` and `0041`.
+>
+> - `0040_project_schedule_lead_only_edits` — `AddField`, a boolean with `default=False`.
+>   Schema only; safe to strand.
+> - `0041_project_wiki_doc_drive_links` — `AddField` **plus a `RunPython`** that copies each
+>   existing `google_drive_url` into the new `google_drive_links` list. Unlike `0038` and
+>   `0014` this one has a **real reverse** (`list_to_single`), which rewrites
+>   `google_drive_url` from `links[0]["url"]`. The stated caveat is that reversing a row
+>   that has since gained a SECOND link keeps the first and drops the rest — a `CharField`
+>   cannot hold three URLs.
+>
+> So rolling the code back to `.88` and leaving both applied is safe: `google_drive_url` is
+> never dropped, it is kept as a derived mirror, and `.88`'s code still reads it.
+>
+> Measured on production at the moment of the deploy: 22 `arribada_project_wiki_doc` rows,
+> 9 with a non-empty `google_drive_url`, 9 with links afterwards, **0** rows where
+> `links[0].url` disagreed with the column. All 6 `arribada_project_schedule` rows took
+> `lead_only_edits = false`, so nobody lost the timeline at the moment the image rolled.
+>
+> Pre-deploy dump, taken and verified before migrating:
+> `/opt/backups/archive/plane-db-predeploy-2026-08-12_104407.sql.gz` — `gzip -t` clean, ends
+> with `PostgreSQL database dump complete`, 1,232,152 bytes compressed / 7,252,433 raw,
+> md5 `0f5b85b15ffde41481ca505ea5109e1e`, and both affected tables present in it.
+>
+> ⚠️ **The §5 recipe below has a trap this deploy walked into.** `git diff --name-only
+<old>..<new> -- .../migrations/ | xargs -r grep -l RunPython` greps the **working tree**,
+> so if `/opt/plane-fork` is still checked out at the OLD commit the new migration files do
+> not exist yet and the grep finds nothing — it reports "no RunPython" for a deploy that has
+> one. Either check out the new commit first, or read the file out of the object database:
+> `git show <new>:<path> | grep -q RunPython`.
 
 Run this against the commit that is actually deployed:
 

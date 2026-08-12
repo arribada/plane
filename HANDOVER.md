@@ -5,14 +5,20 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`e75cd9a12f`** — image tag
-`v1.3.1-arribada.88`, backend image id `950d044e64c0`, built 2026-08-10 07:10.
-**Everything committed is deployed**, with one exception that needs no deploy:
+Production `plane.arribada.org` serves **`c77edfad9e`** — image tag
+`v1.3.1-arribada.89`, backend image id `7d7b3e85559a`, frontend `976196a923c8`,
+deployed 2026-08-12 10:57. **Everything committed is deployed**, with the
+docs-only commits that need no deploy:
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `c77edfad9e` | **serving now** | CI: web suite under two non-UTC zones, `WEB_URL`, `freezegun`, measured floors (569 web / 580 backend).                          |
+| `d830927388` | yes             | Frontend — nested timeline, colours, exports, and dates that mean one day. 110 files.                                            |
+| `6448e35fd9` | yes             | Backend — plan governance, portfolio nesting, caller's-day dates. 30 files; migrations `0040` + `0041`.                          |
+| `ac98514a4d` | yes             | Timeline refresh: the write landed, the screen kept the old answer (MobX/React memo staleness).                                  |
+| `63c1896a20` | n/a — docs only | The handover named a commit production had not run for five deploys.                                                             |
 | `a79290d0fe` | n/a — docs only | `ROLLBACK.md`. No image, nothing to ship.                                                                                        |
-| `e75cd9a12f` | **serving now** | Celery ceiling + fencing-token lock; order tracking; three surfaces that lied to non-admins. Backend 432 → 468, web 121 → 151.   |
+| `e75cd9a12f` | yes             | Celery ceiling + fencing-token lock; order tracking; three surfaces that lied to non-admins. Backend 432 → 468, web 121 → 151.   |
 | `145ae6c08a` | yes             | The date bomb (two permanent-500 classes), four proven seq scans, the 84-query endpoint, migration `0039_roster_lookup_indexes`. |
 | `6b3b8bcd5c` | yes             | Ops floors: cache `IGNORE_EXCEPTIONS`, socket timeouts, `CONN_MAX_AGE`, Celery retry/lock policy.                                |
 | `170c639e7b` | yes             | Notifications (point 5). Backend 381 → 396, web 106.                                                                             |

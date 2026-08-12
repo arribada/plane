@@ -26,10 +26,23 @@ rots into decoration.
 
 `process_view`, not `__call__`: Django has already resolved the URL by then, so
 the view class and `project_id` arrive as arguments instead of being re-derived
-from the path, and returning a response short-circuits the view. Authentication
-has run — every app API view is `BaseSessionAuthentication`, whose user is the
-one `django.contrib.auth`'s middleware already put on the request — so
-`request.user` here is the user the view would have seen.
+from the path, and returning a response short-circuits the view.
+
+WHICH REQUESTS HAVE A USER HERE, because the two guards below differ on it and
+the difference is not cosmetic. Every APP API view (`/api/`) is
+`BaseSessionAuthentication`, so `request.user` is already the user the view will
+see — put there by `django.contrib.auth`'s middleware, above this one in the
+list. Every API V1 view (`/api/v1/`) is `APIKeyAuthentication`, which DRF runs
+inside `APIView.initial()` — after every `process_view` has returned. So a v1
+request carrying only `X-Api-Key` reaches this hook as AnonymousUser, and any
+check placed behind `is_authenticated` is INERT for it. The plan guard is a
+question about a person and correctly waits for one; the external guard is a
+question about a body and a project and correctly does not.
+
+This module also carries `external_edits`, which is not about the plan at all —
+it is here because it needs the same hook, on the same routes, before the same
+views, and a second middleware doing the same three attribute reads would be
+two places to keep one answer.
 """
 
 import json
@@ -93,6 +106,60 @@ GUARDED = {
 
 UNSAFE = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
+# The value of `external_source` that means "this write is the wiki sync's".
+#
+# One constant rather than a literal in three files: the middleware refuses on
+# it, `test_plan_guard.py` asserts on it, and the wiki sends it. A string
+# duplicated across a network boundary is a string that drifts on one side.
+EXTERNAL_SOURCE = "arribada-wiki"
+
+# The content types whose body this middleware will read to look for a
+# declaration. Everything else — multipart above all — is left alone and NOT
+# read: `request.body` on a multipart upload pulls the whole file into memory and
+# can raise once the stream has been consumed, and the write paths that use it
+# are asset uploads rather than work items.
+_READABLE_TYPES = frozenset({"application/json", "application/x-www-form-urlencoded"})
+
+
+def _declares_external_source(request):
+    """Whether this request's body says `external_source: EXTERNAL_SOURCE`.
+
+    FAILS OPEN, unlike `_body_keys` below, and the asymmetry is deliberate.
+    `_body_keys` is consulted only after a project has opted IN to a restriction,
+    so refusing an unreadable body costs one confused caller on one governed
+    project. This runs on every write in the product, so treating "cannot read
+    it" as "it is external" would refuse writes on every project that had not
+    opted in — the exact opposite of the intended default.
+
+    That is not a hole so much as the shape of the thing: a caller who omits the
+    declaration has not made an external write, it has made an ordinary one, and
+    an ordinary one is answered by the caller's ordinary permissions. See the
+    model comment on `external_edits` — this governs a protocol both sides keep,
+    not an adversary holding the key.
+
+    The cheap check first: the substring scan over raw bytes rejects essentially
+    every write in the product without parsing anything.
+    """
+    content_type = (request.content_type or "").split(";")[0].strip().lower()
+    if content_type not in _READABLE_TYPES:
+        return False
+    try:
+        body = request.body
+    except Exception:
+        # Stream already consumed, or larger than DATA_UPLOAD_MAX_MEMORY_SIZE.
+        return False
+    if not body or b"external_source" not in body:
+        return False
+    if content_type == "application/json":
+        try:
+            data = json.loads(body.decode("utf-8", "replace"))
+        except ValueError:
+            return False
+        if not isinstance(data, dict):
+            return False
+        return data.get("external_source") == EXTERNAL_SOURCE
+    return QueryDict(body).get("external_source") == EXTERNAL_SOURCE
+
 
 def _body_keys(request):
     """The top-level keys of the request body, or None when they cannot be read.
@@ -126,12 +193,23 @@ def _body_keys(request):
 
 
 class PlanEditGuardMiddleware:
-    """Refuses upstream plan writes on a project whose plan is the lead's.
+    """Two refusals on one hook, because both need the request before the view.
 
-    Does nothing at all — not even a query — unless the request is an unsafe
-    method on one of the nine routed handlers in `GUARDED`. On those, it costs
-    one indexed existence check, and reaches the second query only on a project
-    that has turned the setting on.
+    1. `external_edits` — a write whose body DECLARES `external_source` is
+       refused unless this project has opted in. Every routed write that names a
+       project, because the integration drives the same API a person does and
+       there is no list of routes to narrow it to.
+    2. `lead_only_edits` — an upstream PLAN write is refused unless the caller is
+       the lead or a workspace admin. Only the nine routed handlers in `GUARDED`.
+
+    They are separate settings answering separate questions and neither implies
+    the other; see the model comments on both columns.
+
+    COST on the writes that are neither. One `dict.get` on `view_kwargs`, then a
+    content-type comparison, then a substring scan of the body — no parse, no
+    query — for anything that is not JSON or form-encoded, and no read of the
+    body at all for multipart. Query one is reached only by a body that actually
+    names `external_source`; query two only by one of the nine handlers.
     """
 
     def __init__(self, get_response):
@@ -143,15 +221,47 @@ class PlanEditGuardMiddleware:
     def process_view(self, request, view_func, view_args, view_kwargs):
         if request.method not in UNSAFE:
             return None
-        view_class = getattr(view_func, "cls", None) or getattr(view_func, "view_class", None)
-        if view_class is None:
-            return None
-        rule = GUARDED.get((view_class.__name__, request.method), "unguarded")
-        if rule == "unguarded":
-            return None
         project_id = view_kwargs.get("project_id")
         if not project_id:
             return None
+
+        # THE EXTERNAL QUESTION IS ASKED FIRST, AND WITHOUT A USER. Both halves of
+        # that are load-bearing, and getting either wrong makes this guard inert on
+        # the one route it exists for.
+        #
+        # WITHOUT A USER, because the wiki writes to `/api/v1/`, which does NOT
+        # authenticate from the session. `APIKeyAuthentication` runs inside
+        # `APIView.initial()` — that is, when the view executes, which is AFTER
+        # every `process_view` has returned. So for the sync's requests
+        # `request.user` here is AnonymousUser, and a check ordered behind
+        # `is_authenticated` (as the plan check below correctly is, because every
+        # app API view authenticates from the session) would fall straight through
+        # and refuse nothing at all, on precisely the traffic it was written for.
+        #
+        # It does not need one anyway: the subject is what the BODY DECLARES and
+        # what the PROJECT ALLOWS. Neither is a fact about the caller.
+        #
+        # The cost of asking early is that an unauthenticated caller who already
+        # knows a project's UUID can learn one boolean about it by sending a body
+        # that declares itself external, and reads 403 where it would otherwise
+        # read 401. That is the whole of the exposure, and it buys a guard that
+        # works.
+        if _declares_external_source(request):
+            from .views import external_edits_allowed
+
+            if not external_edits_allowed(project_id):
+                return JsonResponse(
+                    {
+                        "error": "This project does not accept external edits.",
+                        "detail": (
+                            f"A write declaring external_source '{EXTERNAL_SOURCE}' was refused "
+                            f"because this project has not turned on external edits. A project "
+                            f"lead can enable them in the project's schedule settings. This is a "
+                            f"separate setting from who may change the plan."
+                        ),
+                    },
+                    status=403,
+                )
 
         # `_force_auth_user` FIRST, and it is not a bypass.
         #
@@ -173,6 +283,16 @@ class PlanEditGuardMiddleware:
             # and pre-empting it here would turn "you are not signed in" into
             # "you are not the lead", which is a worse thing to read and a worse
             # thing to debug.
+            return None
+
+        # THE PLAN QUESTION, about a person rather than a caller, and asked only
+        # of the nine upstream handlers in `GUARDED`. The dict lookup costs
+        # nothing on the writes that are not one of them.
+        view_class = getattr(view_func, "cls", None) or getattr(view_func, "view_class", None)
+        if view_class is None:
+            return None
+        rule = GUARDED.get((view_class.__name__, request.method), "unguarded")
+        if rule == "unguarded":
             return None
 
         # Deferred to keep this module importable before the app registry is

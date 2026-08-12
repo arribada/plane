@@ -251,8 +251,12 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 580 is MEASURED — this exact command, in this exact image, against a
-              # real Postgres — and not the previous floor plus a delta.
+              # 600 is MEASURED — this exact command, in this exact image, against a
+              # real Postgres — and not the previous floor plus a delta. Taken
+              # 2026-08-12 alongside the external-edits work: pristine HEAD collects
+              # 580 and this tree collects 600, both read off this line, so the delta
+              # happens to agree with the 20 tests test_external_edits.py adds. That
+              # agreement is a check on the measurement, not the source of it.
               #
               # Four agents raised it in parallel during one session, each adding its
               # own count to whatever number it happened to find. That is how a floor
@@ -267,8 +271,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 580 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 580 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 600 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 600 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

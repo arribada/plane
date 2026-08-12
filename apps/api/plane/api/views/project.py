@@ -89,7 +89,10 @@ class ProjectListCreateAPIEndpoint(BaseAPIView):
                 )
                 | Q(network=2)
             )
-            .select_related("project_lead")
+            # ARRIBADA FIX — fork drift, one word. `ProjectSerializer` publishes
+            # `external_edits` off this relation; without the join it is one
+            # extra query per project on a list that can be twenty-four long.
+            .select_related("project_lead", "arribada_schedule")
             .annotate(
                 is_member=Exists(
                     ProjectMember.objects.filter(
@@ -304,7 +307,15 @@ class ProjectDetailAPIEndpoint(BaseAPIView):
                 )
                 | Q(network=2)
             )
-            .select_related("workspace", "workspace__owner", "default_assignee", "project_lead")
+            # ARRIBADA FIX — fork drift, one word: `arribada_schedule`, joined for
+            # the `external_edits` field on `ProjectSerializer`.
+            .select_related(
+                "workspace",
+                "workspace__owner",
+                "default_assignee",
+                "project_lead",
+                "arribada_schedule",
+            )
             .annotate(
                 is_member=Exists(
                     ProjectMember.objects.filter(

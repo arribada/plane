@@ -91,6 +91,38 @@ class ProjectSchedule(models.Model):
     # lead themselves.
     lead_only_edits = models.BooleanField(default=False)
 
+    # Whether a WRITE THAT DECLARES ITSELF EXTERNAL may land on this project.
+    #
+    # A SEPARATE FLAG FROM `lead_only_edits`, DELIBERATELY, and the distinction is
+    # the reason this column exists rather than a reuse. `lead_only_edits` says
+    # only the lead may change THE PLAN — dates, dependencies, sprint membership.
+    # It says nothing about who may CREATE OR EDIT A WORK ITEM, and a project that
+    # has turned it on has not thereby said anything about the wiki. Reading one
+    # flag as the other would give a lead who wanted their dates protected an
+    # integration they never agreed to, or refuse one they did — a permission
+    # nobody can predict from the switch they actually threw.
+    #
+    # WHAT IT GOVERNS: a write whose body carries `external_source` equal to
+    # `plan_guard.EXTERNAL_SOURCE`. Not "any write by the sync's API key" — the key
+    # authenticates as a person, and that person's own browser session must keep
+    # working. The declaration in the body is what marks a write as the
+    # integration's, and it is the integration that declares it.
+    #
+    # THEREFORE NOT A SECURITY BOUNDARY against a stolen key: a caller holding the
+    # key can simply omit the field and write as the human it authenticates as,
+    # subject to that human's ordinary project permissions. What it IS is the
+    # server-side half of a policy the wiki currently keeps to on its own
+    # (`policy.json` on the droplet), so that the answer lives where the project
+    # lead can see and change it rather than in a file only an ops agent can edit.
+    #
+    # `default=False` means every existing project REFUSES declared external
+    # writes until someone opts in. That is the safe direction and the intended
+    # one — an integration switching itself on for all 51 projects in this
+    # workspace at the moment an image rolled is exactly what a governance flag is
+    # for preventing — but it does mean the sync writes nothing anywhere on the
+    # day this ships, and somebody has to turn it on project by project.
+    external_edits = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -216,6 +216,35 @@ class ProjectSerializer(BaseSerializer):
     is_deployed = serializers.BooleanField(read_only=True)
     cover_image_url = serializers.CharField(read_only=True)
 
+    # ARRIBADA FIX — fork drift, this field and its method below.
+    #
+    # `ProjectSchedule.external_edits` published on the v1 project payload, so an
+    # integration can ask ONE question before it starts writing instead of
+    # discovering the answer as a 403 on every item it tries to file. The wiki
+    # currently keeps this policy in its own `policy.json`; this is the column
+    # that replaces it, and a duplicated policy is only worth deleting if the
+    # other side can actually read the original.
+    #
+    # A METHOD FIELD, NOT `serializers.BooleanField(read_only=True)` over an
+    # annotation — which is how the seven fields above work — because this
+    # serializer is ALSO the webhook payload serializer for project events
+    # (`bgtasks/webhook_task.py:60`) and is called on plain model instances in
+    # four other places in `api/views/project.py`. A declared BooleanField would
+    # raise AttributeError on every one of those the moment the annotation was
+    # missing. This reads the relation instead, so an unannotated instance costs
+    # one extra query and still answers correctly rather than 500ing.
+    #
+    # The two list querysets `select_related("arribada_schedule")`, so the page
+    # that matters does not pay per row.
+    external_edits = serializers.SerializerMethodField()
+
+    def get_external_edits(self, obj) -> bool:
+        # Django makes a missing reverse OneToOne raise `RelatedObjectDoesNotExist`,
+        # which subclasses AttributeError precisely so `getattr(..., default)`
+        # works. A project with no schedule row has never opted in — False.
+        schedule = getattr(obj, "arribada_schedule", None)
+        return bool(schedule and schedule.external_edits)
+
     class Meta:
         model = Project
         fields = "__all__"

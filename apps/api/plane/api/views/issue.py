@@ -356,6 +356,41 @@ class IssueListCreateAPIEndpoint(BaseAPIView):
 
         total_issue_queryset = Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
 
+        # ARRIBADA FIX — fork drift. Two querysets, one filter, deliberately.
+        #
+        # `external_source` ALONE now FILTERS THE LIST, where before it was
+        # ignored unless `external_id` came with it. Without this, an integration
+        # asking "which of these are mine?" must read every work item in every
+        # project and match client-side. Measured on production 2026-08-12: 597
+        # work items across 51 projects, of which 12 carry an `external_source` at
+        # all. The sync serialises all 597 every cycle to find them.
+        #
+        # WHAT THIS DOES NOT FIX, so that nobody reads it as the cure for the
+        # 429s: those come from the REQUEST RATE, not the row count. The cycle is
+        # 51 projects x 3 endpoints = 153 requests spaced 250 ms apart, and
+        # `ApiKeyRateThrottle` counts requests, not rows. This makes each response
+        # smaller and cheaper; it does not make them fewer.
+        #
+        # BOTH querysets, because `total_count_queryset` is what the paginator
+        # reports as the total. Filtering only the rows would return four items
+        # and tell the caller there are twelve hundred, which is worse than not
+        # filtering at all — a client that pages until it has `total_count` would
+        # loop forever on a page that never fills.
+        #
+        # NOT a new visibility surface. This endpoint is project-scoped behind
+        # `ProjectEntityPermission`, which requires an active ProjectMember row
+        # for the caller in THIS project before the queryset is built. The filter
+        # narrows what the caller could already read a page at a time; it cannot
+        # reach a project they are not in, and there is deliberately NO
+        # workspace-wide variant of it for exactly that reason.
+        #
+        # `and not external_id` keeps the pre-existing contract above intact:
+        # both parameters together still mean "fetch the one item", which returns
+        # a bare object rather than a page and which callers already depend on.
+        if external_source and not external_id:
+            issue_queryset = issue_queryset.filter(external_source=external_source)
+            total_issue_queryset = total_issue_queryset.filter(external_source=external_source)
+
         # Priority Ordering
         if order_by_param == "priority" or order_by_param == "-priority":
             priority_order = priority_order if order_by_param == "priority" else priority_order[::-1]

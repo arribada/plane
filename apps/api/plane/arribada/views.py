@@ -3014,6 +3014,12 @@ class ProjectScheduleEndpoint(BaseAPIView):
             "allow_edit_others",
             "allow_add_items",
             "lead_only_edits",
+            # Letting an integration write into the project is the same KIND of
+            # decision as deciding who may change the plan — it is about who gets
+            # to act here, not about what the plan says — so it sits behind the
+            # same guard. A member who could switch this on could grant the wiki
+            # write access to a project whose lead never agreed to the sync.
+            "external_edits",
         }
         if governance & set(payload.keys()):
             denied = _lead_guard(request, project_id)
@@ -6024,6 +6030,29 @@ def plan_edits_are_lead_only(project_id):
     """
     return ProjectSchedule.objects.filter(
         project_id=project_id, lead_only_edits=True
+    ).exists()
+
+
+def external_edits_allowed(project_id):
+    """Whether this project accepts writes that declare themselves external.
+
+    Deliberately NOT `plan_edits_are_lead_only` with a different name, and not a
+    branch inside it. The two settings answer different questions — one is about
+    which PERSON may change the plan, the other about whether an INTEGRATION may
+    write here at all — and a project can want either without the other. See the
+    comment on `ProjectSchedule.external_edits` for why reusing `lead_only_edits`
+    would produce a permission nobody could predict.
+
+    Same shape and same reasoning as the function above: one definition, because
+    the middleware asks this question on upstream's routes and the arribada
+    handlers ask it on their own, and the two answers have to be one answer.
+
+    A project with no schedule row has never opted in. `default=False` on a row
+    that does not exist is still False, so the absence of a row REFUSES — which
+    is the direction that costs an integration a day and not a project its data.
+    """
+    return ProjectSchedule.objects.filter(
+        project_id=project_id, external_edits=True
     ).exists()
 
 

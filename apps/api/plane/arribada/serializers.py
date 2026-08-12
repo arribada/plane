@@ -40,6 +40,10 @@ class ProjectScheduleSerializer(serializers.ModelSerializer):
             # And the one that is a permission rather than a state of the plan:
             # with it on, the plan is the lead's and the work is everyone's.
             "lead_only_edits",
+            # And the one that is about a CALLER rather than a person: whether a
+            # write declaring `external_source` (the wiki sync) may land here.
+            # Off by default, so a project accepts nothing until its lead says so.
+            "external_edits",
             "budget_currency",
             "created_at",
             "updated_at",

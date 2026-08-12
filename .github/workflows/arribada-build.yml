@@ -66,15 +66,44 @@ jobs:
         # file written one folder outside it is silently collected as nothing.
         # A suite that runs zero tests reports success. Raise this when you add
         # tests.
+        #
+        # And it runs TWICE, under a western zone and an eastern one.
+        #
+        # A runner's clock is UTC, and UTC is the one offset at which this app's date
+        # bugs do not reproduce: it is the only zone where `toISOString().slice(0,10)`
+        # agrees with the local calendar, where a day boundary is never 23 or 25 hours
+        # long, and where "today" is the same word for the server and the reader. The
+        # suite went green at UTC while an eleven-day bar drew twelve columns west of
+        # Greenwich and wrote the extra day back to the database on every click.
+        #
+        # `America/Los_Angeles` is the western case (UTC-8/-7, and its autumn clock
+        # change falls a week after Europe's, so the two together cover both).
+        # `Pacific/Auckland` is the eastern one (UTC+12/+13, southern-hemisphere DST,
+        # and far enough east that the whole local morning is still yesterday in UTC).
+        #
+        # `env: ["TZ"]` on the `test` task in turbo.json is what makes the second run
+        # real: without TZ in the task's hash, turbo would serve the first run's cached
+        # success and the second zone would never execute.
         run: |
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
-          if [ "$N" -lt 151 ]; then
-            echo "::error::only $N web tests collected, expected at least 151 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          # 569 is MEASURED — `vitest list | grep -c " > "` on the committed tree,
+          # the same command as the line above — and not the previous floor plus a
+          # delta. Four agents raised this in parallel in one session, each adding
+          # its own count to whatever number it found, which is how a floor ends up
+          # ABOVE the true count and fails CI in the direction that breaks rather
+          # than the direction that loosens. Re-derive it the same way; do not
+          # increment it.
+          if [ "$N" -lt 569 ]; then
+            echo "::error::only $N web tests collected, expected at least 569 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
-          pnpm turbo run test --filter=web
+          for ZONE in America/Los_Angeles Pacific/Auckland; do
+            echo "::group::web unit tests under TZ=$ZONE"
+            TZ="$ZONE" pnpm turbo run test --filter=web
+            echo "::endgroup::"
+          done
 
   backend:
     name: backend (api/worker/beat/migrator)
@@ -171,24 +200,53 @@ jobs:
         # collected ZERO and a naive job would have gone green while testing
         # nothing. Exit code 5 catches losing them ALL; the floor catches losing
         # SOME. Raise it when you add tests.
+        #
+        # `WEB_URL` is REQUIRED, not decoration. Any test that exercises an upstream
+        # route which notifies — `IssueViewSet.partial_update` is the one this suite
+        # reaches — ends up in `plane/utils/host.py:base_host`, which raises
+        # `ImproperlyConfigured("APP_BASE_URL or WEB_URL is not set")` and turns the
+        # whole request into a 500. Production sets it; this job now sets it too, so
+        # the suite exercises the same configuration the product runs under instead
+        # of one where a fifth of the permission tests 500 for an unrelated reason.
         run: |
           docker run --rm --network host \
             -e DJANGO_SETTINGS_MODULE=plane.settings.test -e SECRET_KEY=ci \
             -e DATABASE_URL=postgresql://plane:plane@127.0.0.1:5432/plane \
             -e REDIS_URL=redis://127.0.0.1:6379/ \
+            -e WEB_URL=http://localhost \
             -e AMQP_URL=amqp://guest:guest@127.0.0.1:5672/ \
             plane-backend:candidate \
             sh -lc '
               set -e
-              pip install -q "pytest==9.0.3" "pytest-django==4.5.2"
+              # Pins mirror apps/api/requirements/test.txt. `freezegun` is NOT
+              # optional: eight test files import `freeze_time` to pin the clock, and
+              # this image carries production deps only — without it those files fail
+              # at IMPORT, which pytest reports as a collection error rather than as a
+              # failing test, and the count guard below would fire with a message
+              # about the include glob that has nothing to do with the real cause.
+              pip install -q "pytest==9.0.3" "pytest-django==4.5.2" "freezegun==1.2.2"
               cd /code
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
+              # 580 is MEASURED — this exact command, in this exact image, against a
+              # real Postgres — and not the previous floor plus a delta.
+              #
+              # Four agents raised it in parallel during one session, each adding its
+              # own count to whatever number it happened to find. That is how a floor
+              # ends up ABOVE the true count, which fails CI in the one direction
+              # that breaks rather than the one that loosens.
+              #
+              # Re-derive it the same way; do not increment it. If you cannot run the
+              # image, read "collected N arribada tests" from a green run of this job
+              # and use that. Note that ~9 of these tests are parametrized over lists
+              # built at import time — the route sweeps in test_project_role_boundary.py
+              # and test_money_permissions.py walk `urlpatterns` — so no static count
+              # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 468 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 468 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 580 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 580 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

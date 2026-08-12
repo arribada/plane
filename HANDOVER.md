@@ -178,3 +178,33 @@ scheduler reads the dates, so the dates are the fact.
   agent may be in the tree.
 - Prove a permission test **both ways**: a check that only proves denial passes on an
   endpoint that refuses everyone.
+- **`oxlint --fix` is not safe to run in bulk.** `lint-staged` runs it, so a large
+  commit invokes it over every staged file at once. Two of its autofixes are wrong
+  in this repo: it rewrites `.sort()` into `.toSorted()`, which is ES2023 and does
+  not compile against this workspace's lib (five files, and the codebase already
+  carries half a dozen comments explaining exactly this); and it **deletes React
+  dependencies it cannot see**, which in `portfolio/root.tsx` removed
+  `ganttDisplay.showCompleted` from a dependency array whose own comment, two
+  lines above, says it must be there. Neither is caught by tests — the first is a
+  typecheck failure, the second is silent. Run `oxlint` WITHOUT `--fix` to see
+  what is wrong, fix it by hand, and put an `oxlint-disable-next-line` (with the
+  reason) on anything the rule is wrong about. Note the directive must be the LAST
+  comment line before the code — a `-- reason` that wraps onto a second line
+  silently does nothing.
+- **Never `rm -rf` a directory that contains a Windows junction into this workspace.** A
+  throwaway worktree or a scratch copy made with `mklink /J` (or `New-Item
+-ItemType Junction`) looks like a directory to `rm`, which follows it and deletes the
+  real files on the other side. This happened three times in one day: one agent lost
+  **1242 tracked source files, twice**. Remove the junction first with `rmdir` (cmd) or
+  `Remove-Item` on the link itself, verify with `dir /AL`, and only then delete the
+  parent. `git worktree remove` is the safe way to drop a worktree.
+- **`node_modules` is not reliable while another agent is working.** Concurrent
+  `pnpm install`s tear it down: packages extract EMPTY (the directory and the symlink
+  both exist, so nothing looks wrong) and `typescript` or
+  `@atlaskit/pragmatic-drag-and-drop` vanish mid-run. It presents as a phantom `TS2307`
+  in a file nobody touched, or as jsdom failing to boot with `Cannot find module
+'@csstools/css-calc'` so that the whole web suite collects **zero** tests and says so
+  quietly. Do not chase the bug: check the package directory is non-empty, then
+  `Remove-Item -Recurse` the broken `.pnpm` entry and re-run `pnpm install
+--frozen-lockfile` — a plain re-install will NOT repair it, because pnpm sees the
+  directory and believes the package is already there.

@@ -87,6 +87,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      "env": ["TZ"],
       "outputs": []
     }
   }

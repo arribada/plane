@@ -10,6 +10,8 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { IBlockUpdateDependencyData, IGanttBlock } from "@plane/types";
 // hooks
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
+// plane web
+import { isDragGesture, suppressNextClick } from "@/plane-web/components/gantt-chart/gesture";
 //
 import { DEFAULT_BLOCK_WIDTH, GANTT_SIDEBAR_COLLAPSED_WIDTH } from "../../constants";
 
@@ -65,12 +67,44 @@ export const useGanttResizable = (
       offsetX: mouseX - block.position.marginLeft,
     };
 
+    /**
+     * Where the press began, and whether it has since become a drag.
+     *
+     * ARRIBADA FIX. `mousedown` here and `onClick` on the bar
+     * (`issue-layouts/gantt/blocks.tsx`) are on overlapping elements, and the
+     * browser synthesises a `click` for any mousedown/mouseup pair on the same
+     * subtree. Because the bar travels WITH the cursor, the release lands back
+     * on the bar it started from — so every move and every resize ended by
+     * opening the peek over the plan the user was rearranging: "si je la déplace
+     * sur la timeline c'est un déplacement, je veux pas afficher le détail".
+     *
+     * Nothing in the DOM says "this mouseup concluded a drag", so the distance
+     * travelled is the discriminator. See `gesture.ts` for why distance and not
+     * time, and why the threshold is not zero.
+     */
+    const pressX = e.clientX;
+    const pressY = e.clientY;
+    let hasDragged = false;
+    // The ref outlives the gesture. A container scroll arriving before this
+    // press has moved would otherwise replay the LAST gesture's mouse position
+    // through `handleOnScroll`, which now reads as travel and would promote a
+    // click into a drag that jumps the bar to where the previous one ended.
+    currMouseEvent.current = undefined;
+
     const handleOnScroll = () => {
       if (currMouseEvent.current) handleMouseMove(currMouseEvent.current);
     };
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       currMouseEvent.current = moveEvent;
+      // Below the threshold the bar does not move at all. The jitter under an
+      // ordinary click used to nudge it by a pixel and re-render every bar on
+      // the chart for nothing — and, worse, `setIsDragging(true)` armed the
+      // auto-scroller on a press that was never going anywhere.
+      if (!hasDragged) {
+        if (!isDragGesture({ dx: moveEvent.clientX - pressX, dy: moveEvent.clientY - pressY })) return;
+        hasDragged = true;
+      }
       setIsMoving(dragDirection);
       setIsDragging(true);
 
@@ -129,6 +163,27 @@ export const useGanttResizable = (
       document.removeEventListener("mousemove", handleMouseMove);
       ganttContainerElement.removeEventListener("scroll", handleOnScroll);
       document.removeEventListener("mouseup", handleMouseUp);
+
+      /**
+       * A press that never became a drag is a CLICK, and a click on a bar means
+       * "show me this work item".
+       *
+       * Two things follow from returning here. The peek opens, because the
+       * click is left alone to reach `blocks.tsx`. And nothing is written: this
+       * used to POST the bar's own unchanged dates on every click, which put a
+       * pointless `issue.activity.updated` row against the item and, with "push
+       * dependents" on, ran the whole cascade for a delta of zero.
+       */
+      if (!hasDragged) {
+        setIsDragging(false);
+        return;
+      }
+
+      // It WAS a drag, so the click the browser is about to synthesise is not a
+      // request for anything. Swallowed at document capture, which is above
+      // every onClick in the tree — the move, both resize edges and the
+      // dependency handle all reach the same one function. See `gesture.ts`.
+      suppressNextClick();
 
       // update half blocks only when the missing side of the block is directly dragged
       const shouldUpdateHalfBlock =

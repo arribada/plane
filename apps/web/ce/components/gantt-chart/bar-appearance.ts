@@ -16,9 +16,18 @@ export type TBarLook = {
   /** Readable on `background`, chosen by luminance rather than by theme — a bar
    *  can be any colour a team picked for a label. */
   text: string;
-  /** Past its end date and not finished. */
+  /** Past its end date, and still expected. */
   overdue: boolean;
+  /** In a `completed` state — delivered. Drawn with a 45° hatch and a tick. */
   done: boolean;
+  /**
+   * In a `cancelled` state — abandoned. Drawn hollow, struck and marked ✕.
+   *
+   * It used to answer `done`, which put a tick on work nobody did. Both groups
+   * mean the item has left the plan and that is the only thing they share; see
+   * the note on the five state groups at the bottom of `palette.ts`.
+   */
+  cancelled: boolean;
   /** A single day: drawn as a diamond, because a 3px bar is not a shape. */
   milestone: boolean;
 };
@@ -73,7 +82,8 @@ export const barLook = (
    */
   marked?: boolean
 ): TBarLook => {
-  const done = stateGroup === "completed" || stateGroup === "cancelled";
+  const done = stateGroup === "completed";
+  const cancelled = stateGroup === "cancelled";
   const start = midnight(issue?.start_date);
   const end = midnight(issue?.target_date);
   const now = new Date(today);
@@ -85,8 +95,11 @@ export const barLook = (
   return {
     background,
     text: readableOn(background),
-    overdue: !done && end !== null && end < now.getTime(),
+    // Cancelled is not overdue either — nobody is waiting for it. The split of
+    // `done` into two must not quietly turn every abandoned item red.
+    overdue: !done && !cancelled && end !== null && end < now.getTime(),
     done,
+    cancelled,
     // A marked deliverable, or — where nobody has marked anything — the old
     // same-day guess. The guess is wrong in both directions, which is why the
     // mark exists: a one-day bench test is not a gate, and "PDR delivered" is one

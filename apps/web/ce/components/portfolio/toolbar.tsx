@@ -30,6 +30,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { criticalPathMessage } from "@/plane-web/components/gantt-chart/critical-path-banner";
+import { PushDependentsUnavailable } from "@/plane-web/components/gantt-chart/push-dependents-toggle";
 // The same "what day is it here" the exporters stamp inside the file with, so a
 // filename and the provenance line it wraps can never name different days.
 import { todayIso } from "@/plane-web/components/gantt-chart/export";
@@ -351,7 +352,12 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "projects" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1">
+            {/* `whitespace-normal` on every panel in both toolbars, not only the
+                ones that inherit a nowrap today: `white-space` inherits, this
+                toolbar is one wrapper away from the gantt's, and a panel is not a
+                toolbar control. `break-words` is for the project names below,
+                which are somebody else's text. See gantt-chart/group-by.tsx. */}
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
               <div className="flex items-center justify-between px-2 py-1 text-11 text-secondary">
                 <button
                   type="button"
@@ -418,7 +424,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "filter" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5">
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
               <div className="px-1.5 py-1 text-11 font-medium tracking-wide text-secondary uppercase">Priority</div>
               {PRIORITIES.map((p) => (
                 <button
@@ -484,7 +490,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "display" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5">
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
               <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Colour by</div>
               {/* A radio list rather than the old pill row: seven axes will not
                   sit side by side in a 224px menu, and the list is the shape the
@@ -506,15 +512,17 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                   {o.label}
                 </button>
               ))}
-              {/* Done-ness is a STATE, not a seventh series — a hatch and a tick,
-                  never its own hue. Off is a real answer: a board being read for
-                  what is LEFT wants the finished bars to stop shouting. The
-                  preference lives on the shared gantt display store, so the two
-                  timelines cannot disagree about whether the hatch is on. */}
+              {/* Done-ness and cancelled-ness are STATES, not a seventh and eighth
+                  series — a hatch with a tick, and an outline with a ✕, never
+                  their own hues. Off is a real answer and gives back exactly the
+                  board this drew before either treatment existed: a project or
+                  board being read for what is LEFT wants those bars to stop
+                  shouting. The preference lives on the shared gantt display
+                  store, so the two timelines cannot disagree about it. */}
               <button
                 type="button"
                 onClick={() => ganttDisplay.setShowCompleted(!ganttDisplay.showCompleted)}
-                title="Hatch finished work and mark it with a tick, so what is done reads at a glance"
+                title="Hatch finished work with a tick and outline cancelled work with a ✕, so what has left the plan reads at a glance"
                 className="mt-1 flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-13 hover:bg-layer-2"
               >
                 <span
@@ -525,7 +533,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 >
                   {ganttDisplay.showCompleted && <Check className="size-3" />}
                 </span>
-                Show finished work
+                Mark done &amp; cancelled
               </button>
               <div className="my-1.5 h-px bg-layer-2" />
               <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Order by</div>
@@ -644,6 +652,15 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         Critical path
       </button>
 
+      {/* Said here because it cannot be said by a drag.
+          "Push dependents" is persisted under ONE key shared by every timeline
+          store (`arribada.gantt.sidebar`), so switching it on inside a project
+          switches it on for this board's store too — and this board's write path
+          has no relation graph to push along, so the bar moves and its chain
+          does not. Silence was indistinguishable from the feature being broken,
+          which is exactly how it was reported. */}
+      <PushDependentsUnavailable reason="Moving a bar here moves only that bar. A push follows a project's own dependency graph, which this board does not load — open the project's timeline to move a chain. The arrows drawn here are a report, not a control." />
+
       <div className="flex-grow" />
 
       {/* undated indicator — a way in, not just a warning */}
@@ -662,7 +679,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           {openMenu === "undated" && (
             <>
               <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-              <div className="shadow-lg absolute top-full right-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1">
+              <div className="shadow-lg absolute top-full right-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
                 <div className="px-2 py-1 text-11 font-medium tracking-wide text-secondary uppercase">
                   Projects with undated items
                 </div>
@@ -694,7 +711,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "actions" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1">
+            <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
               <button
                 type="button"
                 disabled={reflowing}

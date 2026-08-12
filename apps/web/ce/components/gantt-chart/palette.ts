@@ -46,6 +46,9 @@
  * hue would both eat a slot and collide with whichever series happened to own
  * that colour. It is drawn with a 45-degree hatch and a tick instead — a
  * channel no series uses, which survives a greyscale print and a screenshot.
+ *
+ * Cancelled-ness, for the same reason and one more. See the note on the five
+ * state groups at the bottom of this file.
  */
 
 /** The most series that can carry their own hue. See the header. */
@@ -308,3 +311,87 @@ export const completedFill = (fill: string): string => {
   const half = HATCH_PERIOD / 2;
   return `repeating-linear-gradient(45deg, ${fill} 0 ${half}px, ${stripe} ${half}px ${HATCH_PERIOD}px)`;
 };
+
+// ── the five state groups, and which of them get a treatment ─────────────────
+//
+// Plane groups every state into one of five: `backlog`, `unstarted` (Todo),
+// `started` (In progress), `completed` (Done) and `cancelled`. Two of them are
+// drawn distinctly here and three are deliberately drawn plain.
+//
+// COMPLETED keeps the 45° hatch and the tick, as above.
+//
+// CANCELLED gets its own treatment, and getting one is the point: it used to
+// share the tick. `isItemDone` and `barLook` both answered "done" for either
+// group, because the question the toggle was written for is "what is still
+// ahead of me" and a cancelled item is not — which is true, and which put a ✓
+// on work that was abandoned. A tick means achieved. On a board a funder reads,
+// that is not a shade of meaning.
+//
+// The treatment is a bar with NO FILL: its outline in its own series colour, the
+// label in the ordinary text token with a line through it, and a ✕ where the
+// tick would be. Four things decided it.
+//
+//   * "A cancelled item still occupying a full-strength bar overstates a plan" is
+//     a statement about AREA. Removing the fill removes the area and keeps the
+//     extent, so the row still says what had been planned without claiming it.
+//   * Not a fade. Fading is the obvious move and it is wrong twice over — it
+//     makes the colour-by choice unreadable exactly where it is useful, and on a
+//     dark surface a faded bar and a pale series colour are the same picture.
+//     That argument is already why `completedFill` is a hatch; it applies here
+//     with more force, since a fade would ALSO have to be told apart from a
+//     hatch.
+//   * Not a third diagonal. 45° is done and 135° is "dates inferred"; a third
+//     angle on one board is a texture nobody can decode. An absence of fill is
+//     not on the texture axis at all.
+//   * Not hidden by default. Work that vanishes with nothing said is the failure
+//     this fork keeps having to fix, and a cancelled item that held a slot in a
+//     plan is exactly what somebody comparing against a baseline came to see.
+//
+// It carries three redundant channels — no fill, a struck label, a ✕ — and not
+// one of them is a colour, so it survives greyscale, a screenshot and
+// forced-colors. It also cannot collide with the hatches, because it has none.
+//
+// BACKLOG, UNSTARTED and STARTED are drawn plain, and that is a decision rather
+// than an omission:
+//
+//   * They are the ordinary run of work. A default that is marked is not a
+//     default, and marking three of five groups leaves the reader decoding the
+//     majority of the board.
+//   * `state` is already one of the colour-by axes, and a state carries the
+//     team's OWN colour, which `portfolioItemSample` and `colorSampleFor` pass
+//     straight through rather than repainting. A reader who wants progress
+//     encoded already has an exact encoding for it — and a second, fixed
+//     treatment on top would put two different state encodings on one bar.
+//   * The board already carries colour-by, two hatches, a tick, a ✕, a critical
+//     ring, a milestone diamond, a progress fill, a baseline ghost, avatars and
+//     an overdue ring. A fifth visual language is not a feature.
+//
+// Done and cancelled earn theirs because they are the two groups that mean the
+// work has LEFT the plan, which is a different kind of fact from how far along
+// it is.
+
+/** Prefixed to a cancelled item's label, where a finished one gets a tick.
+ *  A multiplication sign rather than the letter x: it is the glyph the reader
+ *  already knows from every dismiss control in the product. */
+export const CANCELLED_GLYPH = "✕";
+
+/** How thick the outline of a cancelled bar is. 2px rather than a hairline
+ *  because three of the twelve series steps sit below 3:1 against their surface
+ *  — a documented relief case for a filled bar, and one a 1px line would lean on
+ *  harder than it should. The label and the glyph are the primary channels
+ *  either way. */
+export const CANCELLED_OUTLINE_WIDTH = 2;
+
+/**
+ * The CSS for a cancelled bar: nothing inside it, its series colour around it.
+ *
+ * Returned as a style object rather than a background string — unlike
+ * `completedFill`, this has to switch the fill OFF, and a caller that spread a
+ * background-image over a `backgroundColor` it had already set would get a bar
+ * that is hollow and coloured at the same time.
+ */
+export const cancelledFill = (fill: string): { backgroundColor: string; backgroundImage: string; border: string } => ({
+  backgroundColor: "transparent",
+  backgroundImage: "none",
+  border: `${CANCELLED_OUTLINE_WIDTH}px solid ${fill}`,
+});

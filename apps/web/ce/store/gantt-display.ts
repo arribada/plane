@@ -72,6 +72,17 @@ class GanttDisplayStore {
    *  list of forty rows where ten of them are the plan. Unticking it gives back
    *  exactly the flat list this chart drew before. */
   nestSubtasks = true;
+  /**
+   * The critical chain is the subject of the chart rather than a mark on it:
+   * work with float is veiled, the links along the chain go loud, and the tails
+   * on the veiled bars say how much room each of them has.
+   *
+   * Deliberately NOT persisted, unlike everything above it. This is a question
+   * being asked — "show me what cannot move" — not a preference about how the
+   * board looks; coming back tomorrow to a half-veiled chart with no memory of
+   * having asked for it is the failure mode. It resets on reload.
+   */
+  focusCriticalPath = false;
   /** Group keys the viewer has folded away. Cleared when the dimension changes,
    *  because a key from one dimension means nothing in another. */
   collapsedGroups = new Set<string>();
@@ -92,6 +103,7 @@ class GanttDisplayStore {
       groupBy: observable.ref,
       rowOrder: observable.ref,
       nestSubtasks: observable.ref,
+      focusCriticalPath: observable.ref,
       collapsedGroups: observable,
       collapsedSubtasks: observable,
       flattenedFrom: observable.ref,
@@ -101,6 +113,7 @@ class GanttDisplayStore {
       setGroupBy: action,
       setRowOrder: action,
       setNestSubtasks: action,
+      setFocusCriticalPath: action,
       toggleGroupCollapsed: action,
       setAllGroupsCollapsed: action,
       toggleSubtaskCollapsed: action,
@@ -154,6 +167,11 @@ class GanttDisplayStore {
     // hide rows the moment nesting came back on.
     if (!v) this.collapsedSubtasks = new Set();
     this.persist();
+  };
+
+  /** No `persist()`: see the field. */
+  setFocusCriticalPath = (v: boolean): void => {
+    this.focusCriticalPath = v;
   };
 
   toggleGroupCollapsed = (key: string): void => {

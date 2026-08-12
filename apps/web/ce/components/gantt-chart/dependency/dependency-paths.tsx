@@ -16,19 +16,36 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
+import { useGanttColorScale } from "../color-scale";
+import { isDarkSurface } from "../palette";
+import { criticalColor, linkEmphasis } from "../critical-path";
+import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import { edgeOf } from "../edges";
 import { routeDependency, routeParentBracket } from "./routing";
 
 const PARENT_COLOR = "#94a3b8"; // muted slate — hierarchy links, distinct from the coloured dependency arrows
-const CRITICAL_COLOR = "#dc2626";
 
 // How loud the arrows are when nothing is being pointed at. The bars are the
 // subject of this chart; the arrows explain them. A dense plan drew ~40 of them at
 // near-full strength over the bars, which is how a legible schedule turns into a
 // ball of wool.
-const RESTING = { opacity: 0.28, width: 1 };
-const LOUD = { opacity: 0.95, width: 2 };
-const MUTED = { opacity: 0.06, width: 1 };
+const RESTING = { opacity: 0.3, width: 1 };
+const LOUD = { opacity: 0.95, width: 1.75 };
+const MUTED = { opacity: 0.07, width: 1 };
+
+const TONE = { loud: LOUD, resting: RESTING, quiet: MUTED } as const;
+
+/**
+ * How much thicker the critical chain is drawn than an ordinary link.
+ *
+ * It was +0.75 on top of a LOUD width of 2, i.e. a 2.75px line — and because the
+ * arrowhead was a marker in the default `markerUnits="strokeWidth"`, its 6-unit
+ * box was multiplied by that stroke into a **16.5px** head. On a chart whose bars
+ * are 18px tall, the arrow between two of them was bigger than either. The head
+ * is in user space now and this bump is half what it was: the chain is one step
+ * louder than its neighbours, not louder than the plan.
+ */
+const CRITICAL_BUMP = 0.5;
 
 // Arrow points predecessor -> successor. blocked_by is drawn reversed.
 //
@@ -69,6 +86,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   // fetch of the slack, one answer each — instead of every consumer asking again.
   const edges = useProjectRelations(workspaceSlug?.toString(), projectId?.toString());
   const { critical } = useProjectSlack(workspaceSlug?.toString(), projectId?.toString());
+  const colors = useGanttColorScale();
 
   // Only the per-project issue gantt draws arrows; the portfolio has no projectId.
   if (!projectId || !store.currentViewData) return null;
@@ -78,6 +96,12 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   const indexById = new Map<string, number>(blockIds.map((id, i): [string, number] => [id, i]));
   const active = store.activeBlockId;
   const { dimDependencies } = store;
+  const dark = colors?.dark ?? isDarkSurface();
+  const CRITICAL_COLOR = criticalColor(dark);
+  // While the chain is the chart's subject, the links ALONG it are the picture —
+  // they are what turns twenty ringed bars into one path. Everything else steps
+  // back with the bars it connects.
+  const focusChain = ganttDisplay.focusCriticalPath && critical.size > 0;
 
   // parent -> child hierarchy connectors (both must be visible + dated to have bars)
   const parentPaths = blockIds
@@ -150,32 +174,44 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         width: "100%",
         height: blockIds.length * BLOCK_HEIGHT,
         overflow: "visible",
-        zIndex: 6,
+        // 7, not 6: the veil that de-emphasises off-chain bars sits at 6, and the
+        // chain's own arrows are the thing it exists to reveal.
+        zIndex: 7,
         pointerEvents: "none",
       }}
     >
       <defs>
         {/* One marker per colour actually drawn, critical included — an arrowhead
-            left in the relation's colour on a red line reads as a different arrow. */}
+            left in the relation's colour on a red line reads as a different arrow.
+
+            `markerUnits="userSpaceOnUse"` is the fix for the loudest thing on the
+            chart. The default is `strokeWidth`, which MULTIPLIES the marker box by
+            the line's width: at the 2.75px a hovered critical link used to draw
+            at, a 6-unit head became 16.5px — nearly the height of a bar. The head
+            is now 7×6px whatever the line does, and `refX` puts its TIP on the
+            path's last point, which the router now guarantees is the bar's edge. */}
         {Object.entries({ ...COLOR, critical: CRITICAL_COLOR }).map(([t, c]) => (
           <marker
             key={t}
             id={`arw-${t}`}
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="6"
+            viewBox="0 0 7 6"
+            refX="7"
+            refY="3"
+            markerWidth="7"
             markerHeight="6"
+            markerUnits="userSpaceOnUse"
             orient="auto-start-reverse"
           >
-            <path d="M0,0 L10,5 L0,10 z" fill={c} />
+            <path d="M0,0 L7,3 L0,6 z" fill={c} />
           </marker>
         ))}
       </defs>
       {/* parent -> child hierarchy: muted dashed bracket + a small ring on the child */}
       {parentPaths.map((p) => {
-        const related = active && (p.from === active || p.to === active);
-        const tone = related ? LOUD : active ? MUTED : RESTING;
+        const related = !!active && (p.from === active || p.to === active);
+        // A hierarchy bracket is never "on the chain" — it is not a temporal
+        // link — so while the chain is focused it is context, always.
+        const tone = TONE[linkEmphasis({ related, pointing: !!active, onChain: false, focused: focusChain })];
         return (
           <g key={p.key} opacity={dimDependencies ? tone.opacity : Math.max(tone.opacity, related ? 0.9 : 0.6)}>
             <path d={p.d} fill="none" stroke={PARENT_COLOR} strokeWidth={tone.width} strokeDasharray="2 2" />
@@ -184,12 +220,14 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
         );
       })}
       {paths.map((p) => {
-        const related = active && (p.from === active || p.to === active);
-        // Three states, not two. An arrow touching the block under the cursor is
-        // the answer to "what does this wait on"; everything else is context that
-        // should get out of its way; and with nothing pointed at, all of it sits
-        // back far enough to read the bars through.
-        const tone = related ? LOUD : active ? MUTED : RESTING;
+        const related = !!active && (p.from === active || p.to === active);
+        // Four inputs, one decision, and it lives in `critical-path.ts` so it can
+        // be pinned by a test. An arrow touching the block under the cursor is the
+        // answer to "what does this wait on" and beats everything; while the chain
+        // is focused, a link along it is the subject and the rest is context; and
+        // with nothing pointed at and nothing focused, all of it sits back far
+        // enough to read the bars through.
+        const tone = TONE[linkEmphasis({ related, pointing: !!active, onChain: p.isCritical, focused: focusChain })];
         const stroke = p.isCritical ? CRITICAL_COLOR : p.color;
         const markerType = p.isCritical
           ? "critical"
@@ -202,7 +240,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
             stroke={stroke}
             // The critical chain stays one step louder in every state: it is the
             // one set of links where slipping a day slips the delivery date.
-            strokeWidth={p.isCritical ? tone.width + 0.75 : tone.width}
+            strokeWidth={p.isCritical ? tone.width + CRITICAL_BUMP : tone.width}
             markerEnd={`url(#arw-${markerType})`}
             opacity={dimDependencies ? tone.opacity : Math.max(tone.opacity, related ? 0.95 : 0.75)}
             style={{ pointerEvents: "stroke", transition: "opacity .12s, stroke-width .12s" }}

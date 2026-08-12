@@ -88,7 +88,9 @@ export const GanttLockButton = observer(function GanttLockButton({ lock }: { loc
       {open && (
         <>
           <button type="button" aria-label="Close" className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-72 rounded-md border border-subtle bg-layer-1 p-2">
+          {/* `whitespace-normal`: inherited nowrap from the toolbar group would
+              forbid these sentences from wrapping. See group-by.tsx. */}
+          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-72 rounded-md border border-subtle bg-layer-1 p-2 break-words whitespace-normal">
             <p className="px-1 pb-1 text-10 font-medium tracking-wide text-tertiary uppercase">
               Who may change this plan
             </p>

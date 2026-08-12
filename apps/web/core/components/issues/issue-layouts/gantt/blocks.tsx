@@ -29,7 +29,7 @@ import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-st
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
 import { useGanttColorScale } from "@/plane-web/components/gantt-chart/color-scale";
-import { completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
+import { CANCELLED_GLYPH, cancelledFill, completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
 import { useProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
@@ -87,18 +87,35 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   // cover every bar, and removing that veil made it invisible outright.
   const percent = useProjectProgress(issueId);
   /**
-   * Finished work, drawn distinctly — and only when the reader has asked for it.
+   * Work that has left the plan, drawn distinctly — and only when the reader has
+   * asked for it.
    *
-   * It used to be a 55% veil of the surface colour over the bar, which is the
-   * obvious move and is wrong twice over: it makes the colour-by choice
+   * Finished used to be a 55% veil of the surface colour over the bar, which is
+   * the obvious move and is wrong twice over: it makes the colour-by choice
    * unreadable exactly where it is most useful ("who finished what"), and on the
    * dark theme a faded bar and a pale series colour are the same picture. A 45°
    * hatch in the bar's OWN colour plus a tick says the same thing, keeps the
    * series legible, and survives a greyscale print.
+   *
+   * Cancelled used to be drawn as finished — same hatch, same tick — because
+   * `barLook` answered `done` for either state group. It has its own treatment
+   * now: no fill at all, its series colour as an outline, the label struck
+   * through and a ✕ instead of the tick. The reasoning, and why the other three
+   * state groups are deliberately drawn plain, is at the bottom of `palette.ts`.
+   * This chart and the portfolio draw it identically, on purpose.
    */
-  const showDone = !!look.done && (colors?.showCompleted ?? false);
+  // Named for what it governs rather than for the store key: `showCompleted` now
+  // decides both treatments. (`marked` is already taken two lines up, and means
+  // something else entirely — whether this item is a marked deliverable.)
+  const markClosed = colors?.showCompleted ?? false;
+  const showDone = !!look.done && markClosed;
+  const showCancelled = !!look.cancelled && markClosed;
   const style = colorOverride ? { ...blockStyle, backgroundColor: colorOverride } : blockStyle;
-  const barStyle = showDone ? { ...style, backgroundImage: completedFill(fill) } : style;
+  const barStyle = showCancelled
+    ? { ...style, ...cancelledFill(fill) }
+    : showDone
+      ? { ...style, backgroundImage: completedFill(fill) }
+      : style;
 
   const handleIssuePeekOverview = () => handleRedirection(workspaceSlug, issueDetails, isMobile);
 
@@ -122,7 +139,9 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
             // A one-day item is drawn as a diamond by the overlay. The bar behind it
             // is a 3px sliver poking out from under the marker, which reads as a
             // rendering fault — so it steps aside and leaves the shape to the diamond.
-            style={look.milestone ? { ...barStyle, backgroundColor: "transparent" } : barStyle}
+            // The cancelled outline steps aside with it, for the same reason: a 2px
+            // box drawn around a 3px sliver is not an outline, it is a smudge.
+            style={look.milestone ? { ...barStyle, backgroundColor: "transparent", border: undefined } : barStyle}
             // a real button element would restyle the bar (UA text-align/appearance) and cannot legally wrap these divs
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
             role="button"
@@ -132,7 +151,11 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
           >
             {/* A finished bar steps back rather than shouting: what is left to do is
                 the part of a plan you read. Overdue does the opposite. */}
-            {percent > 0 && percent < 100 && (
+            {/* Not on a cancelled bar: the whole point of taking the fill away is
+                that an abandoned item stops claiming area, and a progress shade
+                is area. How far something got before it was dropped is a fact for
+                the panel, not for the plan. */}
+            {!showCancelled && percent > 0 && percent < 100 && (
               <div
                 className="pointer-events-none absolute top-0 left-0 h-full rounded-l-sm bg-black/25"
                 style={{ width: `${percent}%` }}
@@ -152,15 +175,30 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
               />
             )}
             <div
-              className="sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
+              className={
+                showCancelled
+                  ? // No fill left to read against, so the label takes the
+                    // ordinary text token — the one pairing this product has
+                    // already contrast-checked against both surfaces — and the
+                    // line through it is the channel that says "cancelled"
+                    // outright rather than by inference.
+                    "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13 text-primary line-through decoration-1"
+                  : "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
+              }
               // Chosen against the bar's own fill, done or not: the hatch keeps the
               // bar's own colour, so the contrast decision is the same one. The
               // `look.done ? undefined` that used to be here existed for the veil.
-              style={{ left: `${sidebarPaneWidth}px`, color: look.text }}
+              style={{ left: `${sidebarPaneWidth}px`, color: showCancelled ? undefined : look.text }}
             >
               {/* The glyph, not only the texture. A hatch is invisible on a
-                  three-day bar and gone entirely in a greyscale print. */}
-              {showDone && <span aria-hidden>{DONE_GLYPH} </span>}
+                  three-day bar and gone entirely in a greyscale print — and a ✕
+                  says the opposite thing from a ✓, which is why cancelled work
+                  stopped sharing the tick. */}
+              {showCancelled ? (
+                <span aria-hidden>{CANCELLED_GLYPH} </span>
+              ) : (
+                showDone && <span aria-hidden>{DONE_GLYPH} </span>
+              )}
               {issueDetails?.name}
             </div>
             {isEpic && (

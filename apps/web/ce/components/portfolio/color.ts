@@ -147,17 +147,35 @@ export const portfolioItemSample = (
 };
 
 /**
- * Whether a work item is finished.
+ * Which of Plane's five state groups a work item is in: `backlog`, `unstarted`,
+ * `started`, `completed` or `cancelled`.
  *
- * The state GROUP, not the state name: a workspace can call its done column
- * anything, and two of them ("completed" and "cancelled") both mean the work is
- * off the board. Cancelled counts as finished here on purpose — the question the
- * toggle answers is "what is still ahead of me", and a cancelled item is not.
+ * The GROUP, not the state name — a workspace can call its done column anything,
+ * and the group is the only thing that survives being renamed. Undefined when
+ * the item has no state, or when the state store has not loaded it yet, and
+ * every caller here treats that as "the ordinary run of work" rather than
+ * guessing.
  */
-export const isItemDone = (item: TPortfolioItem, resolvers: TPortfolioColorResolvers = {}): boolean => {
-  const group = item.state_id ? resolvers.getState?.(item.state_id)?.group : undefined;
-  return group === "completed" || group === "cancelled";
-};
+export const itemStateGroup = (item: TPortfolioItem, resolvers: TPortfolioColorResolvers = {}): string | undefined =>
+  item.state_id ? resolvers.getState?.(item.state_id)?.group : undefined;
+
+/**
+ * Whether a work item is FINISHED — delivered, not abandoned.
+ *
+ * `cancelled` used to answer true here as well, on the reasoning that the toggle
+ * answers "what is still ahead of me" and a cancelled item is not. That reading
+ * of the toggle is right and the conflation was still wrong: it drew a ✓ on
+ * abandoned work, and a tick means achieved. The two groups now have two
+ * treatments — see the note at the bottom of `palette.ts` — and `isItemCancelled`
+ * is the other half.
+ */
+export const isItemDone = (item: TPortfolioItem, resolvers: TPortfolioColorResolvers = {}): boolean =>
+  itemStateGroup(item, resolvers) === "completed";
+
+/** Whether a work item was abandoned. Off the board, like a finished one, and
+ *  not the same fact about it. */
+export const isItemCancelled = (item: TPortfolioItem, resolvers: TPortfolioColorResolvers = {}): boolean =>
+  itemStateGroup(item, resolvers) === "cancelled";
 
 /**
  * Whether a project is finished — every work item in it is.

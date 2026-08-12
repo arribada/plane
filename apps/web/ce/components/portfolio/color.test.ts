@@ -14,8 +14,10 @@ import { describe, expect, it } from "vitest";
 import { SERIES_LIGHT, unsetColor } from "@/plane-web/components/gantt-chart/palette";
 import type { TPortfolioItem, TPortfolioProject } from "@/plane-web/types/arribada";
 import {
+  isItemCancelled,
   isItemDone,
   isProjectDone,
+  itemStateGroup,
   isSeriesDimension,
   PORTFOLIO_COLOR_OPTIONS,
   PORTFOLIO_SUMMARY_COLOR,
@@ -198,10 +200,30 @@ describe("what counts as finished", () => {
     expect(done).toBe(true);
   });
 
-  it("counts cancelled as finished — the question is what is still ahead", () => {
-    expect(isItemDone(item({ state_id: "s" }), { getState: () => ({ name: "Dropped", group: "cancelled" }) })).toBe(
-      true
-    );
+  /**
+   * This used to answer TRUE, on the reasoning that the toggle asks "what is
+   * still ahead of me" and a cancelled item is not. The reading was right and
+   * the conflation was still wrong: `bar.tsx` draws a ✓ on anything this calls
+   * done, and a tick on abandoned work says it was achieved.
+   */
+  it("does NOT count cancelled as finished — a tick means achieved", () => {
+    const cancelled = item({ state_id: "s" });
+    const dropped = { getState: () => ({ name: "Dropped", group: "cancelled" }) };
+    expect(isItemDone(cancelled, dropped)).toBe(false);
+    expect(isItemCancelled(cancelled, dropped)).toBe(true);
+  });
+
+  it("does not call a finished item cancelled either", () => {
+    expect(isItemCancelled(item({ state_id: "s" }), { getState: () => ({ group: "completed" }) })).toBe(false);
+  });
+
+  it("names all five of Plane's state groups, and nothing for an item with no state", () => {
+    for (const group of ["backlog", "unstarted", "started", "completed", "cancelled"])
+      expect(itemStateGroup(item({ state_id: "s" }), { getState: () => ({ group }) })).toBe(group);
+    // No state, or a state store that has not loaded it: "the ordinary run of
+    // work", which is what every caller here treats undefined as.
+    expect(itemStateGroup(item())).toBeUndefined();
+    expect(itemStateGroup(item({ state_id: "s" }), { getState: () => undefined })).toBeUndefined();
   });
 
   it("does not call an in-progress item done", () => {
@@ -209,6 +231,18 @@ describe("what counts as finished", () => {
       false
     );
     expect(isItemDone(item())).toBe(false);
+  });
+
+  it("gives the three ordinary state groups no treatment at all", () => {
+    // Restraint, stated as a test: the board already carries colour-by, two
+    // hatches, a tick, a ✕, a ring, a diamond and a progress fill. Backlog, Todo
+    // and In progress are the default, and a marked default is not a default —
+    // see the note on the five state groups at the bottom of palette.ts.
+    for (const group of ["backlog", "unstarted", "started"]) {
+      const row = item({ state_id: "s" });
+      expect(isItemDone(row, { getState: () => ({ group }) })).toBe(false);
+      expect(isItemCancelled(row, { getState: () => ({ group }) })).toBe(false);
+    }
   });
 
   it("calls a project done only when every one of its items is", () => {

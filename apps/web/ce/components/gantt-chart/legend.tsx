@@ -18,13 +18,14 @@
  * says "Other" and stops has hidden seven people from the person reading it.
  */
 import type { FC } from "react";
-import { completedFill, type TColorScale, type TSeries } from "./palette";
+import { CANCELLED_OUTLINE_WIDTH, completedFill, type TColorScale, type TSeries } from "./palette";
 
 export type TLegendMark = {
   key: string;
   label: string;
-  /** How to draw the swatch. */
-  kind: "hatch" | "line" | "dashed" | "diamond" | "ring";
+  /** How to draw the swatch. `hollow` is a bar with its fill taken away and a
+   *  line through it — what a cancelled item is drawn as. */
+  kind: "hatch" | "hollow" | "line" | "dashed" | "diamond" | "ring";
   color: string;
   title?: string;
 };
@@ -54,6 +55,23 @@ const MarkSwatch: FC<{ mark: TLegendMark }> = ({ mark }) => {
         className="inline-block h-3 w-4 flex-shrink-0 rounded-sm"
         style={{ backgroundImage: completedFill(mark.color), boxShadow: "inset 0 0 0 1px rgb(0 0 0 / 0.12)" }}
       />
+    );
+  // Drawn the way the bar is: nothing inside it, its colour around it, struck.
+  // The rule is a child rather than a `text-decoration`, because the swatch has
+  // no text — and it is inset by a pixel so it reads as a strike over the bar
+  // rather than as a second border.
+  if (mark.kind === "hollow")
+    return (
+      <span
+        aria-hidden
+        className="relative inline-block h-3 w-4 flex-shrink-0 rounded-sm"
+        style={{ border: `${CANCELLED_OUTLINE_WIDTH}px solid ${mark.color}` }}
+      >
+        <span
+          className="absolute top-1/2 left-px h-px w-[calc(100%-2px)] -translate-y-1/2"
+          style={{ backgroundColor: mark.color }}
+        />
+      </span>
     );
   if (mark.kind === "diamond")
     return (

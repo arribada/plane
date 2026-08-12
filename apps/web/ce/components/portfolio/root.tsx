@@ -244,7 +244,7 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   const legendMarks = useMemo(() => {
     const series = isSeriesDimension(portfolio.colorBy as TPortfolioColorBy);
     const marks: TLegendMark[] = [];
-    if (ganttDisplay.showCompleted)
+    if (ganttDisplay.showCompleted) {
       marks.push({
         key: "done",
         label: "Finished",
@@ -252,6 +252,18 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
         color: "#64748b",
         title: "Hatched, with a tick. Every item in a project is done, or the work item's state is a done state.",
       });
+      // Work items only: a project has no state of its own to be cancelled in,
+      // and its done-ness is counted from its items. Drawn identically to the
+      // work-item timeline, which is the parity rule for this board.
+      marks.push({
+        key: "cancelled",
+        label: "Cancelled",
+        kind: "hollow",
+        color: "#64748b",
+        title:
+          "Outlined and struck through, with a ✕ — the work item was abandoned. It keeps its span and loses its fill, so it no longer reads as work in the plan.",
+      });
+    }
     marks.push({
       key: "summary",
       label: "Project summary",

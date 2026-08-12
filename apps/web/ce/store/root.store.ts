@@ -6,7 +6,7 @@
 
 // store
 import { CoreRootStore } from "@/store/root.store";
-import { mirrorIssueDatesIntoPortfolio } from "./portfolio-issue-dates";
+import { mirrorIssueChangesIntoPortfolio } from "./portfolio-issue-mirror";
 import { PortfolioStore } from "./portfolio.store";
 import type { IPortfolioStore } from "./portfolio.store";
 import type { ITimelineStore } from "./timeline";
@@ -26,6 +26,6 @@ export class RootStore extends CoreRootStore {
     // Wired here rather than inside PortfolioStore because it is the join between
     // two stores and this is the first place both exist. The disposer is dropped
     // on purpose: it lives as long as the tab.
-    mirrorIssueDatesIntoPortfolio(this);
+    mirrorIssueChangesIntoPortfolio(this);
   }
 }

@@ -16,6 +16,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildColorScale,
+  CANCELLED_GLYPH,
+  CANCELLED_OUTLINE_WIDTH,
+  cancelledFill,
   completedFill,
   DONE_GLYPH,
   hatchStripe,
@@ -214,6 +217,52 @@ describe("done-ness is a texture, never a hue", () => {
     // Label colours and hsl() project colours both reach this code.
     expect(mixHex("hsl(200, 50%, 50%)", "#ffffff", 0.3)).toBe("hsl(200, 50%, 50%)");
     expect(completedFill("hsl(200, 50%, 50%)")).not.toContain("NaN");
+  });
+});
+
+/**
+ * Cancelled is the other state that means the work has left the plan, and it
+ * used to share done's hatch and done's tick. The whole point of the split is
+ * that the two now say different things, so what is asserted here is mostly what
+ * the treatment must NOT be.
+ */
+describe("cancelled-ness is an absence of fill, never a hue and never a fade", () => {
+  it("takes the fill away rather than dimming it", () => {
+    // "A cancelled item still occupying a full-strength bar overstates a plan" is
+    // a statement about AREA. An opacity would keep the area and cost the
+    // colour-by encoding its legibility, which is already why done is a hatch
+    // rather than a veil — and on a dark surface a faded bar and a pale series
+    // colour are the same picture.
+    const style = cancelledFill(SERIES_LIGHT[0]);
+    expect(style.backgroundColor).toBe("transparent");
+    expect(style.backgroundImage).toBe("none");
+    expect(JSON.stringify(style)).not.toMatch(/opacity|rgba/);
+  });
+
+  it("keeps the series colour, so the colour-by choice still answers", () => {
+    for (const color of [...SERIES_LIGHT, ...SERIES_DARK]) expect(cancelledFill(color).border).toContain(color);
+  });
+
+  it("is not a third diagonal", () => {
+    // 45° is done and 135° is "dates inferred". A third angle on one board is a
+    // texture nobody can decode; an absence of fill is not on that axis at all.
+    const style = cancelledFill(SERIES_LIGHT[0]);
+    expect(JSON.stringify(style)).not.toContain("gradient");
+    expect(JSON.stringify(style)).not.toContain("deg");
+  });
+
+  it("carries its own glyph, and it is not the tick", () => {
+    // A ✓ on abandoned work reads as achieved. That is the defect the split
+    // exists to fix, and one assertion is all it takes to keep it fixed.
+    expect(CANCELLED_GLYPH).toBeTruthy();
+    expect(CANCELLED_GLYPH).not.toBe(DONE_GLYPH);
+  });
+
+  it("outlines thickly enough not to lean on the relaxed-contrast steps", () => {
+    // Three of the twelve series steps sit below 3:1 against their surface — a
+    // documented relief case for a filled bar, and one a hairline would lean on
+    // harder than it should.
+    expect(CANCELLED_OUTLINE_WIDTH).toBeGreaterThanOrEqual(2);
   });
 });
 

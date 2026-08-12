@@ -98,13 +98,23 @@ describe("the colour rule, and the legend that decodes it", () => {
     // not there, and quietly undermines the entries that ARE true.
     const plain = draw([row()]);
     expect(plain).toContain("Today"); // today IS inside this range
-    for (const absent of ["Finished", "Critical path", "Deliverable", "Baseline"]) expect(plain).not.toContain(absent);
+    for (const absent of ["Finished", "Cancelled", "Critical path", "Deliverable", "Baseline"])
+      expect(plain).not.toContain(absent);
   });
 
   it("keys a mark as soon as one bar wears it", () => {
     expect(draw([row({ done: true })])).toContain("Finished");
+    expect(draw([row({ cancelled: true })])).toContain("Cancelled");
     expect(draw([row({ critical: true })])).toContain("Critical path");
     expect(draw([row({ milestone: true })])).toContain("Deliverable");
+  });
+
+  it("does not key Finished over a picture whose only closed bar was cancelled", () => {
+    // The two used to be one flag, so a plan whose only closed work had been
+    // ABANDONED came out of here keyed "Finished".
+    const svg = draw([row({ cancelled: true })]);
+    expect(svg).toContain("Cancelled");
+    expect(svg).not.toContain("Finished");
   });
 });
 
@@ -125,6 +135,27 @@ describe("what the bars are wearing", () => {
     const hatches = (svg: string) => svg.split('fill="url(#done)"').length - 1;
     expect(hatches(draw([row()]))).toBe(0);
     expect(hatches(draw([row({ done: true })]))).toBe(2);
+  });
+
+  it("draws a cancelled bar hollow and struck, and marks its label ✕ rather than ✓", () => {
+    // The file leaving the building is the copy a funder reads. A ✓ on abandoned
+    // work says it was achieved, and a full-strength bar says it was planned and
+    // is still there — which is why the fill goes and the outline stays.
+    const svg = draw([row({ cancelled: true, color: "#781e98" })]);
+    expect(svg).toContain("✕ STT-1");
+    expect(svg).not.toContain("✓ STT-1");
+    expect(svg).toContain('fill="none" stroke="#781e98" stroke-width="2"');
+    expect(svg).toContain('text-decoration="line-through"');
+    // No hatch and no filled bar: the two treatments must not stack.
+    expect(svg).not.toContain('fill="url(#done)"');
+    expect(svg).not.toContain('fill="#781e98" opacity="0.92"');
+  });
+
+  it("does not put a progress shade back inside a cancelled bar", () => {
+    // The point of taking the fill away is that abandoned work stops claiming
+    // area, and a progress shade is area.
+    const svg = draw([row({ cancelled: true, progress: 60 })]);
+    expect(svg).not.toContain('fill="#000000" opacity="0.22"');
   });
 
   it("paints the bar the colour the row was carrying, not a fixed blue", () => {
@@ -174,6 +205,10 @@ describe("the baseline", () => {
   });
 });
 
+/** The one `<path>` in the file that is a dependency arrow, by its two colours. */
+const arrowPath = (svg: string): string =>
+  /<path d="([^"]+)" fill="none" stroke="#(?:dc2626|94a3b8)"/.exec(svg)?.[1] ?? "";
+
 describe("dependency arrows", () => {
   const pair = [row({ id: "a" }), row({ id: "b", start: day("2026-03-09"), end: day("2026-03-12") })];
 
@@ -187,26 +222,80 @@ describe("dependency arrows", () => {
     expect(draw(pair, [{ from: "a", to: "b", critical: true }])).toContain('marker-end="url(#ahc)"');
   });
 
-  it("never turns its middle segment backwards at a short gap", () => {
-    // The same failure the on-screen router had: `x2 - 12` sits LEFT of where
-    // the arrow had got to when the two bars nearly touch, and the line draws a
-    // little Z in the seam.
-    for (const gap of [0, 1, 2, 3]) {
-      const start = new Date(day("2026-03-06").getTime() + gap * 86_400_000);
-      const rows = [row({ id: "a" }), row({ id: "b", start, end: new Date(start.getTime() + 3 * 86_400_000) })];
-      const svg = draw(rows, [{ from: "a", to: "b" }]);
-      const path = /<path d="M ([\d.]+) [\d.]+ H ([\d.]+)(?: V [\d.]+ H ([\d.]+))?"/.exec(svg);
-      expect(path).not.toBeNull();
-      const [x1, mid, stop] = [Number(path![1]), Number(path![2]), Number(path![3] ?? path![2])];
-      expect(mid).toBeGreaterThanOrEqual(Math.min(x1, stop) - 12.01);
-      expect(stop).toBeGreaterThanOrEqual(mid);
+  /**
+   * The exporter was the SECOND renderer of the arrow defect, and the one the
+   * on-screen fix was reported to have covered while never touching it. Its own
+   * arithmetic was
+   *
+   *   stop = x2 - 4;  mid = max(min(x1 + 6, stop), stop - 12)
+   *
+   * which at a zero gap gives `mid = stop = x1 - 4`: a four-pixel horizontal
+   * BACKWARDS, a square corner, and a final `H` of zero length so the arrowhead
+   * pointed at the floor. The final horizontal was zero for any gap under 22px.
+   *
+   * It calls the shared router now, so these assert the two properties that
+   * matter rather than the shape of one particular formula — which is the trap
+   * the previous version of this test fell into.
+   */
+  const gapCases = [0, 1, 2, 3, 5];
+
+  const drawWithGap = (gap: number): string => {
+    const start = new Date(day("2026-03-06").getTime() + gap * 86_400_000);
+    const rows = [row({ id: "a" }), row({ id: "b", start, end: new Date(start.getTime() + 3 * 86_400_000) })];
+    return draw(rows, [{ from: "a", to: "b" }]);
+  };
+
+  it.each(gapCases)("never travels backwards over itself at a %i-day gap", (gap) => {
+    const tokens = arrowPath(drawWithGap(gap)).trim().split(/\s+/);
+    expect(tokens.length).toBeGreaterThan(2);
+    // Horizontal runs only; the router's arcs never reverse a heading.
+    let cursorX: number | null = null;
+    const moves: number[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === "M") {
+        cursorX = Number(tokens[i + 1]);
+        i += 2;
+      } else if (tokens[i] === "H" && cursorX !== null) {
+        const next = Number(tokens[i + 1]);
+        if (Math.abs(next - cursorX) > 0.001) moves.push(next - cursorX);
+        cursorX = next;
+        i += 1;
+      } else if (tokens[i] === "a" && cursorX !== null) {
+        cursorX += Number(tokens[i + 6]);
+        i += 7;
+      }
     }
+    // Forward-only, or forward/back/forward through the band — never a forward
+    // run followed by a backward one AT THE SAME HEIGHT, which is the doubling
+    // back that was reported.
+    expect(moves.length).toBeGreaterThan(0);
+    expect(moves[0]).toBeGreaterThan(0);
+    expect(moves[moves.length - 1]).toBeGreaterThan(0);
   });
 
-  it("ends on a horizontal, so the head takes its bearing from the run into the bar", () => {
+  it.each(gapCases)("ends on a horizontal long enough to carry the head at a %i-day gap", (gap) => {
+    const tokens = arrowPath(drawWithGap(gap)).trim().split(/\s+/);
+    // `orient="auto"` takes its bearing from the last segment; a zero-length one
+    // aims the head down the vertical before it.
+    expect(tokens.at(-2)).toBe("H");
+    const stop = Number(tokens.at(-1));
+    // Whatever came before the final H, the run into the bar is a real run.
+    const beforeIndex = tokens.length - 2;
+    let cursorX = 0;
+    for (let i = 0; i < beforeIndex; i++) {
+      if (tokens[i] === "M") cursorX = Number(tokens[i + 1]);
+      else if (tokens[i] === "H") cursorX = Number(tokens[i + 1]);
+      else if (tokens[i] === "a") cursorX += Number(tokens[i + 6]);
+    }
+    expect(Math.abs(stop - cursorX)).toBeGreaterThanOrEqual(6);
+  });
+
+  it("puts the arrowhead in user space, so a critical head is not 40% bigger", () => {
+    // `markerUnits="strokeWidth"` multiplies the head's box by the line's width,
+    // so the same marker drew at two sizes for two severities of the same thing.
     const svg = draw(pair, [{ from: "a", to: "b" }]);
-    const path = /<path d="([^"]+)" fill="none"/.exec(svg)?.[1] ?? "";
-    expect(path.trim().split(" ").at(-2)).toBe("H");
+    expect(svg).not.toContain('markerUnits="strokeWidth"');
+    expect(svg).toContain('markerUnits="userSpaceOnUse"');
   });
 });
 

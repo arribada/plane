@@ -23,6 +23,16 @@ import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { getBaselineShared } from "../baseline-request";
 import { clearShownBaseline, publishShownBaseline } from "../baseline-shown";
+import { useGanttColorScale } from "../color-scale";
+import { isDarkSurface } from "../palette";
+import {
+  criticalColor,
+  CRITICAL_CASING_WIDTH,
+  CRITICAL_RING_OFFSET,
+  CRITICAL_RING_WIDTH,
+  VEIL_OPACITY,
+} from "../critical-path";
+import { ganttDisplay } from "@/plane-web/store/gantt-display";
 
 type Props = {
   itemsContainerWidth: number;
@@ -152,7 +162,15 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   // This overlay is shared by every gantt (issues/cycles/modules); the portfolio-only
   // critical-path arrows must render solely in the portfolio's PROJECT timeline slot.
   const isPortfolio = useContext(TimeLineTypeContext) === GANTT_TIMELINE_TYPE.PROJECT;
+  // The chart's own answer for which theme it is painting, falling back to the
+  // document for a chart that never opted into a colour scale.
+  const colors = useGanttColorScale();
   const [baseline, setBaseline] = useState<Record<string, { start: string | null; target: string | null }>>({});
+  const dark = colors?.dark ?? isDarkSurface();
+  const red = criticalColor(dark);
+  // Nothing to focus on a chart with no chain, whatever the switch says — the
+  // banner that owns the switch is not even drawn in that case.
+  const focusChain = ganttDisplay.focusCriticalPath && critical.size > 0;
 
   // Which promised plan the ghosts draw; empty means the newest.
   const selectedBaseline = store.selectedBaselineId;
@@ -272,6 +290,54 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
     }
   }
 
+  /**
+   * The veil: everything that is NOT on the chain, while the chain is the
+   * subject of the chart.
+   *
+   * Twenty of forty bars ringed is not a highlight — there is no ground left for
+   * the figure. Taking the other twenty back is what makes the chain findable,
+   * and it costs no new vocabulary: it is the same de-emphasis the arrows have
+   * always used on hover, applied to the bars for as long as the question is
+   * being asked. See `critical-path.ts`.
+   *
+   * A surface wash rather than an opacity change on the bar, so it recedes
+   * toward the PAGE in both themes rather than going pale in one and muddy in
+   * the other. Drawn in its own layer above the bars, because the bars are
+   * opaque and this one has to be on top of them — which is also why the ring
+   * below, which sits OUTSIDE the bar, can stay in this layer.
+   */
+  const veils: { x: number; y: number; w: number; h: number; r: number }[] = [];
+  if (focusChain) {
+    for (let i = 0; i < blockIds.length; i++) {
+      const id = blockIds[i];
+      if (critical.has(id)) continue;
+      const block = store.getBlockById(id);
+      if (!block?.position) continue;
+      // A milestone is a diamond drawn from the row's centre, not a bar, so the
+      // veil has to cover the shape that is actually there.
+      const isMilestone = !!block.start_date && block.start_date === block.target_date;
+      if (isMilestone) {
+        const cy = i * BLOCK_HEIGHT + BLOCK_HEIGHT / 2;
+        veils.push({
+          x: block.position.marginLeft - DIAMOND - 1,
+          y: cy - DIAMOND - 1,
+          w: 2 * (DIAMOND + 1),
+          h: 2 * (DIAMOND + 1),
+          r: 2,
+        });
+        continue;
+      }
+      if (!block.position.width) continue;
+      veils.push({
+        x: block.position.marginLeft,
+        y: i * BLOCK_HEIGHT + (BLOCK_HEIGHT - BAR) / 2,
+        w: block.position.width,
+        h: BAR,
+        r: 4,
+      });
+    }
+  }
+
   // "today" marker
   const todayX = store.getPositionFromDateOnGantt(new Date(), 0);
 
@@ -329,101 +395,161 @@ export const GanttAdditionalLayers: FC<Props> = observer(function GanttAdditiona
   }
 
   return (
-    <svg
-      className="pointer-events-none absolute top-0 left-0"
-      style={{ width: itemsContainerWidth, height, overflow: "visible", zIndex: 4 }}
-    >
-      {bands.map((b) => (
-        <rect key={`wk-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
-      ))}
-      {/* A shade darker than a weekend, and it carries its name: "why is nothing
-          happening that week" is answerable by hovering rather than by asking. */}
-      {holidayBands.map((b) => (
-        <rect key={`hol-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.07}>
-          <title>{b.name}</title>
-        </rect>
-      ))}
-      {ghosts.map((g) => (
-        <rect
-          key={`bl-${g.x}-${g.y}`}
-          x={g.x}
-          y={g.y}
-          width={g.w}
-          height={5}
-          rx={2}
-          fill="none"
-          stroke="#64748b"
-          strokeWidth={1}
-          strokeDasharray="3 2"
-          opacity={0.75}
-        />
-      ))}
-      {tails.map((t) => (
-        <g key={`sl-${t.x}-${t.y}`} opacity={0.75}>
-          <line x1={t.x} y1={t.y} x2={t.x + t.w} y2={t.y} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="3 2" />
-          {/* End cap, so a tail reads as a bounded amount of room rather than as a
-              line that trails off. */}
-          <line x1={t.x + t.w} y1={t.y - 4} x2={t.x + t.w} y2={t.y + 4} stroke="#94a3b8" strokeWidth={1.5} />
-          {t.w > 26 && (
-            <text x={t.x + 4} y={t.y - 4} fontSize={9} className="fill-tertiary">
-              +{t.days}d
-            </text>
-          )}
-        </g>
-      ))}
-      {criticalBars.map((bar) => (
-        <rect
-          key={`cp-${bar.x}-${bar.y}`}
-          x={bar.x - 1.5}
-          y={bar.y - 1.5}
-          width={bar.w + 3}
-          height={BAR + 3}
-          rx={4}
-          fill="none"
-          stroke="#dc2626"
-          strokeWidth={1.75}
-          opacity={0.95}
-        />
-      ))}
-      {typeof todayX === "number" && (
-        <g>
-          {/* Dashed and capped. A plain hairline was easy to mistake for a month
-              gridline, and easier still to lose now the bars carry full colour. */}
-          <line
-            x1={todayX}
-            y1={0}
-            x2={todayX}
-            y2={height}
-            stroke="#ef4444"
-            strokeWidth={1.5}
-            strokeDasharray="4 3"
-            opacity={0.85}
-          />
-          <circle cx={todayX} cy={3} r={3} fill="#ef4444" />
-        </g>
+    <>
+      {/*
+        The veil, in its own layer.
+
+        Everything else this component draws sits at zIndex 4, UNDER the bars —
+        which is right for a band, a ghost, a tail and a ring, all of which are
+        either behind a bar or outside it. The veil is the one mark that has to
+        be ON TOP of one, because the bars are opaque, so it gets a layer of its
+        own at 6. `TimelineDependencyPaths` was moved to 7 in the same change, so
+        the chain's own arrows still draw over the veiled half of the chart —
+        they are the part of the picture the veil exists to reveal.
+      */}
+      {veils.length > 0 && (
+        <svg
+          className="pointer-events-none absolute top-0 left-0"
+          style={{ width: itemsContainerWidth, height, overflow: "visible", zIndex: 6 }}
+        >
+          {veils.map((v) => (
+            <rect
+              key={`veil-${v.x}-${v.y}`}
+              x={v.x}
+              y={v.y}
+              width={v.w}
+              height={v.h}
+              rx={v.r}
+              // The page colour, not a global opacity: a washed bar has to recede
+              // toward the surface in BOTH themes, and `opacity` alone makes a
+              // light bar pale and a dark bar muddy.
+              style={{ fill: "var(--bg-surface-1)" }}
+              opacity={VEIL_OPACITY}
+            />
+          ))}
+        </svg>
       )}
-      {isPortfolio && <DependencyArrows blockIds={blockIds} />}
-      {milestones.map((m) => (
-        <g key={`ms-${m.x}-${m.y}`}>
-          <path
-            d={`M ${m.x} ${m.y - DIAMOND} L ${m.x + DIAMOND} ${m.y} L ${m.x} ${m.y + DIAMOND} L ${m.x - DIAMOND} ${m.y} Z`}
-            fill="#f59e0b"
-            stroke="#b45309"
+      <svg
+        className="pointer-events-none absolute top-0 left-0"
+        style={{ width: itemsContainerWidth, height, overflow: "visible", zIndex: 4 }}
+      >
+        {bands.map((b) => (
+          <rect key={`wk-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.035} />
+        ))}
+        {/* A shade darker than a weekend, and it carries its name: "why is nothing
+          happening that week" is answerable by hovering rather than by asking. */}
+        {holidayBands.map((b) => (
+          <rect key={`hol-${b.x}`} x={b.x} y={0} width={b.w} height={height} className="fill-primary" opacity={0.07}>
+            <title>{b.name}</title>
+          </rect>
+        ))}
+        {ghosts.map((g) => (
+          <rect
+            key={`bl-${g.x}-${g.y}`}
+            x={g.x}
+            y={g.y}
+            width={g.w}
+            height={5}
+            rx={2}
+            fill="none"
+            stroke="#64748b"
             strokeWidth={1}
+            strokeDasharray="3 2"
+            opacity={0.75}
           />
-          {m.name && (
-            <text
-              x={m.x + DIAMOND + 4}
-              y={m.y + 3}
-              fontSize={10}
-              className="fill-secondary"
-              style={{ fontWeight: 500 }}
-            >
-              {m.name.length > 28 ? m.name.slice(0, 28) + "…" : m.name}
-            </text>
-          )}
-        </g>
-      ))}
-    </svg>
+        ))}
+        {tails.map((t) => (
+          // Louder while the chain is the subject: the veiled half of the chart is
+          // being asked "how much room do you have", and the tail is the answer.
+          <g key={`sl-${t.x}-${t.y}`} opacity={focusChain ? 1 : 0.75}>
+            <line x1={t.x} y1={t.y} x2={t.x + t.w} y2={t.y} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="3 2" />
+            {/* End cap, so a tail reads as a bounded amount of room rather than as a
+              line that trails off. */}
+            <line x1={t.x + t.w} y1={t.y - 4} x2={t.x + t.w} y2={t.y + 4} stroke="#94a3b8" strokeWidth={1.5} />
+            {/* The number is normally kept for tails wide enough to hold it, so a
+              dense chart is not a field of labels. Focused, every one of them is
+              shown: a bar dimmed for having room has to say how much. */}
+            {(focusChain || t.w > 26) && (
+              <text x={t.x + 4} y={t.y - 4} fontSize={9} className="fill-tertiary">
+                +{t.days}d
+              </text>
+            )}
+          </g>
+        ))}
+        {/*
+        The ring, in two strokes.
+        A single red ring drawn tight against the bar is not separable from the
+        bar when the bar's own series colour is the red step or the pink one —
+        the validator puts those pairs at ΔE 5.8 (deutan) and 12.3 (normal
+        vision). The casing puts a hard edge of PAGE colour between the two, so
+        the ring reads as a ring whatever the bar underneath is painted. Shape
+        carries it; colour confirms it. See critical-path.ts.
+      */}
+        {criticalBars.map((bar) => (
+          <g key={`cp-${bar.x}-${bar.y}`}>
+            <rect
+              x={bar.x - CRITICAL_RING_OFFSET}
+              y={bar.y - CRITICAL_RING_OFFSET}
+              width={bar.w + CRITICAL_RING_OFFSET * 2}
+              height={BAR + CRITICAL_RING_OFFSET * 2}
+              rx={4}
+              fill="none"
+              style={{ stroke: "var(--bg-surface-1)" }}
+              strokeWidth={CRITICAL_CASING_WIDTH}
+            />
+            <rect
+              x={bar.x - CRITICAL_RING_OFFSET}
+              y={bar.y - CRITICAL_RING_OFFSET}
+              width={bar.w + CRITICAL_RING_OFFSET * 2}
+              height={BAR + CRITICAL_RING_OFFSET * 2}
+              rx={4}
+              fill="none"
+              stroke={red}
+              strokeWidth={CRITICAL_RING_WIDTH}
+              opacity={0.95}
+            />
+          </g>
+        ))}
+        {typeof todayX === "number" && (
+          <g>
+            {/* Dashed and capped. A plain hairline was easy to mistake for a month
+              gridline, and easier still to lose now the bars carry full colour. */}
+            <line
+              x1={todayX}
+              y1={0}
+              x2={todayX}
+              y2={height}
+              stroke="#ef4444"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              opacity={0.85}
+            />
+            <circle cx={todayX} cy={3} r={3} fill="#ef4444" />
+          </g>
+        )}
+        {isPortfolio && <DependencyArrows blockIds={blockIds} />}
+        {milestones.map((m) => (
+          <g key={`ms-${m.x}-${m.y}`}>
+            <path
+              d={`M ${m.x} ${m.y - DIAMOND} L ${m.x + DIAMOND} ${m.y} L ${m.x} ${m.y + DIAMOND} L ${m.x - DIAMOND} ${m.y} Z`}
+              fill="#f59e0b"
+              stroke="#b45309"
+              strokeWidth={1}
+            />
+            {m.name && (
+              <text
+                x={m.x + DIAMOND + 4}
+                y={m.y + 3}
+                fontSize={10}
+                className="fill-secondary"
+                style={{ fontWeight: 500 }}
+              >
+                {m.name.length > 28 ? m.name.slice(0, 28) + "…" : m.name}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+    </>
   );
 });

@@ -25,6 +25,7 @@
  */
 
 import { isoDay } from "../workload/scale";
+import { routeDependency } from "./dependency/routing";
 import { isNonWorking, weekdaysBetween } from "./working-days";
 import { buildXlsx, XLSX_MIME, type TSheet } from "./xlsx";
 
@@ -137,8 +138,12 @@ export type TExportRow = {
    * simplification: they pressed the button while looking at the hatched bars
    * and the red chain, and got a flat blue chart with neither.
    */
-  /** Finished or cancelled: drawn hatched with a tick, never a different colour. */
+  /** Finished: drawn hatched with a tick, never a different colour. */
   done?: boolean;
+  /** Cancelled: drawn hollow and struck, with a ✕. Its own flag rather than a
+   *  second reading of `done`, because the picture leaving the building must not
+   *  put a tick on work that was abandoned. */
+  cancelled?: boolean;
   /** 0–100. The share of this item's children that are finished, as the bar's
    *  own progress fill — the same number the screen draws inside the bar. */
   progress?: number;
@@ -518,6 +523,7 @@ export const buildGanttSvg = (
   // describe THAT — see layoutLegend.
   const drawn = {
     done: rows.some((r) => r.done),
+    cancelled: rows.some((r) => r.cancelled),
     critical: rows.some((r) => r.critical) || edges.some((e) => e.critical),
     milestone: rows.some((r) => r.milestone),
     baseline: rows.some((r) => r.baselineStart && r.baselineEnd),
@@ -546,10 +552,15 @@ export const buildGanttSvg = (
   // horizontal run.
   parts.push(
     `<defs>` +
-      `<marker id="ah" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">` +
-      `<path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/></marker>` +
-      `<marker id="ahc" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">` +
-      `<path d="M0,0 L6,3 L0,6 z" fill="#dc2626"/></marker>` +
+      // `userSpaceOnUse`, and `refX` at the tip. The default multiplies the box
+      // by the line's stroke width, so the critical head came out 40% bigger than
+      // the ordinary one for no reason anybody reading the file could infer; and
+      // the router now ends every path ON the target bar's edge, which is where
+      // the tip belongs.
+      `<marker id="ah" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="userSpaceOnUse">` +
+      `<path d="M0,0 L6,2.5 L0,5 z" fill="#94a3b8"/></marker>` +
+      `<marker id="ahc" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="userSpaceOnUse">` +
+      `<path d="M0,0 L6,2.5 L0,5 z" fill="#dc2626"/></marker>` +
       // The done texture. A pattern rather than a gradient because SVG has no
       // repeating-linear-gradient; same 45°, same period, same meaning as the
       // CSS one the screen draws.
@@ -628,33 +639,50 @@ export const buildGanttSvg = (
 
   const indexById = new Map(rows.map((r, i) => [r.id, i] as const));
 
-  // Dependency arrows, under the bars so a bar is never obscured by a line. The
-  // route is the same family the screen draws: out of the predecessor's end, down
-  // near the successor's start, and IN along a horizontal so the head has a
-  // bearing. The `Math.max` is what keeps a short gap from turning the middle
-  // segment backwards — the same failure the on-screen router had.
+  /**
+   * Dependency arrows, under the bars so a bar is never obscured by a line.
+   *
+   * This used to be its own arithmetic, and it was the SECOND renderer of the
+   * defect that was reported on screen — the one the on-screen fix was claimed
+   * to have covered and did not touch. What it computed:
+   *
+   *   stop = x2 - 4
+   *   mid  = max(min(x1 + 6, stop), stop - 12)
+   *
+   * At a zero gap (`x2 === x1`) that is `mid = stop = x1 - 4`, so the path is
+   * `H x1-4` — **four pixels backwards** — then `V`, then an `H` to the place it
+   * is already at. The final segment has zero length, so `orient="auto"` takes
+   * its bearing from the vertical and the arrowhead points at the floor. A hard
+   * L, a stub doubling back, a head aimed at nothing. It is worse than that: the
+   * final horizontal is zero for ANY gap under 22px, which at this file's scale
+   * is most of a short project.
+   *
+   * It calls `routeDependency` now — the same function, on the same bar boxes,
+   * as the screen. One router, one shape, one place to fix it.
+   */
   for (const edge of edges) {
     const si = indexById.get(edge.from);
     const ti = indexById.get(edge.to);
     const source = si === undefined ? null : rows[si];
     const target = ti === undefined ? null : rows[ti];
     if (si === undefined || ti === undefined || !source?.end || !target?.start) continue;
-    const x1 = x(source.end);
-    const y1 = midY(si);
-    const x2 = x(target.start);
-    const y2 = midY(ti);
+    const arrow = routeDependency(
+      {
+        left: x(source.start ?? source.end),
+        right: x(source.end),
+        y: midY(si),
+      },
+      {
+        left: x(target.start),
+        right: x(target.end ?? target.start),
+        y: midY(ti),
+      },
+      ROW_H
+    );
     const stroke = edge.critical ? "#dc2626" : "#94a3b8";
     const head = edge.critical ? "ahc" : "ah";
-    const stop = x2 - 4;
-    // Never behind the source: at a zero or negative gap that would send the
-    // arrow backwards to make room for its own head.
-    const mid = Math.max(Math.min(x1 + 6, stop), stop - 12);
-    const d =
-      y1 === y2
-        ? `M ${x1.toFixed(1)} ${y1.toFixed(1)} H ${stop.toFixed(1)}`
-        : `M ${x1.toFixed(1)} ${y1.toFixed(1)} H ${mid.toFixed(1)} V ${y2.toFixed(1)} H ${stop.toFixed(1)}`;
     parts.push(
-      `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${edge.critical ? 1.4 : 0.9}" opacity="${edge.critical ? 0.9 : 0.5}" marker-end="url(#${head})"/>`
+      `<path d="${arrow.d}" fill="none" stroke="${stroke}" stroke-width="${edge.critical ? 1.4 : 0.9}" opacity="${edge.critical ? 0.9 : 0.5}" marker-end="url(#${head})"/>`
     );
   }
 
@@ -667,12 +695,16 @@ export const buildGanttSvg = (
       );
       return;
     }
-    // The tick goes in the LABEL as well as on the bar: a one-day bar has no room
-    // for a texture, and a greyscale print has no colour to carry it either.
+    // The glyph goes in the LABEL as well as on the bar: a one-day bar has no room
+    // for a texture, and a greyscale print has no colour to carry it either. The
+    // ✕ and the strike are the same pair the screen draws, for the same reason —
+    // a ✓ on abandoned work reads as achieved in a file a funder opens.
     const indent = (row.depth ?? 0) * 8;
-    const name = `${row.done ? "✓ " : ""}${row.identifier ? `${row.identifier}  ` : ""}${row.label}`;
+    const glyph = row.cancelled ? "✕ " : row.done ? "✓ " : "";
+    const name = `${glyph}${row.identifier ? `${row.identifier}  ` : ""}${row.label}`;
+    const strike = row.cancelled ? ` text-decoration="line-through"` : "";
     parts.push(
-      `<text x="${PAD + indent}" y="${(y + ROW_H / 2 + 4).toFixed(1)}" font-size="11" fill="${row.done ? "#6b7280" : "#374151"}">${esc(name.slice(0, 38))}</text>`
+      `<text x="${PAD + indent}" y="${(y + ROW_H / 2 + 4).toFixed(1)}" font-size="11"${strike} fill="${row.done || row.cancelled ? "#6b7280" : "#374151"}">${esc(name.slice(0, 38))}</text>`
     );
     if (!row.start || !row.end) return;
 
@@ -712,6 +744,16 @@ export const buildGanttSvg = (
       return;
     }
 
+    // Cancelled: no fill, the series colour as an outline — the same picture the
+    // screen draws, and for the same reason. A filled bar for abandoned work
+    // overstates the plan, and this is the copy that leaves the building.
+    if (row.cancelled) {
+      parts.push(
+        `<rect x="${bx.toFixed(1)}" y="${barY.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH}" rx="3" fill="none" stroke="${fill}" stroke-width="2"/>` +
+          `<line x1="${bx.toFixed(1)}" y1="${(y + ROW_H / 2).toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${(y + ROW_H / 2).toFixed(1)}" stroke="${fill}" stroke-width="1"/>`
+      );
+      return;
+    }
     parts.push(
       `<rect x="${bx.toFixed(1)}" y="${barY.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH}" rx="3" fill="${fill}" opacity="0.92"/>`
     );
@@ -773,13 +815,20 @@ export const buildGanttSvg = (
 type TLegendItem = {
   label: string;
   color: string;
-  kind: "swatch" | "hatch" | "dashed" | "diamond" | "ring" | "line";
+  kind: "swatch" | "hatch" | "hollow" | "dashed" | "diamond" | "ring" | "line";
   width: number;
 };
 
 /** What the picture actually ended up containing, so the legend can describe
  *  THAT rather than the set of things this renderer is capable of. */
-type TDrawn = { done: boolean; critical: boolean; milestone: boolean; baseline: boolean; today: boolean };
+type TDrawn = {
+  done: boolean;
+  cancelled: boolean;
+  critical: boolean;
+  milestone: boolean;
+  baseline: boolean;
+  today: boolean;
+};
 
 /**
  * Wrap the legend into lines that fit the page.
@@ -812,6 +861,7 @@ const layoutLegend = (
   if (drawn.baseline && meta?.baselineName) mark(`Baseline “${meta.baselineName}”`, "#9ca3af", "dashed");
   else if (drawn.baseline) mark("Baseline", "#9ca3af", "dashed");
   if (drawn.done) mark("Finished", "#64748b", "hatch");
+  if (drawn.cancelled) mark("Cancelled", "#64748b", "hollow");
   if (drawn.critical) mark("Critical path", "#dc2626", "ring");
   if (drawn.milestone) mark("Deliverable", "#64748b", "diamond");
   if (drawn.today) mark("Today", "#dc2626", "line");
@@ -841,6 +891,12 @@ const swatchSvg = (item: TLegendItem, x: number, y: number): string => {
     glyph =
       `<rect x="${x}" y="${cy - 5}" width="14" height="10" rx="2" fill="${item.color}"/>` +
       `<rect x="${x}" y="${cy - 5}" width="14" height="10" rx="2" fill="url(#done)"/>`;
+  else if (item.kind === "hollow")
+    // Solid outline and a strike, so it cannot be read as the dashed baseline
+    // ghost two entries above it.
+    glyph =
+      `<rect x="${x}" y="${cy - 5}" width="14" height="10" rx="2" fill="none" stroke="${item.color}" stroke-width="2"/>` +
+      `<line x1="${x + 1}" y1="${cy}" x2="${x + 13}" y2="${cy}" stroke="${item.color}" stroke-width="1"/>`;
   else if (item.kind === "dashed")
     glyph = `<rect x="${x}" y="${cy - 5}" width="14" height="10" rx="2" fill="none" stroke="${item.color}" stroke-width="1" stroke-dasharray="3 2"/>`;
   else if (item.kind === "diamond")

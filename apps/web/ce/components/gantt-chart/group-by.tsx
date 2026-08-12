@@ -67,7 +67,16 @@ export const GanttGroupBy = observer(function GanttGroupBy() {
         <ChevronDown className="size-3.5" />
       </button>
       {open && (
-        <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-layer-1 p-1">
+        // `whitespace-normal` is not decoration. This panel is a descendant of the
+        // toolbar group in `base-gantt-root`, which is `whitespace-nowrap` so that a
+        // narrow chart moves whole groups onto the next line rather than splitting
+        // one down the middle — and `white-space` INHERITS, absolute positioning or
+        // not. Every helper sentence in here was therefore forbidden to wrap and ran
+        // out past the right edge, clipped mid-word. The nowrap has to stay where it
+        // is (it is what makes the toolbar wrap correctly); a panel is a different
+        // context and says so for itself. `break-words` is for the interpolated
+        // group name below, which is somebody's module title and may have no spaces.
+        <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
           {flattenedLabel && (
             <p className="mb-1 rounded bg-layer-2 px-2 py-1.5 text-11 text-tertiary">
               A drag turned the <span className="text-secondary">{flattenedLabel}</span> bands into this manual order.

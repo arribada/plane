@@ -35,7 +35,11 @@ export const GanttColorBy = observer(function GanttColorBy() {
       {open && (
         <>
           <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1">
+          {/* `whitespace-normal`: the toolbar group above this is `whitespace-nowrap`
+              so the toolbar wraps group by group, and `white-space` inherits into an
+              absolutely positioned child. Without this the panel's text cannot wrap.
+              Same line, same reason, on every menu in this toolbar — see group-by.tsx. */}
+          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
             {GANTT_COLOR_OPTIONS.map((o) => (
               <button
                 key={o.value}
@@ -51,17 +55,20 @@ export const GanttColorBy = observer(function GanttColorBy() {
                 {ganttDisplay.colorBy === o.value && <Check className="size-3.5 flex-shrink-0 text-accent-primary" />}
               </button>
             ))}
-            {/* Done-ness is a STATE, not a seventh series: a 45° hatch and a tick,
-                never its own hue — a hue would eat a palette slot and collide
-                with whichever series happened to own that colour. The toggle
-                stays because "what is LEFT" is a real way to read a plan, and on
-                that reading the finished bars are noise. It does not close the
-                menu: it is a thing you flip while looking at the chart. */}
+            {/* Done-ness and cancelled-ness are STATES, not a seventh and eighth
+                series: a hue would eat a palette slot and collide with whichever
+                series happened to own that colour. A 45° hatch with a tick, and
+                an outline with a ✕, instead. The toggle stays — and still governs
+                both — because "what is LEFT" is a real way to read a plan, and on
+                that reading a bar for work nobody is doing is noise however it is
+                drawn. Off gives back exactly the chart this drew before any of
+                it: every bar plain. It does not close the menu: it is a thing you
+                flip while looking at the chart. */}
             <div className="my-1 h-px bg-layer-2" />
             <button
               type="button"
               onClick={() => ganttDisplay.setShowCompleted(!ganttDisplay.showCompleted)}
-              title="Hatch finished work and mark it with a tick, so what is done reads at a glance"
+              title="Hatch finished work with a tick and outline cancelled work with a ✕, so what has left the plan reads at a glance"
               className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-13 hover:bg-layer-2"
             >
               <span
@@ -73,7 +80,7 @@ export const GanttColorBy = observer(function GanttColorBy() {
               >
                 {ganttDisplay.showCompleted && <Check className="size-3" />}
               </span>
-              Show finished work
+              Mark done &amp; cancelled
             </button>
           </div>
         </>

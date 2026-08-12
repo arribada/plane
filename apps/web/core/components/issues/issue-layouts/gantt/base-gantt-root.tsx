@@ -37,10 +37,12 @@ import { BaselinePicker } from "@/plane-web/components/gantt-chart/baseline-pick
 import { shownBaseline } from "@/plane-web/components/gantt-chart/baseline-shown";
 import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/violation-banner";
 import { CriticalPathBanner } from "@/plane-web/components/gantt-chart/critical-path-banner";
+import { chainSpan, criticalColor } from "@/plane-web/components/gantt-chart/critical-path";
 import { describeFilters } from "@/plane-web/components/gantt-chart/export";
 import type { TExportEdge, TExportMeta, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { GROUP_BY_OPTIONS, buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
+import { describeBandDrop, planBandDrop } from "@/plane-web/components/gantt-chart/band-drop";
 import { frozenOrder } from "@/plane-web/components/gantt-chart/reorder";
 import {
   EMPTY_SUBTASK_TREE,
@@ -277,33 +279,90 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     ganttDisplay.showCompleted
   );
 
+  /**
+   * The chain, when the reader has asked for it to be the chart's subject.
+   *
+   * Guarded on there being a chain at all: the switch is a session flag on a
+   * shared store, so moving from a project that has one to a project that does
+   * not must not leave a chart half-veiled with nothing lit.
+   */
+  const focusChain = ganttDisplay.focusCriticalPath && slack.critical.size > 0;
+  /**
+   * Where the chain starts and ends, for the banner.
+   *
+   * "20 work items with no room to slip" is a quantity; the day those twenty
+   * finish on is the thing that MOVES when one of them slips, and it is what
+   * makes the sentence actionable. Computed from the same set the overlay rings,
+   * so the count and the dates cannot describe different chains.
+   */
+  const criticalSpan = useMemo(
+    () => chainSpan(slack.critical, getIssueById),
+    // `liveIds` for its identity: the walk reads dates through `getIssueById`,
+    // which is one function for the life of the store, so without it this memo
+    // would answer with the dates the chart had when it first rendered.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above
+    [slack.critical, liveIds, getIssueById]
+  );
+
   /** Marks: what the chart draws on top of a bar regardless of its series. Kept
    *  apart from the series swatches by a rule in the legend, because they answer
    *  a different question. */
   const legendMarks = useMemo(() => {
     const marks: TLegendMark[] = [];
-    if (ganttDisplay.showCompleted)
+    if (ganttDisplay.showCompleted) {
       marks.push({
         key: "done",
         label: "Finished",
         kind: "hatch",
         color: "#64748b",
-        title: "Hatched, with a tick — the item is in a done or cancelled state.",
+        title: "Hatched, with a tick — the item is in a done state.",
       });
+      // Its own entry, because it is now its own picture. While the two shared a
+      // hatch and a tick this legend said "done or cancelled", which is the
+      // sentence that made a ✓ on abandoned work look deliberate.
+      marks.push({
+        key: "cancelled",
+        label: "Cancelled",
+        kind: "hollow",
+        color: "#64748b",
+        title:
+          "Outlined and struck through, with a ✕ — the item was abandoned. It keeps its span and loses its fill, so it no longer reads as work in the plan.",
+      });
+    }
     if (slack.critical.size > 0)
       marks.push({
         key: "critical",
         label: "Critical path",
         kind: "ring",
-        color: "#dc2626",
-        title: "No slack: if this slips, the project's end date slips with it.",
+        color: criticalColor(colorContext.dark),
+        title: focusChain
+          ? "No slack: if this slips, the project's end date slips with it. Everything else is dimmed while this is the chart's subject."
+          : "No slack: if this slips, the project's end date slips with it. Press the strip above to bring the chain forward.",
+      });
+    // Only while the chain is the subject. The tails are always drawn, but a
+    // legend entry for them at rest would be a fifth thing to decode on a board
+    // that is already carrying four; focused, the dimmed half of the chart is
+    // being ASKED how much room it has, so the answer earns a key.
+    if (focusChain)
+      marks.push({
+        key: "float",
+        label: "Room to move",
+        kind: "dashed",
+        color: "#94a3b8",
+        title:
+          "Dimmed, with a dashed tail and a day count: how far this could slip before it moves anything else. Nothing here is on the critical path.",
       });
     if (Object.keys(milestones).length > 0)
       marks.push({ key: "milestone", label: "Deliverable", kind: "diamond", color: "#64748b" });
     return marks;
-    // showCompleted is read above, so it must be a dependency: without it the
-    // legend went on claiming a hatch the bars had stopped drawing.
-  }, [slack.critical.size, milestones]);
+    // `showCompleted` and `focusCriticalPath` are MobX observables read above.
+    // Reading one inside a memo is not enough on its own: the observer re-renders
+    // when it changes, and then the memo hands back the list it built for the old
+    // value — the legend claiming a hatch the bars have stopped drawing. They are
+    // dependencies, and oxlint cannot see that they are because the store is a
+    // module singleton rather than a hook value.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [slack.critical.size, milestones, ganttDisplay.showCompleted, focusChain, colorContext.dark]);
 
   // The id list both panes walk: unchanged when grouping is off and nesting has
   // nothing to nest, so nothing about a flat chart moves.
@@ -419,8 +478,12 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
           color: colorContext.colorForIssue?.(id) ?? state?.color ?? undefined,
           seriesLabel: colorContext.seriesLabelForIssue?.(id),
           // Drawn distinctly only when the screen is drawing it distinctly. The
-          // toggle is a display setting and the file is of the display.
-          done: ganttDisplay.showCompleted ? state?.group === "completed" || state?.group === "cancelled" : undefined,
+          // toggle is a display setting and the file is of the display. Two flags
+          // rather than one: these used to be the same boolean, so the exported
+          // picture put a ✓ on cancelled work — see the note at the bottom of
+          // palette.ts.
+          done: ganttDisplay.showCompleted ? state?.group === "completed" : undefined,
+          cancelled: ganttDisplay.showCompleted ? state?.group === "cancelled" : undefined,
           // The frozen plan the ghosts are drawn against — present only when
           // ghosts were actually on screen. See baseline-shown.ts.
           baselineStart: parsed(shownBase?.entries[id]?.start),
@@ -534,6 +597,19 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   );
 
   /**
+   * Whether this reader may change the plan, readable from a callback declared
+   * above the place that decides it.
+   *
+   * `isAllowed` needs `usePlanLock`, which needs the route params, and it is
+   * declared several hundred lines below — so a band drop, which is written up
+   * here beside the grouping it belongs to, cannot close over it. A ref can be
+   * declared here and filled in there, and it is the RIGHT shape besides: the
+   * question is "may this person do this, now", asked when the row is let go,
+   * not when the handler was built.
+   */
+  const canEditPlanRef = useRef(false);
+
+  /**
    * Dropping a work item on a band moves it into that band — but only where the
    * band is a real container. Sprint and module are: an item belongs to one, and
    * putting it there is the edit somebody means. State, priority and assignee
@@ -541,40 +617,84 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
    * gesture nobody intends to make by aiming at a header, so those refuse it.
    *
    * UNSET moves it out, which is what dropping on "Not in a sprint" reads as.
+   *
+   * WHAT IT NO LONGER DOES IS FAIL QUIETLY. The decision is `band-drop.ts`,
+   * which answers with a write or a NAMED refusal, and every outcome ends in
+   * something said. This used to hold four bare `return`s — an item already in
+   * the band, a draft with no project, a "Not in a sprint" drop on an item
+   * already out, a module drop with nothing to change — and the caller invoked
+   * it as `void assign(...)`, so a rejected write was swallowed on top. All five
+   * looked identical from the reader's chair: let go of the row, nothing moves.
+   *
+   * The rejection is caught HERE rather than at the caller for a specific
+   * reason: `CycleIssueViewSet` and `ModuleIssueViewSet` are both in `GUARDED`
+   * in `plane/arribada/plan_guard.py`, so on a lead-only plan the POST comes
+   * back 403, the store rolls its own optimistic update back, and the row snaps
+   * home. That is a refusal, and it has to read as one.
    */
   const assignToGroup = useCallback(
-    async (issueId: string, groupKey: string) => {
-      const issue = getIssueById(issueId);
+    async (payload: Record<string, unknown>, groupKey: string) => {
       const slug = workspaceSlug?.toString();
-      // project_id is nullable on the type: a draft item has none, and there is
-      // nothing to file one into.
-      const pid = issue?.project_id;
-      if (!issue || !slug || !pid) return;
-      const value = groupKey === "__unset__" ? null : groupKey;
+      const bandLabel = groups.find((group) => group.key === groupKey)?.label;
+      const plan = planBandDrop({
+        source: payload,
+        groupKey,
+        groupBy,
+        // Through a ref because the answer must be the one at DROP time, and
+        // because `isAllowed` is decided further down this component than a
+        // callback declared here can see. See `canEditPlanRef` below.
+        canEditPlan: canEditPlanRef.current && !!slug,
+        getIssue: getIssueById,
+        // The row's ACTUAL band, from the grouped list on screen, rather than a
+        // re-derivation that could disagree with what the reader is looking at.
+        bandOf: (id) => groups.find((group) => group.ids.includes(id))?.key ?? null,
+        ...(bandLabel ? { bandLabel } : {}),
+      });
+
+      if (plan.kind === "refused") {
+        // `null` only for a drag that was never aimed at this chart.
+        if (plan.message) setToast({ type: TOAST_TYPE.WARNING, title: "Not moved", message: plan.message });
+        return;
+      }
+
+      const pid = getIssueById(plan.issueId)?.project_id;
+      if (!slug || !pid) {
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "Not moved",
+          message: "That work item has no project to file it in.",
+        });
+        return;
+      }
+
       // Not updateIssue({ cycle_id }) / ({ module_ids }): a cycle or module
       // membership is its own endpoint, and writing the field went through
       // without the local store ever learning — so the row stayed in the band it
       // came from until the page was reloaded, which reads as the drop having
       // failed. These are the same operations the work item panel uses.
-      if (groupBy === "cycle") {
-        if (value) await addCycleToIssue(slug, pid, value, issue.id);
-        else if (issue.cycle_id) await removeIssueFromCycle(slug, pid, issue.cycle_id, issue.id);
-        return;
-      }
-      if (groupBy === "module") {
-        // Modules are a list and an item can sit in several. A drop means "put
-        // it in this one" and leaves the band it came from — not "make this its
-        // only one", which would silently strip memberships nobody touched.
-        const leaving = (issue.module_ids ?? []).filter((id) => groups.some((g) => g.key === id));
-        const joining = value && !(issue.module_ids ?? []).includes(value) ? [value] : [];
-        if (joining.length === 0 && leaving.length === 0) return;
-        await changeModulesInIssue(
-          slug,
-          pid,
-          issue.id,
-          joining,
-          leaving.filter((id) => id !== value)
-        );
+      try {
+        if (plan.kind === "join-sprint") await addCycleToIssue(slug, pid, plan.cycleId, plan.issueId);
+        else if (plan.kind === "leave-sprint") await removeIssueFromCycle(slug, pid, plan.cycleId, plan.issueId);
+        else if (plan.kind === "join-modules")
+          await changeModulesInIssue(slug, pid, plan.issueId, plan.add, plan.remove);
+        else await changeModulesInIssue(slug, pid, plan.issueId, [], plan.remove);
+        // Said out loud: the row leaves for another band, and on a long chart
+        // that band is off screen.
+        setToast({ type: TOAST_TYPE.SUCCESS, title: describeBandDrop(plan, bandLabel) });
+      } catch (error) {
+        // The server's own sentence when it gave one — `plan_guard.py` answers
+        // with `detail`, which says who may change the plan and what is still
+        // open to everyone. Far better than a generic failure.
+        const refusal = error as { detail?: unknown; error?: unknown } | null | undefined;
+        const said = typeof refusal?.detail === "string" ? refusal.detail : refusal?.error;
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "The move did not stick",
+          message:
+            typeof said === "string" && said
+              ? said
+              : "The server refused the change, so the work item is back where it was.",
+        });
       }
     },
     [getIssueById, workspaceSlug, groupBy, groups, addCycleToIssue, removeIssueFromCycle, changeModulesInIssue]
@@ -691,6 +811,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // read as twelve until somebody scrolled. Pull the rest in, one page per pass,
   // bounded so a runaway page cursor cannot loop forever.
   const autoPages = useRef(0);
+  // Whether this visit has already explained that "push dependents" is on and
+  // the project has nothing to push along. See `updateBlockDates`.
+  const saidNoLinks = useRef(false);
   const wantsEverything = groupBy !== "none" || rowOrder === "graph";
   useEffect(() => {
     if (!wantsEverything) {
@@ -778,6 +901,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // has shipped three times; the flag is the server's own answer, so the two
   // cannot disagree.
   const isAllowed = permitted && !planLock.locked && planLock.canEditPlan;
+  // The same answer, where a band drop can reach it — see `canEditPlanRef`. A
+  // band drop is a plan edit (it changes what a sprint contains) and was the one
+  // gesture on this chart offered to people the server then refused.
+  canEditPlanRef.current = isAllowed;
   // Adding is gated separately: a project can be open to edits and closed to new
   // items, which is the usual shape once a scope has been agreed with a funder.
   const canAddItems = isAllowed && planLock.allowAddItems;
@@ -838,6 +965,25 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       const undoItems = updates.map((update) => ({ issueId: update.id, prev: spanOf(update.id) }));
       let pushed: TPushOutcome | null = null;
       let payload = updates;
+
+      // A switch that is ON and did nothing has to say which of the two reasons
+      // it was. This is the one the user hit: the project has no schedulable
+      // dependency at all, so there is nothing downstream of the bar they moved.
+      // It used to be the `graph.length > 0` guard and no else branch, which
+      // made "no links yet" and "the feature is broken" the same experience.
+      // Only when the switch is on, so it cannot become noise for anyone who has
+      // not asked for a push.
+      // Once per visit: the toggle's own label carries this state permanently at
+      // rest, so a second telling on the next drag would be nagging.
+      if (pushDependents && graph.length === 0 && !saidNoLinks.current) {
+        saidNoLinks.current = true;
+        setToast({
+          type: TOAST_TYPE.INFO,
+          title: "Nothing depends on this yet",
+          message:
+            "“Push dependents” is on, but no work item in this project depends on another, so there is no chain to carry. Drag from the round handle on the end of a bar onto another bar to create one.",
+        });
+      }
 
       if (pushDependents && graph.length > 0) {
         // One origin per gesture. The gantt sends a single-element array for a
@@ -952,7 +1098,17 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
               was only ever expressed as a redder dependency line, so a project
               with no links — which is most of them here — showed nothing at all
               and the feature read as doing nothing. */}
-            <CriticalPathBanner diagnostics={slack.diagnostics} markedCount={slack.critical.size} />
+            <CriticalPathBanner
+              diagnostics={slack.diagnostics}
+              markedCount={slack.critical.size}
+              span={criticalSpan}
+              focused={focusChain}
+              // The strip is the control. A sentence naming twenty items the
+              // reader cannot pick out is what the last round shipped; this is
+              // the button that answers it, in the place they are already
+              // looking rather than in a toolbar they would have to be told about.
+              onToggleFocus={(next) => ganttDisplay.setFocusCriticalPath(next)}
+            />
             {/* Mandatory the moment two series are on screen: without it the colour
               is a puzzle rather than an encoding, and there is nowhere on a bar to
               write "this teal one is Ruby". The marks below the rule are things
@@ -984,7 +1140,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
                         about what a drag writes. */}
                       <div className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap">
                         <GanttLockButton lock={planLock} />
-                        <PushDependentsToggle />
+                        {/* The count, so "on and working" and "on with nothing
+                          to push" are not the same picture at rest. */}
+                        <PushDependentsToggle linkCount={graph.length} />
                         <BaselinePicker />
                         <GanttUndoButton onUndo={handleGanttUndo} />
                       </div>

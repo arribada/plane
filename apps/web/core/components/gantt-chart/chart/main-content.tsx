@@ -30,6 +30,7 @@ import {
 } from "@/plane-web/components/gantt-chart";
 import { GanttChartRowList } from "@/plane-web/components/gantt-chart/blocks/block-row-list";
 import { isSyntheticRowId } from "@/plane-web/components/gantt-chart/grouping";
+import { useTimelinePan } from "@/plane-web/components/gantt-chart/use-timeline-pan";
 import type { TReorderStart } from "@/plane-web/components/gantt-chart/reorder";
 import { GanttChartBlocksList } from "@/plane-web/components/gantt-chart/blocks/blocks-list";
 import { IssueBulkOperationsRoot } from "@/plane-web/components/issues/bulk-operations";
@@ -101,6 +102,15 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
   const { currentView, currentViewData } = useTimeLineChartStore();
   // plane web hooks
   const isBulkOperationsEnabled = useBulkOperationStatus();
+  /**
+   * Right-button (and middle-button) drag pans the chart.
+   *
+   * Mounted here rather than in either root because THIS is the element that
+   * scrolls, and both the per-project timeline and the portfolio render it — so
+   * the gesture is the same on both boards by construction rather than by two
+   * matching implementations. See `use-timeline-pan.ts`.
+   */
+  const isPanning = useTimelinePan(ganttContainerRef);
 
   // Enable Auto Scroll for Ganttlist
   useEffect(() => {
@@ -193,6 +203,10 @@ export const GanttChartMainContent = observer(function GanttChartMainContent(pro
                 "vertical-scrollbar horizontal-scrollbar flex scrollbar-lg h-full w-full overflow-auto border-t-[0.5px] border-subtle",
                 {
                   "mb-8": bottomSpacing,
+                  // The only feedback that a right-press has been taken as a
+                  // grab rather than ignored. `select-none` stops the drag
+                  // painting a text selection across every row it crosses.
+                  "cursor-grabbing select-none": isPanning,
                 }
               )}
               ref={ganttContainerRef}

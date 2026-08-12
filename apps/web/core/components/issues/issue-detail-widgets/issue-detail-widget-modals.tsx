@@ -20,6 +20,7 @@ import { IssueLinkCreateUpdateModal } from "../issue-detail/links/create-update-
 import { CreateUpdateIssueModal } from "../issue-modal/modal";
 import { useLinkOperations } from "./links/helper";
 import { useSubIssueOperations } from "./sub-issues/helper";
+import { inheritedSubIssueDefaults } from "./sub-issues/inherited-defaults";
 
 type Props = {
   workspaceSlug: string;
@@ -33,6 +34,7 @@ export const IssueDetailWidgetModals = observer(function IssueDetailWidgetModals
   const { workspaceSlug, projectId, issueId, issueServiceType, hideWidgets } = props;
   // store hooks
   const {
+    issue: { getIssueById },
     isIssueLinkModalOpen,
     toggleIssueLinkModal: toggleIssueLinkModalStore,
     setIssueLinkData,
@@ -131,10 +133,18 @@ export const IssueDetailWidgetModals = observer(function IssueDetailWidgetModals
   };
 
   // helpers
-  const createUpdateModalData: Partial<TIssue> = {
-    parent_id: issueCrudOperationState?.create?.parentIssueId,
+  // The child starts out as its parent's Sprint and modules, not as blank
+  // fields — see `sub-issues/inherited-defaults.ts` for what carries down and
+  // why the rest does not. `parent_id` and `project_id` stay explicit so a cold
+  // issue map degrades to the old, correct-but-empty payload rather than to a
+  // sub-item with no parent. Everything here is a form default the creator can
+  // change before saving; nothing is written behind them.
+  const parentIssueId = issueCrudOperationState?.create?.parentIssueId;
+  const parentIssue = parentIssueId ? getIssueById(parentIssueId) : undefined;
+  const createUpdateModalData: Partial<TIssue> = inheritedSubIssueDefaults(parentIssue, {
+    parent_id: parentIssueId,
     project_id: projectId,
-  };
+  });
 
   const existingIssuesModalSearchParams = {
     sub_issue: true,

@@ -22,13 +22,12 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { ganttLinking } from "@/plane-web/store/gantt-linking";
 import { invalidateProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
+import { isDragGesture, suppressNextClick } from "@/plane-web/components/gantt-chart/gesture";
 
 type Props = {
   blockId: string;
   side: "left" | "right";
 };
-
-const DRAG_THRESHOLD = 4; // px before a press counts as a drag rather than a click
 
 // find the gantt bar under a screen point and return its issue id (bars carry id="issue-<id>")
 const targetIssueAt = (x: number, y: number): string | null => {
@@ -90,6 +89,12 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    // Only the primary button links. Right and middle now pan the chart
+    // (`use-timeline-pan.ts`), and this handler used to arm a dependency on ANY
+    // button — so a right-press that happened to land on a handle turned the bar
+    // blue and left it waiting to link to whatever was clicked next. Returned
+    // without stopping the event, so the press reaches the pan.
+    if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
 
@@ -136,17 +141,20 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
       dragCleanup.current = null;
     }
     function onMove(ev: PointerEvent) {
-      if (
-        !moved &&
-        (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD || Math.abs(ev.clientY - startY) > DRAG_THRESHOLD)
-      ) {
-        moved = true;
-      }
+      // One shared answer to "was that a click or a drag", so the two gestures
+      // living on the same bar cannot disagree about it. The per-axis test this
+      // replaces called a 3px-by-3px diagonal a click.
+      if (!moved && isDragGesture({ dx: ev.clientX - startX, dy: ev.clientY - startY })) moved = true;
       if (moved) ganttLinking.setLine({ x1: originX, y1: originY, x2: ev.clientX, y2: ev.clientY });
     }
     function onUp(ev: PointerEvent) {
       teardown();
       if (moved) {
+        // A link dragged onto another bar releases OVER that bar, and the
+        // browser follows a pointerup with a click. Without this the item the
+        // user linked TO opened its peek on top of the chart the instant the
+        // arrow was drawn.
+        suppressNextClick();
         // a drag: link to whatever bar we released over, then disarm
         const target = targetIssueAt(ev.clientX, ev.clientY);
         if (target) link(target, blockId);

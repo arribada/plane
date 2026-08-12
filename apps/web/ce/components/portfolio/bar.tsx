@@ -10,10 +10,10 @@ import { cn } from "@plane/utils";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { useGanttColorScale } from "@/plane-web/components/gantt-chart/color-scale";
-import { completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
+import { CANCELLED_GLYPH, cancelledFill, completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import type { TItemAssignee, TPortfolioColorBy } from "@/plane-web/types/arribada";
-import { isItemDone, isProjectDone, portfolioRowColor } from "./color";
+import { isItemCancelled, isItemDone, isProjectDone, portfolioRowColor } from "./color";
 import { projectColor, readableTextColor } from "./colors";
 
 type Props = { blockId: string };
@@ -73,18 +73,29 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
   );
 
   /**
-   * Finished work, drawn distinctly — and only when the reader has asked for it.
+   * Work that has left the plan, drawn distinctly — and only when the reader has
+   * asked for it.
    *
-   * A hatch and a tick rather than a seventh colour: done-ness is a STATE, and
-   * giving it a hue would both eat a palette slot and collide with whichever
-   * series happened to own that colour. It also survives a greyscale print and a
-   * screenshot, which a faded bar does not.
+   * Two states, two treatments, neither of them a colour. Done-ness and
+   * cancelled-ness are STATES: giving either a hue would eat a palette slot and
+   * collide with whichever series happened to own that colour, and both survive
+   * a greyscale print this way, which a faded bar does not. See the note on the
+   * five state groups at the bottom of `palette.ts` for why the other three get
+   * nothing.
+   *
+   * A PROJECT row can only be finished, never cancelled: its done-ness is
+   * counted from its work items (`completed_item_count`) and a project has no
+   * state of its own to be cancelled in.
    */
-  const isDone = colors?.showCompleted
+  // Named for what it governs rather than for the store key: `showCompleted` now
+  // decides both treatments, and off still means every bar is drawn plain.
+  const markClosed = colors?.showCompleted ?? false;
+  const isDone = markClosed
     ? isProject
       ? isProjectDone(project)
       : !!item && isItemDone(item, { getState: getStateById })
     : false;
+  const isCancelled = markClosed && !isProject && !!item && isItemCancelled(item, { getState: getStateById });
 
   /**
    * Dates inferred from the work items rather than planned. Its own texture, and
@@ -121,29 +132,43 @@ export const PortfolioBar = observer(function PortfolioBar({ blockId }: Props) {
         "ring-2 ring-danger-strong": isCritical,
       })}
       style={
-        isDone
-          ? // Done wins the fill; a derived bar that is also finished keeps its
-            // outline, so the row still says where its dates came from.
-            {
-              backgroundImage: completedFill(color),
-              border: isDerived ? `1px solid ${color}` : undefined,
-            }
-          : isDerived
-            ? {
-                backgroundImage: `repeating-linear-gradient(135deg, ${color}, ${color} 5px, transparent 5px, transparent 10px)`,
-                border: `1px solid ${color}`,
+        isCancelled
+          ? // Cancelled wins outright, and it wins by taking the fill AWAY: a
+            // bar with no area cannot overstate a plan. Its own derived hatch
+            // would be a fill, so it goes with it — the outline says the extent.
+            cancelledFill(color)
+          : isDone
+            ? // Done wins the fill; a derived bar that is also finished keeps its
+              // outline, so the row still says where its dates came from.
+              {
+                backgroundImage: completedFill(color),
+                border: isDerived ? `1px solid ${color}` : undefined,
               }
-            : { backgroundColor: color }
+            : isDerived
+              ? {
+                  backgroundImage: `repeating-linear-gradient(135deg, ${color}, ${color} 5px, transparent 5px, transparent 10px)`,
+                  border: `1px solid ${color}`,
+                }
+              : { backgroundColor: color }
       }
-      title={isDone ? `${label} — finished` : undefined}
+      title={isCancelled ? `${label} — cancelled` : isDone ? `${label} — finished` : undefined}
     >
       <span
-        className="relative z-10 truncate text-13 leading-none"
-        style={{ color: isDerived && !isDone ? undefined : textColor }}
+        className={cn("relative z-10 truncate text-13 leading-none", {
+          // The bar has no fill to read against any more, so the label takes the
+          // ordinary text token — which is the one pairing this product has
+          // already contrast-checked against both surfaces. The line through it
+          // is the third channel, after the missing fill and the glyph, and it is
+          // the only one that says "cancelled" in as many words.
+          "text-primary line-through decoration-1": isCancelled,
+        })}
+        style={{ color: isCancelled || (isDerived && !isDone) ? undefined : textColor }}
       >
         {/* The glyph, not just the texture. A hatch is invisible on a 3px bar and
-            gone entirely in a greyscale print; a tick survives both. */}
-        {isDone && <span aria-hidden>{DONE_GLYPH} </span>}
+            gone entirely in a greyscale print; a tick survives both — and a ✕
+            says the opposite thing from a ✓, which is the whole reason cancelled
+            stopped sharing one. */}
+        {isCancelled ? <span aria-hidden>{CANCELLED_GLYPH} </span> : isDone && <span aria-hidden>{DONE_GLYPH} </span>}
         {label}
       </span>
       {!isProject && item?.assignees && <ItemAvatars assignees={item.assignees} />}

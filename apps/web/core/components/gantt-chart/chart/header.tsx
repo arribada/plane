@@ -234,7 +234,13 @@ export const GanttChartHeader = observer(function GanttChartHeader(props: Props)
               <Settings2 className="size-3.5" />
               Display
             </summary>
-            <div className="shadow-lg absolute right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-surface-1 p-1">
+            {/* `whitespace-normal`. The group this sits in is `whitespace-nowrap`
+                — deliberately, so the toolbar wraps whole groups — and `white-space`
+                inherits into an absolutely positioned descendant like any other. The
+                second switch's sentence is 95 characters; on a `w-64` panel that ran
+                off the right edge and was clipped mid-word. The nowrap stays where it
+                is; the panel declares its own. */}
+            <div className="shadow-lg absolute right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-surface-1 p-1 break-words whitespace-normal">
               <label className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-layer-transparent-hover">
                 <input
                   type="checkbox"

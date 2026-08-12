@@ -214,7 +214,10 @@ export const GanttExportButton = observer(function GanttExportButton({ collect }
             className="fixed inset-0 z-20 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-layer-1 p-1">
+          {/* `whitespace-normal`: this panel is handed to the header as
+              `toolbarActions` and lands inside a `whitespace-nowrap` group, which
+              inherits. See group-by.tsx. */}
+          <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-64 rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
             {/* Scope first, because it changes what every format below contains. */}
             <div className="px-2 pt-1 pb-0.5 text-10 font-medium tracking-wide text-secondary/70 uppercase">
               What to include

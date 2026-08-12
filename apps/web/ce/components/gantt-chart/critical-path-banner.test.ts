@@ -91,6 +91,36 @@ describe("criticalPathMessage", () => {
     expect(criticalPathMessage(unknown, 0).text).toBe("");
   });
 
+  /**
+   * Round two. The sentence worked — the follow-up report quotes it back — and
+   * was still not a visualisation: "20 work items with no room to slip" names a
+   * quantity and leaves the reader with nothing to do about it.
+   */
+  it("names the date that moves, not only how many items could move it", () => {
+    const message = criticalPathMessage(diagnostics({ status: "ok", critical_count: 20 }), 20, {
+      span: { start: "2026-03-04", end: "2026-07-18", dated: 20 },
+    });
+    expect(message.text).toContain("20 work items with no room to slip");
+    expect(message.text).toContain("They finish 18 Jul 2026");
+    expect(message.text).toContain("if any one slips, that does");
+  });
+
+  it("says nothing about dates when the chain has none", () => {
+    const message = criticalPathMessage(diagnostics({ status: "ok", critical_count: 3 }), 3, { span: null });
+    expect(message.text).toContain("3 work items with no room to slip.");
+    expect(message.text).not.toContain("finish");
+  });
+
+  it("explains the veiled half of the chart while the chain is focused", () => {
+    // Focused, the hint stops describing the mark and starts describing the mode:
+    // what has happened to everything the reader can no longer read.
+    const focused = criticalPathMessage(diagnostics({ status: "ok", critical_count: 5 }), 5, { focused: true });
+    expect(focused.hint).toContain("dimmed");
+    expect(focused.hint).toContain("days it has");
+    const resting = criticalPathMessage(diagnostics({ status: "ok", critical_count: 5 }), 5, { focused: false });
+    expect(resting.hint).toContain("Outlined in red");
+  });
+
   it("uses the singular where a count is one", () => {
     expect(criticalPathMessage(diagnostics({ status: "ok", critical_count: 1 }), 1).text).toContain("1 work item with");
     expect(criticalPathMessage(diagnostics({ status: "no_dependencies", dated_count: 1 }), 0).text).toContain(

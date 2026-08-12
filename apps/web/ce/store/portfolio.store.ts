@@ -79,6 +79,12 @@ export interface IPortfolioStore {
   fetchPortfolio: (workspaceSlug: string) => Promise<void>;
   toggleProjectExpansion: (workspaceSlug: string, projectId: string) => Promise<void>;
   applyItemDates: (itemId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
+  /** Any field of a loaded row, changed in place. `undefined` means "not
+   *  mentioned" and is skipped; `null` means "cleared" and is written. */
+  applyItemFields: (itemId: string, patch: Partial<TPortfolioItem>) => void;
+  /** Drop a row the board must stop drawing — deleted, or archived out of the
+   *  set this endpoint returns. A no-op for a row that is not loaded. */
+  removeItem: (itemId: string) => void;
   applyProjectDates: (projectId: string, dates: { start_date?: string | null; target_date?: string | null }) => void;
   /** false when the reload failed and the board is showing stale rows. */
   refreshProjectItems: (workspaceSlug: string, projectId: string) => Promise<boolean>;
@@ -295,6 +301,8 @@ export class PortfolioStore implements IPortfolioStore {
       fetchPortfolio: action,
       toggleProjectExpansion: action,
       applyItemDates: action,
+      applyItemFields: action,
+      removeItem: action,
       applyProjectDates: action,
       refreshProjectItems: action,
       refreshLoaded: action,
@@ -995,12 +1003,74 @@ export class PortfolioStore implements IPortfolioStore {
   };
 
   applyItemDates = (itemId: string, dates: { start_date?: string | null; target_date?: string | null }): void => {
+    this.applyItemFields(itemId, dates);
+  };
+
+  /**
+   * One field of a loaded row, or nine.
+   *
+   * `applyItemDates` was this function with two fields hard-coded, and the two
+   * were the only ones anything could change without a refetch — which is why
+   * marking a work item done in the peek panel left the bar drawing the state it
+   * had before. The mirror in `portfolio-issue-mirror.ts` writes through here now.
+   *
+   * `undefined` is skipped rather than assigned: a caller passing a partial must
+   * be able to leave a field alone, and `{ start_date: undefined }` from a spread
+   * would otherwise erase a date nobody touched. `null` IS written — that is how
+   * a date, a sprint or a parent gets cleared.
+   */
+  applyItemFields = (itemId: string, patch: Partial<TPortfolioItem>): void => {
     const item = this.itemMap[itemId];
     if (!item) return;
-    const next = { ...item };
-    if (dates.start_date !== undefined) next.start_date = dates.start_date;
-    if (dates.target_date !== undefined) next.target_date = dates.target_date;
-    set(this.itemMap, [itemId], next);
+    const next = { ...item } as Record<string, unknown>;
+    let changed = false;
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      if (next[key] === value) continue;
+      next[key] = value;
+      changed = true;
+    }
+    // Nothing to say: rewriting the entry anyway would mint a new object identity
+    // and re-render every bar in the project for a change that did not happen.
+    if (!changed) return;
+    set(this.itemMap, [itemId], next as TPortfolioItem);
+  };
+
+  /**
+   * A row that has left the board.
+   *
+   * The counts beside it are the SERVER's figures — the sidebar prints
+   * `item_count` and draws its progress bar from `completed_item_count` — so
+   * they are adjusted here too. Without that, deleting a row left "12" written
+   * next to eleven bars, which reads as the delete having half worked.
+   * `completed_item_count` is deliberately NOT touched: this store does not hold
+   * state groups, so it cannot know whether the row it just dropped was one of
+   * the completed ones, and guessing would make the percentage lie in the other
+   * direction. The next fetch corrects both.
+   */
+  removeItem = (itemId: string): void => {
+    const item = this.itemMap[itemId];
+    if (!item) return;
+    const projectId = this.itemProjectId[itemId];
+    const nextItems = { ...this.itemMap };
+    delete nextItems[itemId];
+    const nextOwner = { ...this.itemProjectId };
+    delete nextOwner[itemId];
+    this.itemMap = nextItems;
+    this.itemProjectId = nextOwner;
+    if (this.collapsedItemIds.has(itemId)) {
+      const folds = new Set(this.collapsedItemIds);
+      folds.delete(itemId);
+      this.collapsedItemIds = folds;
+    }
+    const project = projectId ? this.projectMap[projectId] : undefined;
+    if (!project) return;
+    const undated = !item.start_date && !item.target_date;
+    set(this.projectMap, [projectId], {
+      ...project,
+      item_count: Math.max(0, project.item_count - 1),
+      undated_item_count: undated ? Math.max(0, project.undated_item_count - 1) : project.undated_item_count,
+    });
   };
 
   // Reload one project's items and its own row counts. Deliberately NOT

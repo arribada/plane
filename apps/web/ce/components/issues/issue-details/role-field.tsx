@@ -23,6 +23,7 @@ import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { invalidateProjectDisciplines } from "@/plane-web/components/gantt-chart/use-project-disciplines";
+import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -36,6 +37,7 @@ type Props = {
 
 export const IssueRoleField = observer(function IssueRoleField(props: Props) {
   const { workspaceSlug, projectId, issueId, isEditable } = props;
+  const portfolio = usePortfolio();
   const [role, setRole] = useState<string | null>(null);
   const [options, setOptions] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -93,6 +95,12 @@ export const IssueRoleField = observer(function IssueRoleField(props: Props) {
       // project cached at module scope. Nothing dropped it, so a bar kept the
       // colour of the discipline it used to have.
       invalidateProjectDisciplines(workspaceSlug, projectId);
+      // And the portfolio, which offers the same axis but draws from its own
+      // `itemMap` rather than that cache. `disciplines` is fork-only and is not
+      // on `TIssue` at all, so it is the one field the mirror in
+      // `portfolio-issue-mirror.ts` cannot carry — this is that field's route.
+      // A no-op unless the portfolio has this row loaded.
+      portfolio.applyItemFields(issueId, { disciplines: saved.role ? [saved.role] : [] });
       if (saved.assigned) {
         // Say so rather than letting an assignee appear on its own. A tool that
         // staffs work silently is one people stop trusting with staffing.

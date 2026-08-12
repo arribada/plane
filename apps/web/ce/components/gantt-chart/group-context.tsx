@@ -61,10 +61,22 @@ export type TGanttGroupContext = {
    *  for each: joining a sprint is a real edit, whereas "drop onto High" would
    *  quietly re-prioritise, so only some are accepted. */
   groupBy: TGanttGroupBy;
-  /** Move a work item into the band, or null when this grouping cannot be set by
-   *  dropping. The layout root owns the mutation; the header only reports the
-   *  gesture. */
-  assign: ((issueId: string, groupKey: string) => Promise<void>) | null;
+  /**
+   * Move a work item into the band, or null when this grouping cannot be set by
+   * dropping. The layout root owns the mutation; the band only reports the
+   * gesture.
+   *
+   * It reports the DROP PAYLOAD — `source.data` straight off
+   * pragmatic-drag-and-drop — rather than an id it has picked out itself. The
+   * band cannot tell a work item id from a band header id or a portfolio folder
+   * id, they all arrive in the same list, and one of the latter reaching a uuid
+   * route is a 404 that used to surface as nothing happening. `band-drop.ts`
+   * makes that judgement in one place, with everything it needs to make it.
+   *
+   * Contracted never to reject: it reports its own outcome, refusals included,
+   * so a caller cannot swallow one by writing `void assign(...)`.
+   */
+  assign: ((payload: Record<string, unknown>, groupKey: string) => Promise<void>) | null;
   /** Sub-task nesting. Independent of grouping — either can be on without the
    *  other — and computed in the same place for the same reason. */
   subtasks: TGanttSubtaskContext;

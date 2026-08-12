@@ -149,7 +149,10 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
         <Bookmark className="size-3.5" />
         Saved order
       </summary>
-      <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-72 rounded border border-subtle bg-layer-1 p-1">
+      {/* `whitespace-normal`: the summary above carries `whitespace-nowrap` and so
+          does the toolbar group around the whole `<details>`, and `white-space`
+          inherits into this panel. See group-by.tsx. */}
+      <div className="shadow-lg absolute top-full right-0 z-30 mt-1 w-72 rounded border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
         <button
           type="button"
           onClick={() => void save()}

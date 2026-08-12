@@ -244,9 +244,37 @@ def cascade(issues, relations, earliest_starts=None):
 
 
 def critical_path(issues, relations):
-    """Longest-duration chain through the FS/SS DAG. Returns a set of issue ids."""
+    """The longest chain of LINKED work through the FS/SS DAG. A set of issue ids.
+
+    "Longest chain of linked work" is narrower than the textbook longest path,
+    and the narrowing is deliberate — it is what makes the answer readable.
+
+    The walk seeds `best[n]` at the task's own duration and used to take the end
+    of the chain as `max(order, ...)` over EVERY dated issue. A single
+    thirty-day task connected to nothing therefore outscored a three-link chain
+    of five-day ones, and the endpoint answered with a set of ONE unconnected id.
+    Formally that is the longest path through the network. On screen it is a lone
+    red bar where the reader asked which sequence to attack, and it HIDES the
+    chain, which is the thing they can actually do something about. So the end of
+    the chain is now chosen among nodes that have at least one link.
+
+    Nothing is lost by that. A lone task that finishes last has zero total float,
+    and `slack_for_issues` reports it as critical — the two functions answer two
+    different questions and the endpoint returns both.
+
+    And on a project with no links at all this returns the empty set rather than
+    one arbitrary row. A critical path is a claim about sequencing; with nothing
+    sequenced there is no chain to be on, and "no dependencies recorded" is a
+    sentence a reader can act on where a single unexplained red bar is not.
+    `critical_path_report` supplies the counts that sentence needs. This is the
+    normal case in this fork, not a corner: MARLIN had 0 relations across 77
+    dated items when it was measured.
+    """
     dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
     edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
+    # Nothing is sequenced, so nothing is on a sequence.
+    if not edges:
+        return set()
     order, _cycles = _topo_order(list(dated.keys()), edges)
     if not order:
         return set()
@@ -268,12 +296,66 @@ def critical_path(issues, relations):
             if best[n] + dur[m] > best[m]:
                 best[m] = best[n] + dur[m]
                 prev[m] = n
-    end = max(order, key=lambda n: best[n])
+    # Only a node with a link can end a chain. Every edge here has both ends
+    # dated, so `linked` is already restricted to drawable rows; intersecting
+    # with `order` drops the ones sitting inside a cycle.
+    linked = {p for p, _s, _k in edges} | {s for _p, s, _k in edges}
+    ends = [n for n in order if n in linked]
+    if not ends:
+        return set()
+    end = max(ends, key=lambda n: best[n])
     path = set()
     while end is not None:
         path.add(end)
         end = prev[end]
     return path
+
+
+def critical_path_report(issues, relations):
+    """Why the answer is the answer, in counts a screen can turn into a sentence.
+
+    An empty `issue_ids` has at least four different causes — nothing is dated,
+    nothing is linked, everything that is linked is in a loop, or the caller
+    cannot see the project — and a chart that draws nothing looks identical for
+    all of them. Naming the cause is the difference between "there is no critical
+    path here, and here is why" and a reader concluding the feature is broken.
+
+    `status` is an enum rather than English: the wording belongs on the screen
+    that knows whose screen it is.
+    """
+    dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
+    all_edges = build_edges(relations)
+    edges = [(p, s, k) for (p, s, k) in all_edges if p in dated and s in dated]
+    linked = {p for p, _s, _k in edges} | {s for _p, s, _k in edges}
+    _order, in_cycle = _topo_order(list(dated.keys()), edges)
+    ids = critical_path(issues, relations)
+
+    if not dated:
+        status = "no_dated_items"
+    elif not all_edges:
+        status = "no_dependencies"
+    elif not edges:
+        # Links exist, but every one of them has an end with no dates — so none
+        # of them can be drawn or walked. Distinct from "no dependencies", and
+        # the fix is different: date the items rather than link them.
+        status = "dependencies_undated"
+    elif not ids:
+        status = "cycles_only"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "dated_count": len(dated),
+        "undated_count": max(0, len(issues) - len(dated)),
+        # Sequencing links that exist at all, vs the ones both of whose ends are
+        # dated. The gap is the count of links the chart cannot use.
+        "relation_count": len(all_edges),
+        "usable_relation_count": len(edges),
+        "linked_count": len(linked),
+        "cycle_count": len(in_cycle),
+        "critical_count": len(ids),
+    }
 
 
 def slack_for_issues(issues, relations):
@@ -293,6 +375,14 @@ def slack_for_issues(issues, relations):
     boolean — and cannot disagree with it, which two separately-computed answers
     eventually would.
 
+    With ONE exception, and it is the case this fork mostly sees. On a project
+    with no sequencing links at all, the horizon is just the last date anybody
+    typed, so "zero total float" reduces to "ends on the same day as the latest
+    item" — which marked a handful of unrelated rows critical and told the reader
+    nothing. The float figures are still true and still reported; the boolean is
+    not, because with nothing sequenced there is no chain to be on. Same rule as
+    `critical_path`, so the two still cannot disagree.
+
     Float against the dependency graph, not against people: a task with four days
     of graph slack whose owner is busy for those four days cannot really move. That
     is the standard definition and the honest thing to label it as.
@@ -302,6 +392,7 @@ def slack_for_issues(issues, relations):
         return {}
 
     edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
+    sequenced = bool(edges)
     successors = defaultdict(list)
     for pred, succ, _kind in edges:
         successors[pred].append(succ)
@@ -356,5 +447,5 @@ def slack_for_issues(issues, relations):
 
         total = max(0, working_days(span["target"], latest_finish(node)) - 1)
         total = max(free, total)
-        out[node] = {"free": free, "total": total, "critical": total == 0}
+        out[node] = {"free": free, "total": total, "critical": sequenced and total == 0}
     return out

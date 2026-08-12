@@ -96,9 +96,30 @@ app.conf.beat_schedule = {
         # 23:50 UTC: the last moment that is still today for the team, so the row
         # records the day as it ended rather than as it started.
         "schedule": crontab(hour=23, minute=50),
-        # An hour. The row is keyed on today's date, so a delivery that arrives after
-        # midnight would stamp the wrong day — better not to run at all.
-        "options": {"expire_seconds": 3600},
+        # Forty-five minutes, and the number is bounded on BOTH sides — this is the
+        # one entry in this schedule whose output is keyed on which day it is, so
+        # neither a longer nor a shorter expiry is the safe direction.
+        #
+        # It read "an hour" and said, in a comment, that an hour stopped a delivery
+        # arriving after midnight from stamping the wrong day. It did the opposite:
+        # 23:50 plus an hour is 00:50, so the expiry ACCEPTED fifty minutes of
+        # post-midnight delivery. The run then wrote its row under the new day, and
+        # that day's own 23:50 run overwrote it — the day the tick was for ended
+        # with no row at all, permanently, and nothing said so.
+        #
+        # Shrinking it to expire before midnight would have been the other half of
+        # the same bug: a ten-minute window means any hiccup longer than ten minutes
+        # — one retry under RETRY_POLICY, one `docker compose up -d` on the worker —
+        # discards the tick, and the day is lost just as completely, only quietly.
+        #
+        # So the task learned to date itself instead (`_recorded_day` /
+        # `LATE_TICK_GRACE` in scope_snapshot_task.py: anything in the first hour of
+        # a day is a late delivery of the previous day's tick), and the expiry's job
+        # is now simply to stay inside the window where that holds. 23:50 + 45 min =
+        # 00:35, twenty-five minutes clear of the end of the grace, and celery
+        # carries `expires` onto every retry so the whole chain is bounded by it.
+        # `test_beat_schedule.py` pins both bounds against the task's own constant.
+        "options": {"expire_seconds": 45 * 60},
     },
     "arribada-due-date-reminders": {
         "task": "plane.arribada.reminder_task.due_date_reminder",

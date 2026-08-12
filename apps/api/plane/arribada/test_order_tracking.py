@@ -29,9 +29,14 @@ from datetime import date, timedelta
 
 import pytest
 from django.urls import reverse
+from freezegun import freeze_time
 
 from plane.arribada.models import ProcurementRequest, ProjectSchedule, ProjectTeamMember
 from plane.db.models import Issue
+
+# The one test below that builds its date by counting from today needs a today
+# that does not move. Europe's fall-back Sunday, late in the UTC day.
+NOW = "2026-10-25 23:30:00"
 
 
 @pytest.fixture
@@ -276,6 +281,7 @@ def test_the_tracked_dates_come_back_on_the_read(approved):
     assert row["received_on"] is None
 
 
+@freeze_time(NOW)
 def test_a_far_future_delivery_is_still_only_a_date(approved):
     """The date bomb's neighbourhood: a floor years out must schedule, not raise.
     Cheap to assert and the failure mode is a 500 on somebody's reflow."""

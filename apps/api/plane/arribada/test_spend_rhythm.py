@@ -17,12 +17,23 @@ number this arbitrary must not be able to take a page down.
 
 No database: `_spend_rhythm` is arithmetic over two dicts.
 
+`exhausted_on` counts months forward from TODAY, and the ceiling that stops it
+running off the calendar is "how many months are left before the year 9999" —
+which also moves with today. So the three tests that reach that arithmetic run
+against a stopped clock rather than against whichever day CI happened to start
+on. The instant is Europe's fall-back Sunday, late enough in the UTC day that a
+reader further east is already on the 26th.
+
 Run explicitly: `python -m pytest plane/arribada/test_spend_rhythm.py`
 """
 
 from datetime import date
 
+from freezegun import freeze_time
+
 from plane.arribada.views import _spend_rhythm
+
+NOW = "2026-10-25 23:30:00"
 
 
 def rhythm(months, allocated=None, committed=0.0, target=None):
@@ -32,6 +43,7 @@ def rhythm(months, allocated=None, committed=0.0, target=None):
 # --- the runway that ran off the end of the calendar --------------------------
 
 
+@freeze_time(NOW)
 def test_a_tiny_rate_against_a_real_budget_does_not_raise():
     """The 500. One EUR 1 line is a EUR 1 rate, and EUR 100,000 of budget is then
     100,000 months away — the year 10,359."""
@@ -43,6 +55,7 @@ def test_a_tiny_rate_against_a_real_budget_does_not_raise():
     assert out["months"] == [{"month": "2026-01", "amount": 1.0, "labour": 0.0, "expense": 1.0}]
 
 
+@freeze_time(NOW)
 def test_the_smallest_rate_that_survives_rounding_still_does_not_raise():
     """`rate` is rounded to two places, so 0.01 is the floor above zero — and the
     worst case, about 1e12 months."""
@@ -50,6 +63,7 @@ def test_the_smallest_rate_that_survives_rounding_still_does_not_raise():
     assert out["exhausted_on"] is None
 
 
+@freeze_time(NOW)
 def test_an_ordinary_rate_still_gets_a_date():
     """The guard must not swallow the reading it exists to protect."""
     out = rhythm({"2026-01": 5000.0}, allocated=20_000.0, committed=5000.0)

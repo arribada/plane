@@ -42,6 +42,7 @@ from datetime import date, timedelta
 
 import pytest
 from django.urls import reverse
+from freezegun import freeze_time
 
 from plane.arribada.models import IssueRole, ProjectSchedule, WorkspaceRoleRate
 from plane.arribada.scheduling import (
@@ -60,6 +61,12 @@ FRIDAY = date(2026, 8, 7)
 
 # The end of the representable calendar. `date.max`.
 DOOMSDAY = date(9999, 12, 31)
+
+# `_parse_date`'s ceiling is fifty years from TODAY, so the two tests that probe
+# the ceiling are the two that move with the runner's clock. Stopped on Europe's
+# fall-back Sunday, late in the UTC day, so neither the calendar change nor a
+# reader further east can shift what "this year" means mid-assertion.
+NOW = "2026-10-25 23:30:00"
 
 
 # ── the arithmetic itself ────────────────────────────────────────────────────
@@ -198,6 +205,7 @@ def test_working_day_arithmetic_matches_stepping(n):
 # ── the door: _parse_date ────────────────────────────────────────────────────
 
 
+@freeze_time(NOW)
 def test_parse_date_refuses_the_far_future():
     assert _parse_date("9999-12-31") is None
     assert _parse_date("2500-01-01") is None
@@ -205,6 +213,7 @@ def test_parse_date_refuses_the_far_future():
     assert _parse_date("1969-12-31") is None
 
 
+@freeze_time(NOW)
 def test_parse_date_still_takes_every_date_anybody_means():
     assert _parse_date("2026-08-03") == MONDAY
     assert _parse_date("2026-08-03T09:00:00Z") == MONDAY  # models like to append a time
@@ -227,6 +236,7 @@ def _undated_gap_url(world):
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_bulk_date_fix_refuses_to_plant_the_bomb(money_project):
     """`ProjectUndatedGapEndpoint.post` is the fix-all-undated-items button.
 

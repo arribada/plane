@@ -115,6 +115,13 @@ MIDDLEWARE = [
     "plane.middleware.request_body_size.RequestBodySizeLimitMiddleware",
     "plane.middleware.logger.APITokenLogMiddleware",
     "plane.middleware.logger.RequestLoggerMiddleware",
+    # `ProjectSchedule.lead_only_edits`, enforced on the UPSTREAM routes that
+    # write a plan — the gantt's bar drag, the date pickers, parents,
+    # dependencies, sprint and module membership. The arribada endpoints guard
+    # themselves in their own handlers. Last in the list on purpose: it reads
+    # `request.user`, which `django.contrib.auth`'s middleware sets above, and
+    # every app API view authenticates from that same session.
+    "plane.arribada.plan_guard.PlanEditGuardMiddleware",
 ]
 
 # Rest Framework settings

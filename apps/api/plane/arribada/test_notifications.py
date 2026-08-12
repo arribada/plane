@@ -16,31 +16,69 @@ The forwarding tests never touch the network: `_post` is the seam, and what is
 asserted is the shape of what WOULD have been posted. The one thing that is
 tested against the real urllib machinery is the refusal to follow a redirect,
 because that is a property of the opener rather than of our code.
+
+Everything date-shaped in here is FROZEN and LITERAL, which it was not.
+
+The work item's due date used to be `timezone.now().date() - 7 days` — the same
+expression, read off the same clock, as the "is this overdue" the task under
+test computes. A test written that way cannot fail: move the product's notion of
+today by a day, a timezone or a DST hour and the fixture moves with it, in step,
+silently. What it asserted was that subtraction works.
+
+So the due date is a written-down day now, the clock is stopped at a deliberately
+awkward instant, and the reminder's sentence is compared against the sentence in
+full rather than against three substrings that would survive it being wrong.
 """
 
 import json
-from datetime import timedelta
+from datetime import date
 
 import pytest
-from django.utils import timezone
+from freezegun import freeze_time
 
 from plane.arribada import github_classification_task as triage
 from plane.arribada import notify_forward as forward
 from plane.arribada import reminder_task as reminders
+
+# Imported for its SIDE EFFECT and never referenced — do not delete it.
+#
+# `github_classification_warnings` reaches `plane.arribada.views` lazily, which
+# pulls in openai and therefore pydantic. `pydantic.v1.types` declares
+# `class ConstrainedDate(date, metaclass=ConstrainedNumberMeta)`, and freezegun
+# replaces `datetime.date` globally while a clock is frozen — so pydantic
+# imported for the FIRST time inside a `freeze_time` block dies on a metaclass
+# conflict, in a traceback that names neither this file nor the clock.
+#
+# Pulling it in here, at collection time, means it is already in `sys.modules`
+# before any test freezes anything. Without this line the file passes under
+# `pytest plane/arribada/` (some other module imported views first) and fails
+# under `pytest plane/arribada/test_notifications.py` — a test that depends on
+# what else ran beside it.
+from plane.arribada import views  # noqa: F401
 from plane.arribada.models import GithubIssue
 from plane.db.models import Issue, IssueAssignee, Notification, State
+
+# Sunday 25 October 2026 at 23:30 UTC. Chosen to be awkward in both directions:
+# Europe put its clocks back that morning, and at 23:30 UTC a reader in Auckland
+# is already halfway through the 26th. Any part of this that quietly means "the
+# server's day" rather than "the day on the plan" has a chance to show it here.
+NOW = "2026-10-25 23:30:00"
+
+# A week before that, written down rather than computed. This is the day the
+# reminder has to say out loud.
+DUE = date(2026, 10, 18)
 
 
 # --- fixtures ---------------------------------------------------------------
 
 
-def work_item(world, name="Fix the antenna mount", target=None, state=None, assign="member"):
+def work_item(world, name="Fix the antenna mount", target=DUE, state=None, assign="member"):
     issue = Issue.objects.create(
         name=name,
         project=world["project"],
         workspace=world["workspace"],
         state=state or world["state"],
-        target_date=target or (timezone.now().date() - timedelta(days=7)),
+        target_date=target,
         created_by=world["users"]["owner"],
     )
     if assign:
@@ -82,23 +120,33 @@ def posts(monkeypatch):
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_the_reminder_names_the_project_the_work_item_and_the_state(money_project):
+    """The sentence in full, against a due date nobody computed.
+
+    Four substrings used to stand in for it, and between them they allowed the
+    reminder to name the wrong day — which is the only field in the sentence a
+    reader acts on — while every assertion passed. `18 Oct` is the one part of
+    this that a timezone can move, so it is the part that is written down.
+    """
     progress = State.objects.create(
         name="In progress", project=money_project["project"], workspace=money_project["workspace"],
         group="started", sequence=3,
     )
-    work_item(money_project, target=timezone.now().date() - timedelta(days=7), state=progress)
+    work_item(money_project, target=DUE, state=progress)
 
     reminders.due_date_reminder()
 
     row = Notification.objects.get(sender="in_app:reminder")
-    assert "Tag" in row.title, row.title  # the project
-    assert "TAG-1" in row.title, row.title  # the work item
-    assert "In progress" in row.title, row.title  # the state
-    assert "overdue since" in row.title, row.title
+    assert row.title == "Tag · TAG-1 — overdue since 18 Oct (In progress)"
+    # And the machine-readable half of the same fact, which the dashboard card
+    # and the Zulip line both read.
+    assert row.message["target_date"] == "2026-10-18"
+    assert row.message["reminder"] == "overdue"
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_the_reminder_no_longer_says_the_same_thing_twice(money_project):
     """The title and the body were one sentence, rendered one under the other."""
     work_item(money_project)
@@ -110,6 +158,7 @@ def test_the_reminder_no_longer_says_the_same_thing_twice(money_project):
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_the_reminder_fills_the_subtitle_the_card_reads(money_project):
     """`data.issue` drives the sidebar's second line. It was null, and the card
     interpolated identifier-sequence_id regardless: every reminder wore a hyphen."""
@@ -129,6 +178,7 @@ def test_the_reminder_fills_the_subtitle_the_card_reads(money_project):
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_a_work_item_name_can_never_reach_the_inbox_as_markup(money_project):
     """Stored XSS. `issue.name` is user-editable and went straight into
     `message_html`, which the inbox renders with dangerouslySetInnerHTML."""
@@ -190,24 +240,33 @@ def test_a_project_name_can_never_reach_the_inbox_as_markup(money_project):
 def test_the_digest_does_not_re_notify_everyone_when_its_count_changes(money_project):
     """The title carries a count and the dedup was keyed on the title, so 7 → 8
     unclassified was a new subject and every active member heard it again — inside
-    the twenty hours the window exists to cover."""
+    the twenty hours the window exists to cover.
+
+    The second run is an hour later ACROSS MIDNIGHT, which is the arrangement
+    that separates the twenty-hour rolling window this is meant to be from a
+    once-a-day one. Both readings suppress a repeat an hour apart on the same
+    date; only the rolling one suppresses it at 00:30 the next morning.
+    """
     workspace = money_project["workspace"]
-    _captured(workspace, repo="somebody/unclaimed", number=1)
-    triage.github_classification_warnings()
-    first = Notification.objects.filter(sender=triage.DIGEST_SENDER).count()
-    assert first > 0, "no digest was raised at all"
+    with freeze_time(NOW):
+        _captured(workspace, repo="somebody/unclaimed", number=1)
+        triage.github_classification_warnings()
+        first = Notification.objects.filter(sender=triage.DIGEST_SENDER).count()
+        assert first > 0, "no digest was raised at all"
 
     # One more issue captured an hour later: same complaint, bigger number.
-    _captured(workspace, repo="somebody/unclaimed", number=2)
-    triage.github_classification_warnings()
+    with freeze_time("2026-10-26 00:30:00"):
+        _captured(workspace, repo="somebody/unclaimed", number=2)
+        triage.github_classification_warnings()
 
-    assert Notification.objects.filter(sender=triage.DIGEST_SENDER).count() == first
+        assert Notification.objects.filter(sender=triage.DIGEST_SENDER).count() == first
 
 
 # --- getting it to the dashboard --------------------------------------------
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_forwarding_delivers_more_than_one_batch(money_project, notify_env, posts):
     """250 unread in one window. The old code took `[:200]` ascending and marked
     nothing, so the newest fifty never went, then aged out of the window for good
@@ -242,6 +301,7 @@ def test_forwarding_delivers_more_than_one_batch(money_project, notify_env, post
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_a_failed_batch_stops_rather_than_hammering_a_dashboard_that_is_down(
     money_project, notify_env, monkeypatch
 ):
@@ -313,6 +373,7 @@ def test_a_redirect_never_replays_the_secret_at_another_host():
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_an_upstream_activity_reads_as_a_sentence_not_half_of_one(money_project, notify_env, posts):
     """Upstream never writes `message_html` and leaves `message` null, so the
     forwarder fell back to `title` — which holds the ACTIVITY FRAGMENT and
@@ -372,6 +433,7 @@ def test_the_digest_gets_somewhere_to_go(money_project, notify_env, posts):
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_a_forwarded_reminder_still_deep_links_to_its_work_item(money_project, notify_env, posts):
     """`data.issue.id` is absent by design now, so the url has to come from
     `entity_identifier` — the fallback that was already there and never exercised."""
@@ -386,6 +448,7 @@ def test_a_forwarded_reminder_still_deep_links_to_its_work_item(money_project, n
 
 
 @pytest.mark.django_db
+@freeze_time(NOW)
 def test_every_item_fits_what_the_dashboard_will_accept(money_project, notify_env, posts):
     """The receiving schema caps title at 200 and message at 1000 and rejects the
     item — not the field — when either overflows."""

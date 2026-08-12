@@ -20,11 +20,17 @@ Two different mistakes, one symptom, and nothing else in the suite catches
 either — because this is not a question about any one module, it is a question
 about the schedule and the registry agreeing.
 
+The last two tests are about a different way for a scheduled task to do nothing:
+being delivered, running, and writing its answer under the wrong date.
+
 No database: both are in memory.
 """
 
 import inspect
+from datetime import datetime, timedelta, timezone as dt_timezone
 
+from plane.arribada.scope_snapshot_task import LATE_TICK_GRACE, _recorded_day
+from plane.arribada.task_safety import RETRY_POLICY
 from plane.celery import app as celery_app
 
 
@@ -78,3 +84,69 @@ def test_every_scheduled_task_takes_the_arguments_beat_gives_it():
             in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         ]
         assert required == [], f"{name} needs arguments beat will never pass: {required}"
+
+
+# --- the snapshot's expiry, which is a date question wearing a queue setting ---
+#
+# `arribada-cycle-scope-snapshot` is the only entry in the schedule whose OUTPUT
+# is keyed on which day it is: one row per cycle per date, and yesterday's row
+# cannot be recomputed from anything. That makes its `expire_seconds` load-
+# bearing in both directions, and it was wrong in the direction nobody checks.
+#
+# It fired at 23:50 and expired after an hour — which is 00:50, so the expiry
+# accepted fifty minutes of post-midnight delivery. A run that landed there
+# stamped its row with the NEW day, and that day's own 23:50 run then overwrote
+# it. The day the tick was for ended with no row at all, and the only visible
+# symptom was a gap in a chart that is documented to have gaps.
+#
+# The two tests below are the two edges of the same number, both computed from
+# the constants they are protecting rather than restated here, so moving the
+# schedule or the grace moves them with it.
+
+SNAPSHOT = "arribada-cycle-scope-snapshot"
+
+
+def _fires_at(entry, day):
+    """The instant this entry's crontab fires on `day`, as an aware datetime."""
+    schedule = entry["schedule"]
+    # A crontab expands each field into a set; these entries name exactly one.
+    return datetime(
+        day.year, day.month, day.day,
+        min(schedule.hour), min(schedule.minute),
+        tzinfo=dt_timezone.utc,
+    )
+
+
+def test_the_snapshot_can_never_be_delivered_after_it_stops_knowing_which_day_it_is():
+    """The upper bound. Every delivery the expiry still accepts must record the
+    day its tick was fired on — otherwise the run silently spends the next day's
+    row on the wrong figures and the day it was sent for is gone for good.
+
+    Dated on the European fall-back Sunday, and read at a moment when a reader
+    at UTC+13 is already on the 26th: the arithmetic must not depend on either.
+    """
+    entry = celery_app.conf.beat_schedule[SNAPSHOT]
+    fired = _fires_at(entry, datetime(2026, 10, 25))
+    latest_delivery = fired + timedelta(seconds=entry["options"]["expire_seconds"])
+
+    assert _recorded_day(latest_delivery) == fired.date(), (
+        f"a delivery accepted at {latest_delivery:%H:%M} would be recorded under "
+        f"{_recorded_day(latest_delivery)} rather than {fired.date()} — the expiry outlives "
+        f"the {LATE_TICK_GRACE} of grace the task dates itself by"
+    )
+
+
+def test_the_snapshot_expiry_outlives_a_retry_rather_than_dropping_the_day():
+    """The lower bound, and the reason "expire before midnight" is not the fix.
+
+    A ten-minute window looks safe and loses the day to the first hiccup:
+    RETRY_POLICY backs off by up to `retry_backoff_max` and celery carries the
+    original `expires` onto every retry, so an expiry shorter than one backoff
+    discards the task's own retry — and a day nobody snapshotted reads exactly
+    like a day nothing happened on.
+    """
+    expiry = celery_app.conf.beat_schedule[SNAPSHOT]["options"]["expire_seconds"]
+    assert expiry >= RETRY_POLICY["retry_backoff_max"], (
+        f"{expiry}s is shorter than the {RETRY_POLICY['retry_backoff_max']}s this task can "
+        "wait before its own retry, so the retry would be discarded on arrival"
+    )

@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.serializers import ProjectSerializer
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Cycle, CycleIssue, Issue, IssueAssignee, Project, ProjectMember, State, User, WorkspaceMember
+from plane.db.models import Cycle, CycleIssue, Issue, IssueAssignee, ModuleIssue, Project, ProjectMember, State, User, WorkspaceMember
 from plane.db.models import IssueRelation
 
 from plane.db.models import Workspace
@@ -64,7 +64,14 @@ from .rate_presets import (
     convert as _convert_money,
     preset_payload,
 )
-from .scheduling import build_edges, cascade, critical_path, slack_for_issues, weekdays_between
+from .scheduling import (
+    build_edges,
+    cascade,
+    critical_path,
+    critical_path_report,
+    slack_for_issues,
+    weekdays_between,
+)
 from .serializers import MONEY_FIELDS, ProjectScheduleSerializer
 
 VIEWER_ROLES = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
@@ -132,6 +139,32 @@ MONEY_ROLES = [ROLE.ADMIN, ROLE.MEMBER]
 #    scopes it itself: `_visible_projects` to read, `_writable_projects` to
 #    write. The second exists precisely because the first admits guests.
 
+# A PLAN DATE IS A PLAIN DAY, NOT AN INSTANT — so "today" here is
+# `timezone.localdate()`, never `timezone.now().date()`.
+#
+# `TimezoneMixin`, which every view in this file inherits through `BaseAPIView`,
+# activates the caller's own zone on each request (see plane/app/views/base.py).
+# `localdate()` honours that activation; `now().date()` throws it away and answers
+# the SERVER's UTC day. The difference is one day, for a third of every day, for
+# everybody who is not sitting on the Greenwich meridian — and it is one day in
+# the direction that matters: a lead in Auckland opening the planner at 9am on
+# Tuesday was offered Monday, and the apply step then WROTE Monday onto real work
+# items. The dates in this fork are not timestamps: a start date, a target date,
+# a rate-capture date and a baseline's name are all statements about a calendar
+# square that a human is looking at, and the only calendar that exists is theirs.
+#
+# The three ways a call is allowed to stay on `timezone.now()`:
+#
+#   * it wants an INSTANT, not a day — `completed_at`, `revoked_at`, `filed_at`,
+#     a cache epoch. Those are DateTimeFields and UTC is exactly right.
+#   * it is a bound rather than a day, where every caller must agree on the same
+#     answer. `_plan_date_ceiling` is the one, and it says so in place.
+#   * it runs with no request at all, so there is no caller's zone to honour —
+#     the Celery jobs, which are in their own modules and not in this file.
+#
+# Anything else in here reading `timezone.now().date()` is a bug that has not
+# been noticed yet.
+
 # Only sequencing relations get drawn as gantt arrows; relates_to/duplicate are noise.
 GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
 
@@ -156,6 +189,45 @@ def _project_graph(project_id, slug):
         r["issue_id"] = str(r["issue_id"])
         r["related_issue_id"] = str(r["related_issue_id"])
     return issues, relations
+
+
+def _delivery_floors(project_id):
+    """{issue_id: date} an item cannot start before, because a part is not there yet.
+
+    Empty unless the project asked for it. `schedule_from_deliveries` is off by
+    default and deliberately per project: a planner that silently pushed
+    somebody's dates because a colleague typed a supplier's promise into a
+    purchase form is a planner nobody trusts, and most projects here have no
+    hardware waiting on anything. A project that IS gated on a twelve-week chip
+    lead time turns it on once and the floor then holds for every reflow — and,
+    since this was lifted out of the auto-schedule endpoint, for every drag that
+    pushes a chain as well. Two features disagreeing about whether a delivery is
+    a constraint would be worse than neither respecting it.
+
+    `received_on` wins over `expected_on` where both exist: once the parts are on
+    the bench, what the supplier promised is history.
+    """
+    schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
+    if not schedule_row or not schedule_row.schedule_from_deliveries:
+        return {}
+    floors = {}
+    for row in ProcurementRequest.objects.filter(
+        project_id=project_id,
+        issue__isnull=False,
+        status__in=[
+            ProcurementRequest.APPROVED,
+            ProcurementRequest.ORDERED,
+            ProcurementRequest.RECEIVED,
+        ],
+    ).only("issue_id", "expected_on", "received_on"):
+        landing = row.received_on or row.expected_on
+        if not landing:
+            continue
+        key = str(row.issue_id)
+        # Two parts for one task: the later one is what it waits for.
+        if key not in floors or landing > floors[key]:
+            floors[key] = landing
+    return floors
 
 
 def _visible_projects(request, slug):
@@ -539,7 +611,7 @@ def _load_by_assignee(projects):
     are soft-deleted, and a m2m join does not apply the through model's manager, so an
     issue whose only assignee was removed would still count against them.
     """
-    today = timezone.now().date()
+    today = timezone.localdate()
     week = today + timedelta(days=7)
     active = IssueAssignee.objects.filter(
         issue__project__in=projects, issue__deleted_at__isnull=True, deleted_at__isnull=True
@@ -624,6 +696,12 @@ class PortfolioEndpoint(BaseAPIView):
                     # planned: entered by a human, draggable in the UI
                     "start_date": s.start_date if s else None,
                     "target_date": s.target_date if s else None,
+                    # Whether that drag is allowed. The portfolio spans many
+                    # projects, each with its own lock, so the board cannot ask
+                    # per project without N requests — and until it could ask at
+                    # all, every bar here was draggable including the frozen ones.
+                    # The schedule row is already loaded above; this costs nothing.
+                    "timeline_locked": bool(s.timeline_locked) if s else False,
                     # derived: computed from the work items, read-only
                     "derived_start_date": r.get("derived_start_date"),
                     "derived_target_date": r.get("derived_target_date"),
@@ -685,8 +763,39 @@ class PortfolioItemsEndpoint(BaseAPIView):
                     "avatar": getattr(u, "avatar_url", None) or None,
                 }
             )
+        # The fields the portfolio's subgrouping bands by. Three bulk queries, not
+        # one per row: the timeline offers Sprint / Module / Discipline as axes and
+        # a portfolio item that does not carry them can only ever land in the
+        # "unset" band, which looks exactly like a project nobody has organised.
+        #
+        # `cycle` is Plane's field name and stays; only the label is vocabulary,
+        # and in this fork it is always a sprint.
+        item_ids = [i["id"] for i in item_list]
+        cycles = {
+            row["issue_id"]: {"id": str(row["cycle_id"]), "name": row["cycle__name"]}
+            for row in CycleIssue.objects.filter(issue_id__in=item_ids)
+            .values("issue_id", "cycle_id", "cycle__name")
+        }
+        # An item can sit in several modules. The lowest-named one is the band it
+        # is filed under — the same tie-break the work-item timeline uses, so the
+        # two views agree about where a multi-module item lives.
+        modules = defaultdict(list)
+        for row in ModuleIssue.objects.filter(issue_id__in=item_ids).values(
+            "issue_id", "module_id", "module__name"
+        ):
+            modules[row["issue_id"]].append(
+                {"id": str(row["module_id"]), "name": row["module__name"] or ""}
+            )
+        roles = defaultdict(list)
+        for row in IssueRole.objects.filter(issue_id__in=item_ids).values("issue_id", "role"):
+            roles[row["issue_id"]].append(row["role"])
+
         for i in item_list:
             i["assignees"] = assignees.get(i["id"], [])
+            i["cycle"] = cycles.get(i["id"])
+            picked = sorted(modules.get(i["id"], []), key=lambda m: m["name"])
+            i["module"] = picked[0] if picked else None
+            i["disciplines"] = sorted(roles.get(i["id"], []))
 
         return Response(item_list, status=status.HTTP_200_OK)
 
@@ -986,6 +1095,11 @@ class ProjectMilestonesEndpoint(BaseAPIView):
         """
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # A milestone is what a funder is shown as a deliverable. Marking one is a
+        # statement about the plan, not a note on a task.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         issue_id = request.data.get("issue_id")
         if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
@@ -1100,6 +1214,22 @@ class ProjectBaselineEndpoint(BaseAPIView):
             # A project that baselines at every review holds dozens, and this
             # endpoint is called twice on every gantt mount.
             .annotate(entries_total=Count("entries"))
+            # ORDERED EXPLICITLY, and not left to `Meta.ordering`.
+            #
+            # `Meta.ordering` is `("-captured_at",)`, and reading it off the model
+            # is what the line below used to rely on. Django does not promise that
+            # through an aggregate: `annotate()` builds a GROUP BY, the interaction
+            # between default ordering and grouping has changed across Django
+            # versions (it was deprecated in 3.1 and removed from GROUP BY in 4.0),
+            # and the result here was a query whose row order was not guaranteed at
+            # all. It held most of the time and did not hold in a full test run,
+            # where this endpoint handed back the OLDER snapshot as the current one
+            # — so the gantt drew January's ghost bars over a plan that had been
+            # re-baselined in March, and the picker agreed with it.
+            #
+            # The id is a tie-break, not decoration: `captured_at` is `auto_now_add`
+            # and two snapshots taken in the same request cycle can share it.
+            .order_by("-captured_at", "-id")
         )
         wanted = request.query_params.get("baseline")
         chosen = None
@@ -1147,12 +1277,17 @@ class ProjectBaselineEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # A baseline is the claim "this is what we promised". Capturing one on a
+        # project whose plan is the lead's is making that claim on their behalf.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         name = str(request.data.get("name") or "").strip()[:255]
         if not name:
             # Dated rather than refused: somebody capturing in a hurry should not be
             # stopped, and "Baseline 14 Mar 2026" is a usable name.
-            name = f"Baseline {timezone.now().date().isoformat()}"
+            name = f"Baseline {timezone.localdate().isoformat()}"
 
         issues = list(
             Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
@@ -1198,6 +1333,9 @@ class ProjectBaselineEndpoint(BaseAPIView):
         """Remove one snapshot. Named in the body so a mis-click cannot wipe a plan."""
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         deleted, _ = ProjectBaseline.objects.filter(
             id=request.data.get("id"), project_id=project_id
         ).delete()
@@ -1218,31 +1356,18 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # The bluntest instrument in the app: one POST rewrites every date in the
+        # project. If anything is the lead's on a project that has asked for it,
+        # this is.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         issues, relations = _project_graph(project_id, slug)
 
-        # Delivery floors, and ONLY when this project asked for them.
-        #
-        # Off by default and per project: a planner that silently pushed somebody's
-        # dates because a colleague typed a supplier's promise into a purchase form
-        # is a planner nobody trusts, and most projects here have no hardware
-        # waiting on anything. A project that IS gated on a twelve-week chip lead
-        # time turns it on once and the floor then holds for every reflow.
-        #
-        # `received_on` wins over `expected_on` where both exist: once the parts are
-        # on the bench, what the supplier promised is history.
-        schedule_row = ProjectSchedule.objects.filter(project_id=project_id).first()
-        floors = {}
-        if schedule_row and schedule_row.schedule_from_deliveries:
-            for row in ProcurementRequest.objects.filter(
-                project_id=project_id, issue__isnull=False, status__in=[ProcurementRequest.APPROVED, ProcurementRequest.ORDERED, ProcurementRequest.RECEIVED]
-            ).only("issue_id", "expected_on", "received_on"):
-                landing = row.received_on or row.expected_on
-                if not landing:
-                    continue
-                key = str(row.issue_id)
-                # Two parts for one task: the later one is what it waits for.
-                if key not in floors or landing > floors[key]:
-                    floors[key] = landing
+        # Delivery floors, and ONLY when this project asked for them. Lifted into
+        # `_delivery_floors` so the drag-time push reads the same answer — see the
+        # docstring there for why a delivery is not simply a predecessor.
+        floors = _delivery_floors(project_id)
 
         changed = cascade(issues, relations, earliest_starts=floors)
         moved = []
@@ -1265,6 +1390,11 @@ class ProjectCriticalPathEndpoint(BaseAPIView):
     useful answer: "this can slip four days" is a decision, "this is not on the
     critical path" is trivia. Both come out of the same dates, so they cannot
     contradict each other.
+
+    `diagnostics` is why the answer is what it is. An empty chain has four
+    different causes and a chart that draws nothing looks the same for all of
+    them — which is exactly how "I can't see what the critical path does" gets
+    reported against a computation that ran correctly in 46 ms.
     """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
@@ -1279,6 +1409,18 @@ class ProjectCriticalPathEndpoint(BaseAPIView):
                 "slack": {
                     issue_id: {"free": v["free"], "total": v["total"], "critical": v["critical"]}
                     for issue_id, v in slack.items()
+                },
+                "diagnostics": critical_path_report(issues, relations),
+                # The dates an item cannot be planned before because a part is not
+                # there yet. Sent with the graph rather than on its own endpoint
+                # because the client that needs them is the one drawing the graph:
+                # a drag that pushes a chain has to stop at the same floor the
+                # auto-schedule button stops at, or the two features would disagree
+                # about whether a delivery is a constraint. `{}` on a project that
+                # has not asked for delivery scheduling, which is most of them.
+                "delivery_floors": {
+                    issue_id: landing.isoformat()
+                    for issue_id, landing in _delivery_floors(project_id).items()
                 },
             },
             status=status.HTTP_200_OK,
@@ -1332,11 +1474,120 @@ class WorkspaceCriticalPathEndpoint(BaseAPIView):
                     }
                 )
 
-        return Response({"issue_ids": sorted(critical), "edges": edges}, status=status.HTTP_200_OK)
+        # Same counts as the per-project endpoint, over every project the caller
+        # can see — so the portfolio's own toggle can say "no dependencies
+        # recorded across these 9 projects" rather than highlight nothing and
+        # leave the button looking dead.
+        return Response(
+            {
+                "issue_ids": sorted(critical),
+                "edges": edges,
+                "diagnostics": critical_path_report(issues, relations),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# --- links on a project's documentation panel ---------------------------------
+#
+# Three of these columns are `CharField`, not `URLField`, and until this pass the
+# endpoint below only `.strip()`ed them. A `javascript:` URL therefore stored
+# cleanly and was rendered straight into an `href` on the Pages panel — a proven
+# stored-XSS route, one click, any project member as the author.
+#
+# The scheme decision is `_expense_link`'s, reused rather than restated: it is
+# the same question ("can a browser follow this without running it") and one
+# implementation is the only way both answers stay the same. It lives beside the
+# expense sheet because that is where it was first needed; being further down
+# this file is not a reason to write a second one.
+
+# What a documentation link may be, in characters. `chat_url` and the
+# `google_drive_url` mirror are `CharField(max_length=1024)`, so anything longer
+# does not fail validation — it raises `DataError` at the database, after the
+# other fields in the same PUT have already been assigned.
+DOC_LINK_MAX = 1024
+# A project's files live in a handful of places, not a hundred. The cap is here
+# so a client loop cannot grow a JSON column without bound.
+DRIVE_LINKS_MAX = 20
+DRIVE_LABEL_MAX = 120
+
+
+def _doc_link(value):
+    """A stored documentation link, or an error to return. `("", None)` clears it."""
+    url, denied = _expense_link(value)
+    if denied:
+        return None, denied
+    if len(url) > DOC_LINK_MAX:
+        return None, Response(
+            {"error": f"That link is too long to store (limit {DOC_LINK_MAX} characters)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return url, None
+
+
+def _drive_links(raw):
+    """Normalised `[{"url", "label"}]`, or an error to return.
+
+    Objects rather than the bare strings `github_repo_urls` holds. A repo URL
+    labels itself — `arribada/linkit-v4-core` is right there in the path — and a
+    Drive URL is an opaque folder id, so three of them stacked in a panel are
+    three identical rows. "Field data", "CAD", "Reports" is the difference
+    between a list and a list somebody can use.
+
+    A bare string is accepted as `{"url": s, "label": ""}`, so a client written
+    against the old single field, or a paste of the old value, is not a 400. An
+    entry with an empty url is a removal rather than an error — the same rule
+    `_expense_link` states for the single case.
+    """
+    if not isinstance(raw, list):
+        return None, Response(
+            {"error": "google_drive_links must be a list"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    seen, out = set(), []
+    for entry in raw:
+        if isinstance(entry, str):
+            raw_url, raw_label = entry, ""
+        elif isinstance(entry, dict):
+            raw_url, raw_label = entry.get("url"), entry.get("label")
+        else:
+            return None, Response(
+                {"error": "Each Drive link must be a url, or an object with url and label."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        url, denied = _doc_link(raw_url)
+        if denied:
+            return None, denied
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append({"url": url, "label": str(raw_label or "").strip()[:DRIVE_LABEL_MAX]})
+        if len(out) >= DRIVE_LINKS_MAX:
+            break
+    return out, None
+
+
+def _drive_mirror(links):
+    """The value of the deprecated `google_drive_url` column: the first link, or None.
+
+    Derived in exactly one place. See the model: the column survives so a
+    frontend built before this change — and this fork ships its two images on two
+    schedules — keeps showing a Drive link instead of none, and so migration 0041
+    has something real to reverse into.
+    """
+    for entry in links or []:
+        url = entry.get("url") if isinstance(entry, dict) else entry
+        if url:
+            return str(url)[:DOC_LINK_MAX]
+    return None
 
 
 class ProjectWikiDocEndpoint(BaseAPIView):
-    """Read or set the wiki doc a project links to (private deep link)."""
+    """Read or set where a project's documentation lives.
+
+    The wiki doc (a private deep link), the Drive folders, the chat channel and
+    the GitHub repos. Two of the four are lists, because one project's files and
+    one project's code are both routinely in several places.
+    """
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="PROJECT")
     def get(self, request, slug, project_id):
@@ -1350,6 +1601,7 @@ class ProjectWikiDocEndpoint(BaseAPIView):
                     "workspace_id": None,
                     "title": None,
                     "google_drive_url": None,
+                    "google_drive_links": [],
                     "chat_url": None,
                     "github_repo_urls": [],
                 },
@@ -1371,10 +1623,34 @@ class ProjectWikiDocEndpoint(BaseAPIView):
             mapping.doc_id = doc_id
         if "title" in request.data:
             mapping.title = (request.data.get("title") or "").strip() or None
-        if "google_drive_url" in request.data:
-            mapping.google_drive_url = (request.data.get("google_drive_url") or "").strip() or None
+        if "google_drive_links" in request.data:
+            links, denied = _drive_links(request.data.get("google_drive_links") or [])
+            if denied:
+                return denied
+            mapping.google_drive_links = links
+        elif "google_drive_url" in request.data:
+            # An older client, which knows about one Drive link and is editing it.
+            #
+            # It replaces the FIRST entry and leaves the rest alone. Rewriting the
+            # whole list to a single entry would be the obvious reading, and it
+            # silently deletes links that client has never been able to see — the
+            # exact shape of the roster bug this fork already fixed once, where a
+            # stale tab removed people by omission.
+            url, denied = _doc_link(request.data.get("google_drive_url"))
+            if denied:
+                return denied
+            existing = list(mapping.google_drive_links or [])
+            head = existing[0] if existing and isinstance(existing[0], dict) else {}
+            rest = existing[1:]
+            if url:
+                mapping.google_drive_links = [{"url": url, "label": head.get("label", "")}, *rest]
+            else:
+                mapping.google_drive_links = rest
         if "chat_url" in request.data:
-            mapping.chat_url = (request.data.get("chat_url") or "").strip() or None
+            chat_url, denied = _doc_link(request.data.get("chat_url"))
+            if denied:
+                return denied
+            mapping.chat_url = chat_url or None
         if "github_repo_urls" in request.data:
             raw = request.data.get("github_repo_urls") or []
             if not isinstance(raw, list):
@@ -1382,11 +1658,28 @@ class ProjectWikiDocEndpoint(BaseAPIView):
             # normalize: trimmed non-empty strings, de-duplicated, order preserved
             seen, urls = set(), []
             for u in raw:
-                s = str(u).strip()
+                # Same scheme rule as the other three. These are rendered into an
+                # `href` on the same panel by the same component, so a
+                # `javascript:` repo was the identical hole under a different name.
+                s, denied = _doc_link(u)
+                if denied:
+                    return denied
                 if s and s not in seen:
                     seen.add(s)
                     urls.append(s)
             mapping.github_repo_urls = urls
+        # Derived, never typed. Kept in step here rather than at each of the two
+        # write paths above, so it cannot drift out of step at one of them.
+        #
+        # The condition is not tidiness. A row whose links are still empty
+        # because 0041 has not run yet — a container started against a database
+        # mid-deploy — would otherwise have its legacy Drive link NULLED by
+        # somebody saving a wiki doc id, which is silent data loss caused by a
+        # field the request never mentioned. Touched only when there is something
+        # to mirror, or when this request was about the Drive links at all.
+        mirror = _drive_mirror(mapping.google_drive_links)
+        if mirror or "google_drive_links" in request.data or "google_drive_url" in request.data:
+            mapping.google_drive_url = mirror
         mapping.save()
         return Response(self._serialize(mapping), status=status.HTTP_200_OK)
 
@@ -1396,7 +1689,10 @@ class ProjectWikiDocEndpoint(BaseAPIView):
             "doc_id": mapping.doc_id,
             "workspace_id": mapping.workspace_id,
             "title": mapping.title,
-            "google_drive_url": mapping.google_drive_url,
+            # Deprecated, and answered from the list rather than from the column,
+            # so a row written before 0041 ran still reads correctly.
+            "google_drive_url": _drive_mirror(mapping.google_drive_links) or mapping.google_drive_url,
+            "google_drive_links": mapping.google_drive_links or [],
             "chat_url": mapping.chat_url,
             "github_repo_urls": mapping.github_repo_urls or [],
         }
@@ -1731,22 +2027,48 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
     denominator.
 
     NUMERATOR: for each dated item, its working days inside the window, times the
-    person's recorded share of it. A missing share counts as 100% — somebody who
-    has not said is assumed to be on it fully, which over-states load rather than
-    under-stating it, and a planner that quietly reports spare capacity is the
-    failure worth avoiding.
+    person's recorded share of it, times the fraction of a week they are actually
+    here. A missing share counts as 100% — somebody who has not said is assumed to
+    be on it fully, which over-states load rather than under-stating it, and a
+    planner that quietly reports spare capacity is the failure worth avoiding.
 
     DENOMINATOR: the working days that person actually has. `_merged_roster`
-    already merges days_per_week and leave across every project they are on, which
-    is the only honest answer for somebody split three ways; public holidays come
-    off it per their country.
+    already merges days_per_week across every project they are on, which is the
+    only honest answer for somebody split three ways; public holidays come off it
+    per their country. (Their recorded LEAVE does not, yet — `_merged_roster`
+    unions it and the workload timeline sweeps it, but this reading has never
+    subtracted it, so a fortnight in the field still counts as available here.)
+
+    ─────────────────────────────────────────────────────────────────────────────
+    BOTH SIDES ARE PERSON-DAYS, and that is the whole of the fix below.
+
+    A bar on the chart is a CALENDAR SPAN, not an effort — and for a part-timer
+    the span has already been stretched to hold the work: `_stretch_for_part_time`
+    turns three days of work into five elapsed working days for somebody here
+    three days a week, and that is exactly what the scheduler wrote onto the item.
+    So the raw span already carries the part-time correction once. The denominator
+    then applied it a second time, in the same direction, and a person booked
+    exactly to the limit of their contract read:
+
+        3 days/week   committed 40, available 24   ->  167%
+        1 day/week    committed 40, available  8   ->  500%
+
+    Permanently, and with no way to get to 100% short of refusing work. A capacity
+    bar that says "over-allocated" about everybody who is part-time says nothing
+    about anybody, which is worse than not drawing it — the one person genuinely
+    drowning is indistinguishable from the three who are simply not full-time.
+
+    Converting the span back to person-days on the numerator (the inverse of the
+    stretch) makes the ratio dimensionally honest: person-days committed over
+    person-days owned. A full-timer is untouched — their factor is 1.
+    ─────────────────────────────────────────────────────────────────────────────
 
     Eight weeks: far enough to see a crunch forming, near enough that the dates
     are real rather than aspirational.
     """
     from .models import IssueAllocation
 
-    today = timezone.now().date()
+    today = timezone.localdate()
     window_end = today + timedelta(weeks=weeks)
 
     roster = _merged_roster(visible)
@@ -1793,6 +2115,17 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
             by_country[country] = _holidays_for(slug, country, today, window_end)
         return by_country[country]
 
+    def week_fraction(person):
+        """How much of a full week this person works, 0.2 to 1.0.
+
+        Read once and used on BOTH sides of the ratio — see the docstring. The
+        clamp mirrors `_merged_roster`'s: a roster row saying 0 or 9 days a week
+        is a typo, and neither "infinite capacity" nor "divide by zero" is an
+        answer a workload board may give.
+        """
+        info = roster.get(person) or {}
+        return max(1, min(5, int(info.get("days_per_week") or 5))) / 5.0
+
     committed = {}
     for issue_id, assignee_id in assignees:
         row = by_issue.get(str(issue_id))
@@ -1810,18 +2143,21 @@ def _capacity_by_assignee(request, slug, visible, weeks=8):
         # outside [start, end] are simply never looked at.
         days = _working_days_between(start, end, holidays_of(country))
         share = shares.get((str(issue_id), person), 100) / 100.0
-        committed[person] = committed.get(person, 0.0) + days * share
+        # The span back into person-days, which is what the denominator counts.
+        # Five elapsed working days of a three-day-a-week engineer is three days
+        # of that engineer, and charging the elapsed five against a contract of
+        # three is where the permanent 167% came from.
+        committed[person] = committed.get(person, 0.0) + days * share * week_fraction(person)
 
     out = {}
     for person, days in committed.items():
         info = roster.get(person) or {}
-        per_week = max(1, min(5, int(info.get("days_per_week") or 5)))
         country = info.get("work_country") or DEFAULT_COUNTRY
         holidays = holidays_of(country)
         # Available = the working days in the window this person actually works,
         # scaled by how many days a week they are here.
         full = _working_days_between(today, window_end, holidays)
-        available = full * (per_week / 5.0)
+        available = full * week_fraction(person)
         out[person] = {
             "committed_days": round(days, 1),
             "available_days": round(available, 1),
@@ -1862,6 +2198,11 @@ class IssueAllocationEndpoint(BaseAPIView):
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
             return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+        # How much of somebody's week this item is entitled to. Capacity is a
+        # planning decision, and it is what the workload timeline is drawn from.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         from .models import IssueAllocation
 
         assignee_id = request.data.get("assignee_id")
@@ -2243,7 +2584,13 @@ class HubProjectsEndpoint(BaseAPIView):
                     "completed_issues": completed,
                     "progress": round(100 * completed / total) if total else 0,
                     "wiki_url": wiki_url,
-                    "google_drive_url": (d.google_drive_url if d else None) or None,
+                    # From the list, so the Hub shows the same first link the
+                    # panel does. `google_drive_url` is a mirror of exactly this
+                    # and is kept for consumers built before the list existed.
+                    "google_drive_url": _drive_mirror(d.google_drive_links if d else None)
+                    or (d.google_drive_url if d else None)
+                    or None,
+                    "google_drive_links": (d.google_drive_links if d else []) or [],
                     "chat_url": (d.chat_url if d else None) or None,
                     "github_repo_urls": (d.github_repo_urls if d else []) or [],
                 }
@@ -2623,6 +2970,25 @@ class ProjectScheduleEndpoint(BaseAPIView):
             )
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
         data = ProjectScheduleSerializer(schedule).data
+        # THE ANSWER THE CLIENT SHOULD ASK FOR RATHER THAN DERIVE.
+        #
+        # `lead_only_edits` is beside it in the same payload, and a client could
+        # work this out from that flag plus a roster call — but it would be
+        # working out a permission, and the two definitions would then have to be
+        # kept in step by hand. This is the same predicate `_plan_guard` and the
+        # middleware use, so a control the client draws is a control the server
+        # will serve, and a control it hides is one the server would refuse.
+        # Read-only and computed: they are about the caller, not about the row.
+        #
+        # Two answers because there are two questions, and conflating them is how
+        # a workspace admin gets shown a switch that 403s. Changing the plan
+        # admits an admin (`_may_edit_plan` — a plan needs a repair path);
+        # changing WHO MAY CHANGE THE PLAN is `_lead_guard`, which does not.
+        is_lead = _is_project_lead(request.user, project_id)
+        data["can_set_governance"] = is_lead
+        data["can_edit_plan"] = (
+            not schedule.lead_only_edits or is_lead or _may_edit_plan(request.user, project_id)
+        )
         if not _has_project_role(request.user, slug, project_id, MONEY_ROLES):
             # Absent, not nulled. A null would read as "nobody has set a budget",
             # which is a claim about the project rather than about the caller —
@@ -2638,12 +3004,27 @@ class ProjectScheduleEndpoint(BaseAPIView):
                 {"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND
             )
         payload = request.data
-        # The three settings that say who may change the plan are the lead's, and
-        # only the lead's. A member who could unlock the timeline is not looking at
-        # a locked timeline — the setting would only be documenting an intention.
-        governance = {"timeline_locked", "allow_edit_others", "allow_add_items"}
+        # The settings that say who may change the plan are the lead's, and only
+        # the lead's. A member who could unlock the timeline is not looking at a
+        # locked timeline — the setting would only be documenting an intention,
+        # and that goes double for `lead_only_edits`, which a member could
+        # otherwise switch off in the same breath as the edit it refuses.
+        governance = {
+            "timeline_locked",
+            "allow_edit_others",
+            "allow_add_items",
+            "lead_only_edits",
+        }
         if governance & set(payload.keys()):
             denied = _lead_guard(request, project_id)
+            if denied:
+                return denied
+        # The project's own dates and the delivery-floor switch are the plan at its
+        # coarsest — the range every bar is read against — so they go behind the
+        # same guard as the bars themselves once the project has opted in.
+        plan = {"start_date", "target_date", "schedule_from_deliveries"}
+        if plan & set(payload.keys()):
+            denied = _plan_guard(request, project_id)
             if denied:
                 return denied
         schedule, _ = ProjectSchedule.objects.get_or_create(project_id=project_id)
@@ -3022,6 +3403,63 @@ class ProjectTeamEndpoint(BaseAPIView):
         )
 
 
+def cycle_day(cycle, project, field="start_date"):
+    """The DAY a sprint boundary falls on, read in the PROJECT's timezone.
+
+    A sprint is the one plan date in this fork that is not a plain day. Every
+    other one — a work item's start and target, an expense date, the project
+    window, a rate capture — is a `DateField` and answers the same everywhere.
+    `Cycle.start_date` and `Cycle.end_date` are upstream `DateTimeField`s, and
+    upstream writes them from a typed day through `convert_to_utc`: the start at
+    project-local midnight PLUS ONE SECOND, the end at project-local 23:59.
+
+    Which means `.date()` on the stored value is the UTC day, and the two ends
+    fail in opposite directions:
+
+        project tz          typed        stored (UTC)          .date() says
+        ─────────────────   ──────────   ───────────────────   ─────────────
+        Pacific/Auckland    start 2 Mar  1 Mar 11:00:01Z       1 March  ✗
+        America/L_A         end  31 Mar  1 Apr 06:59Z          1 April  ✗
+
+    A whole day, on the boundary a funder is told the sprint ran between. Both
+    sites reading this were taking `.date()` while upstream's OWN Cycles page
+    converts first (`user_timezone_converter`, `plane/app/views/cycle/base.py`),
+    so ONE sprint showed TWO start dates on two pages of the same product — and
+    the wrong one is the one that reaches the Finance per-sprint table and the
+    printed cost annex, where nobody is in a position to notice.
+
+    So the conversion happens ONCE, here, at the API edge, the same way upstream
+    does it (`pytz.timezone(project.timezone)`, then `astimezone`). Not two copies
+    to drift apart, and not in the client: the browser knows the reader's zone,
+    which is a third answer again.
+
+    `field` because a boundary has two ends and they are the same fact; the
+    default is `start_date` so the common call reads as the name promises.
+    `cycle` may be a model instance or a `.values()` row — both sites here query
+    with `.values()`, and a helper that forced them to stop doing so would be
+    paid for in queries.
+
+    An unknown timezone string falls back to UTC rather than raising: a bad
+    `project.timezone` must cost this reading its accuracy, not cost the whole
+    Overview page a 500.
+    """
+    import pytz
+
+    value = cycle.get(field) if isinstance(cycle, dict) else getattr(cycle, field, None)
+    if not value:
+        return None
+    try:
+        local = pytz.timezone(getattr(project, "timezone", None) or "UTC")
+    except pytz.UnknownTimeZoneError:
+        local = pytz.utc
+    # Naive only if something wrote around the ORM (USE_TZ is on, so a stored
+    # value is always aware). Read as UTC in that case, which is what the naive
+    # column would have meant.
+    if timezone.is_naive(value):
+        value = pytz.utc.localize(value)
+    return value.astimezone(local).date()
+
+
 class ProjectOverviewEndpoint(BaseAPIView):
     """Everything the project Overview page shows, in one call.
 
@@ -3040,7 +3478,7 @@ class ProjectOverviewEndpoint(BaseAPIView):
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         week = today + timedelta(days=7)
         issues = Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug)
 
@@ -3108,8 +3546,9 @@ class ProjectOverviewEndpoint(BaseAPIView):
         cycles = []
         for c in cycle_rows:
             stats = cycle_stats.get(c["id"], {})
-            start = c["start_date"].date() if c["start_date"] else None
-            end = c["end_date"].date() if c["end_date"] else None
+            # In the project's timezone, not the server's — see `cycle_day`.
+            start = cycle_day(c, project, "start_date")
+            end = cycle_day(c, project, "end_date")
             cycles.append(
                 {
                     "id": str(c["id"]),
@@ -3182,7 +3621,12 @@ class ProjectOverviewEndpoint(BaseAPIView):
         )
         links = {
             "wiki_url": wiki_url,
-            "drive_url": (docs.google_drive_url if docs else None) or None,
+            # `drive_url` stays singular for the Overview's one-line link row;
+            # `drive_links` is the whole set for anything that wants to list them.
+            "drive_url": _drive_mirror(docs.google_drive_links if docs else None)
+            or (docs.google_drive_url if docs else None)
+            or None,
+            "drive_links": (docs.google_drive_links if docs else []) or [],
             "chat_url": (docs.chat_url if docs else None) or None,
             "github_repo_urls": (docs.github_repo_urls if docs else []) or [],
         }
@@ -3407,7 +3851,17 @@ PLAN_DATE_HORIZON_YEARS = 50
 
 
 def _plan_date_ceiling():
-    """The latest date this instance will accept, moving with the calendar."""
+    """The latest date this instance will accept, moving with the calendar.
+
+    THE ONE PLACE IN THIS FILE THAT KEEPS `timezone.now()` ON PURPOSE, and the
+    exception that proves the rule at the top: this is not somebody's today, it
+    is a validation bound, and a bound has to give every caller the same answer.
+    On `localdate()` two people either side of midnight on 31 December would
+    disagree by a whole YEAR about whether a date is plantable — the same request
+    accepted from Auckland and refused from London, an hour apart, for reasons
+    neither could see. Fifty years of headroom does not need to be anybody's
+    fifty years.
+    """
     return date(timezone.now().date().year + PLAN_DATE_HORIZON_YEARS, 12, 31)
 
 
@@ -3719,7 +4173,7 @@ class ProjectAiPlanEndpoint(BaseAPIView):
 
         prompt = [
             f'Project: "{project.name}" ({project.identifier}).',
-            f"Today is {timezone.now().date().isoformat()}.",
+            f"Today is {timezone.localdate().isoformat()}.",
             f"Project window: {window_start or 'not set'} to {window_end or 'not set'}.",
             f"When no better signal exists, assume an item takes about {default_days} working days.",
         ]
@@ -3889,6 +4343,12 @@ class ProjectApplyPlanEndpoint(BaseAPIView):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Dates, disciplines and assignees, in bulk, from a proposal. Anybody may
+        # ASK the assistant for a plan — the draft endpoints are ungated on
+        # purpose — but writing one over the project is the lead's.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         rows = request.data.get("issues") or []
         if not isinstance(rows, list) or not rows:
@@ -4216,7 +4676,7 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         start = (
             _parse_date(request.data.get("start_date"))
             or (schedule_row.start_date if schedule_row else None)
-            or timezone.now().date()
+            or timezone.localdate()
         )
 
         def _positive(value, ceiling):
@@ -4387,7 +4847,41 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         # The plan is only as honest as the calendar it is built on: holidays,
         # part-time weeks and booked leave all move the end date, and none of them
         # were known to the scheduler before.
-        placed, warnings = schedule(tasks, start, capacity, people, pinned_dates, _holidays_for(slug))
+        #
+        # `_holidays_for` NEEDS A RANGE or the statutory half of that calendar is
+        # not computed at all and only the workspace's hand-entered closures come
+        # back — which is how this call, alone among the four in this file, placed
+        # tasks on Christmas Day. It is also the only one whose answer is WRITTEN:
+        # setup-apply stores these dates on real work items, so unlike a bar drawn
+        # a day wide the mistake outlives the request and has to be found by hand.
+        #
+        # The end of the plan is not known until `schedule` has run, so the range
+        # is an UPPER BOUND rather than the answer: every task serial, at five
+        # working days a week (7/5 of the worked days in calendar terms), plus a
+        # year for the leave and closures that push the tail out, and never less
+        # than the furthest date a human pinned. Overshooting costs eight dict
+        # entries per extra year and nothing else — `holidays_for` builds a year
+        # at a time and caps itself at MAX_SPAN_YEARS — while undershooting books
+        # Christmas again in silence, so the bound leans long on purpose.
+        #
+        # Clamped against `date.max` rather than added blind: a project whose
+        # stored start date is already bad data must not turn a holiday lookup
+        # into the OverflowError that `test_date_bomb.py` exists to keep out.
+        #
+        # DEFAULT_COUNTRY because `schedule` takes ONE holiday set for the whole
+        # plan and cannot hold a calendar per person — the same compromise, for
+        # the same reason, as the budget's span fallback.
+        serial_days = min(sum(_positive(t.get("days"), 365) or 1 for t in tasks), 20_000)
+        reach = min(serial_days * 7 // 5 + 366, (date.max - start).days)
+        horizon = max([start + timedelta(days=reach)] + [ends for _, ends in pinned_dates.values()])
+        placed, warnings = schedule(
+            tasks,
+            start,
+            capacity,
+            people,
+            pinned_dates,
+            _holidays_for(slug, DEFAULT_COUNTRY, start, horizon),
+        )
         end = max((v["target"] for v in placed.values()), default=start)
 
         # How much each task can slip. Derived from the dates that were just placed,
@@ -4572,7 +5066,7 @@ class ProjectAiDraftEndpoint(BaseAPIView):
 
         # Dates are computed, not asked for — the same rule as the planner. The model
         # estimates an effort; turning that into a window is arithmetic.
-        start = next_working_day(timezone.now().date())
+        start = next_working_day(timezone.localdate())
         if schedule and schedule.start_date and schedule.start_date > start:
             start = next_working_day(schedule.start_date)
         target = add_working_days(start, days)
@@ -4629,6 +5123,11 @@ class ProjectCleanEndpoint(BaseAPIView):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Deletes the plan wholesale — items, relations, disciplines, sprints and
+        # modules. The typed confirmation stops an accident; this stops the person.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         confirm = str(request.data.get("confirm") or "").strip()
         if confirm.upper() != (project.identifier or "").upper():
@@ -4711,6 +5210,11 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
         project = _visible_projects(request, slug).filter(id=project_id).first()
         if not project:
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Creates dated work items, relations, efforts, sprints and modules in one
+        # request — every category the setting names, at once.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         rows = [r for r in (request.data.get("tasks") or []) if isinstance(r, dict)]
         if not rows:
@@ -5144,9 +5648,24 @@ class WorkspaceCalendarEndpoint(BaseAPIView):
         #
         # `country` lets a caller ask for the other one — the two genuinely differ,
         # which is why this is a parameter rather than a workspace-wide answer.
-        today = timezone.now().date()
+        today = timezone.localdate()
         wanted = (request.query_params.get("country") or DEFAULT_COUNTRY).upper()
-        statutory = holidays_for(wanted, today.replace(year=today.year - 1), today.replace(year=today.year + 2))
+        # WHOLE YEARS, never `today.replace(year=…)`.
+        #
+        # 29 February has no counterpart in a common year, so
+        # `date(2028, 2, 29).replace(year=2027)` raises ValueError — not a wrong
+        # answer, a 500 on the workspace calendar for the whole of 29 February
+        # 2028, and again in 2032, and so on for as long as this line survives.
+        # It is the same shape of defect as the date bomb: arithmetic that is
+        # correct on 1,460 days out of 1,461.
+        #
+        # Whole years rather than a leap-safe shift because `holidays_for` builds
+        # calendars a YEAR at a time and then trims to the range: January-to-
+        # December bounds are the shape it already has, and the couple of extra
+        # days this returns at each end are days the chart is happy to draw. A
+        # `try/except ValueError` around a `replace` would have preserved the
+        # exact old window and left the next person to rediscover why it is there.
+        statutory = holidays_for(wanted, date(today.year - 1, 1, 1), date(today.year + 2, 12, 31))
         return Response(
             {
                 "days": [{"id": str(r.id), "date": r.date.isoformat(), "name": r.name} for r in rows],
@@ -5353,7 +5872,7 @@ class WorkspaceCurrencyEndpoint(BaseAPIView):
             # A rate without a date cannot be told apart from a rate from four
             # years ago, so changing one always restamps the other. An explicit
             # date wins — somebody entering last month's rate should say so.
-            row.rate_captured_on = _parse_date(request.data.get("rate_captured_on")) or timezone.now().date()
+            row.rate_captured_on = _parse_date(request.data.get("rate_captured_on")) or timezone.localdate()
         elif "rate_captured_on" in request.data:
             row.rate_captured_on = _parse_date(request.data.get("rate_captured_on"))
 
@@ -5439,6 +5958,99 @@ def _lead_guard(request, project_id):
         {
             "error": "Only the project lead can do this.",
             "detail": "Anyone on the project can raise a purchase request; the lead approves it.",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+# WHERE THE LINE IS, in one sentence, in one place.
+#
+# This string is the setting's help text, the 403's `detail`, and the comment
+# explaining every call to `_plan_guard` below. A permission whose boundary is
+# described in three places is a permission that ends up meaning three things,
+# and the whole risk of this switch is somebody being refused something they had
+# no way to predict.
+PLAN_LINE_LEAD = (
+    "dates, effort estimates, disciplines, parents, dependencies, "
+    "sprint and module membership, and the planning tools "
+    "(auto-schedule, apply plan, baselines, the gap fillers)"
+)
+PLAN_LINE_EVERYONE = (
+    "move a work item's state, comment, tick a checklist, "
+    "record the effort you actually spent, add a link, and raise a purchase request"
+)
+
+
+def _may_edit_plan(user, project_id):
+    """Whether `user` may change this project's plan while `lead_only_edits` is on.
+
+    The lead, by `_is_project_lead` — and, DELIBERATELY UNLIKE `_lead_guard`, a
+    workspace admin as well, whether or not the project already has a lead.
+
+    That divergence is a decision rather than an oversight, so here is the
+    argument. `_lead_guard` protects acts of AUTHORITY — approving a purchase,
+    signing the expense sheet, publishing a schedule to the open internet — and
+    for those, "somebody approved it" is exactly the failure mode to avoid, so an
+    admin who is not the budget owner is correctly refused. This guard protects
+    the CONTENTS of a plan, and the plan needs a repair path. A lead on leave, a
+    lead who has left the organisation, a lead flagged on a roster row nobody has
+    updated: with no admin override, the only way to fix a wrong date is to turn
+    the setting off, and a permission whose failure mode is "switch the
+    permission off" protects nothing. The workspace admin is also already the
+    person who decides WHO the lead is, so refusing them the plan is a lock with
+    its key hanging beside it — two clicks, not a boundary.
+
+    Scoped to the project's own workspace: an admin somewhere else is nobody here.
+    """
+    if _is_project_lead(user, project_id):
+        return True
+    workspace_id = (
+        Project.objects.filter(id=project_id).values_list("workspace_id", flat=True).first()
+    )
+    if not workspace_id:
+        return False
+    return WorkspaceMember.objects.filter(
+        workspace_id=workspace_id, member_id=user.id, is_active=True, role=ROLE.ADMIN.value
+    ).exists()
+
+
+def plan_edits_are_lead_only(project_id):
+    """Whether this project has asked for the plan to be the lead's.
+
+    Its own function rather than an inline `.filter().first()` because the
+    middleware that covers upstream's routes asks the same question, and the two
+    answers have to be the same answer. A project with no schedule row has never
+    opted in — `default=False` on a row that does not exist is still False.
+    """
+    return ProjectSchedule.objects.filter(
+        project_id=project_id, lead_only_edits=True
+    ).exists()
+
+
+def _plan_guard(request, project_id):
+    """403 body when this project's plan is the lead's and the caller is not, else None.
+
+    Same shape as `_lead_guard` on purpose — call it first thing in a handler,
+    return what it returns — and the same shape the middleware in `plan_guard.py`
+    uses for the upstream routes this app does not own. One predicate, two
+    delivery mechanisms, because the gantt's bar drag posts to upstream's
+    `IssueBulkUpdateDateEndpoint` and a rule that stopped at this app's URL prefix
+    would leave the most obvious way to move a date completely unguarded.
+
+    Costs one indexed row read per guarded write, and only reaches the second
+    query on a project that has opted in.
+    """
+    if not plan_edits_are_lead_only(project_id):
+        return None
+    if _may_edit_plan(request.user, project_id):
+        return None
+    return Response(
+        {
+            "error": "Only the project lead can change the plan.",
+            "detail": (
+                f"This project is set so that only its lead (or a workspace admin) changes "
+                f"{PLAN_LINE_LEAD}. You can still {PLAN_LINE_EVERYONE}."
+            ),
         },
         status=status.HTTP_403_FORBIDDEN,
     )
@@ -7004,7 +7616,7 @@ class WorkloadTimelineEndpoint(BaseAPIView):
 
     @allow_permission(allowed_roles=VIEWER_ROLES, level="WORKSPACE")
     def get(self, request, slug):
-        today = timezone.now().date()
+        today = timezone.localdate()
         win_from, win_to = _workload_window(request, today)
         include_empty = request.GET.get("include_empty", "false") == "true"
 
@@ -7152,7 +7764,27 @@ class WorkloadTimelineEndpoint(BaseAPIView):
         known_ids = active_member_ids | set(by_user.keys())
         users = {str(u.id): u for u in User.objects.filter(id__in=list(known_ids))}
         roster = _merged_roster(visible)
-        holidays = _holidays_for(slug)
+
+        # One holiday set per COUNTRY, over the window this timeline draws.
+        #
+        # The RANGE is what was missing: `_holidays_for` computes the statutory
+        # half only when it is given one, so this call returned nothing but the
+        # workspace's hand-entered closures and the overlap sweep counted Christmas
+        # Day, Good Friday and the August bank holiday as ordinary working days.
+        # It reported conflict days on dates nobody could have worked — and this is
+        # the screen whose entire job is to be believed about a double-booking.
+        #
+        # Per country rather than one set for the workspace, for the reason
+        # `holidays.py` exists: the 14th of July is not a British engineer's day
+        # off and Boxing Day is not a French one's. The memo is the shape
+        # `_capacity_by_assignee` already uses — two countries and one window means
+        # two answers, not one WorkspaceNonWorkingDay query per person on the board.
+        holidays_by_country = {}
+
+        def holidays_of(country):
+            if country not in holidays_by_country:
+                holidays_by_country[country] = _holidays_for(slug, country, win_from, win_to)
+            return holidays_by_country[country]
 
         people = []
         hidden = 0
@@ -7186,6 +7818,7 @@ class WorkloadTimelineEndpoint(BaseAPIView):
                     continue
                 windows.append((low, high, issue_id))
 
+            holidays = holidays_of(profile.get("work_country") or DEFAULT_COUNTRY)
             overlaps = _overlap_regions(windows, _working_day_test(holidays, leave))
             extra = undrawable.get(user_id, {})
             people.append(
@@ -7265,7 +7898,17 @@ class WorkloadTimelineEndpoint(BaseAPIView):
             {
                 "window": {"from": win_from, "to": win_to},
                 "today": today,
-                "holidays": sorted(d for d in holidays if win_from <= d <= win_to),
+                # The SHADING, which is one shared axis and therefore cannot be
+                # anybody's personal calendar: the workspace's own closures plus
+                # the default country's statutory days. The per-person answer is
+                # the one the conflict sweep above uses, where it belongs.
+                #
+                # Still filtered to the window because `_holidays_for` range-limits
+                # only the computed half — the hand-entered closures come back in
+                # full, and a chart does not need the ones it cannot draw.
+                "holidays": sorted(
+                    d for d in holidays_of(DEFAULT_COUNTRY) if win_from <= d <= win_to
+                ),
                 "people": people,
                 "items": items,
                 "hidden_people_count": hidden,
@@ -7721,6 +8364,17 @@ class IssueEffortEndpoint(BaseAPIView):
                 )
             return Response({"actual_days": actual}, status=status.HTTP_200_OK)
 
+        # THE LINE, at its sharpest, and the reason the guard is here rather than
+        # at the top of the handler: the ESTIMATE is the plan and the ACTUAL is
+        # the work. "How big do we say this is" is the lead's answer on a project
+        # that has opted in; "how long it actually took me" is the person who did
+        # it reporting a fact, and a tool that refuses that report is a tool whose
+        # actuals are all missing. The branch above has already returned for an
+        # actual sent on its own, so everything from here down is the estimate.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
+
         raw = request.data.get("days")
         if raw in (None, ""):
             # Clearing is a real answer: "we no longer claim to know" is different
@@ -7813,7 +8467,7 @@ def _suggest_dates_from_effort(project_id, issue_id, days, issue):
         return {"start_date": str(start), "target_date": str(_add_working_days(start, span - 1))}
     if target and not start:
         return {"start_date": str(_add_working_days(target, -(span - 1))), "target_date": str(target)}
-    begins = timezone.now().date()
+    begins = timezone.localdate()
     while begins.weekday() >= 5:
         begins += timedelta(days=1)
     return {"start_date": str(begins), "target_date": str(_add_working_days(begins, span - 1))}
@@ -7934,7 +8588,7 @@ def _target_from_lead_time(issue, lead_time_days):
     """
     if not lead_time_days or issue.get("target_date"):
         return None
-    start = issue.get("start_date") or timezone.now().date()
+    start = issue.get("start_date") or timezone.localdate()
     landing = start + timedelta(days=int(lead_time_days))
     while landing.weekday() >= 5:
         landing += timedelta(days=1)
@@ -8118,6 +8772,13 @@ def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unco
         .order_by("start_date", "created_at")
         .values("id", "name", "start_date", "end_date", "archived_at")
     )
+    # One row, for one field: `cycle_day` needs the project's timezone to turn a
+    # stored instant back into the day somebody typed. Fetched here rather than
+    # taken as an argument because this function is called with a project ID —
+    # by the budget endpoint and by `test_cost_by_cycle.py` — and widening the
+    # signature would break a caller to save a query the endpoint already makes
+    # several of.
+    project = Project.objects.filter(id=project_id).only("timezone").first()
 
     # Grouped, not one query per cycle.
     #
@@ -8160,13 +8821,19 @@ def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unco
     for row in rows:
         labour = round(labour_by_cycle.get(row["id"], 0.0), 2)
         expense = round(expense_by_cycle.get(row["id"], 0.0), 2)
+        # Cycles store datetimes where the rest of this app stores dates, so the
+        # day has to be read back in the project's own timezone — see `cycle_day`.
+        # These two are the Finance per-sprint table and the printed cost annex; a
+        # boundary off by a day here is a boundary off by a day in front of a
+        # funder, on the one page where nobody can check it against anything.
+        began = cycle_day(row, project, "start_date")
+        ended = cycle_day(row, project, "end_date")
         cycles.append(
             {
                 "cycle_id": str(row["id"]),
                 "name": row["name"],
-                # Cycles store datetimes where the rest of this app stores dates.
-                "start_date": row["start_date"].date().isoformat() if row["start_date"] else None,
-                "end_date": row["end_date"].date().isoformat() if row["end_date"] else None,
+                "start_date": began.isoformat() if began else None,
+                "end_date": ended.isoformat() if ended else None,
                 "archived": row["archived_at"] is not None,
                 "labour": labour,
                 "expense": expense,
@@ -8278,7 +8945,7 @@ def _spend_rhythm(
     # money that exists.
     months_left = None
     if target_date:
-        today = timezone.now().date()
+        today = timezone.localdate()
         months_left = max(0, (target_date.year - today.year) * 12 + (target_date.month - today.month))
 
     sustainable = None
@@ -8288,7 +8955,7 @@ def _spend_rhythm(
     exhausted_on = None
     if remaining is not None and rate and rate > 0 and remaining > 0:
         months_of_runway = int(remaining // rate)
-        today = timezone.now().date()
+        today = timezone.localdate()
         # `date()` refuses a year past 9999, and this arithmetic reaches one
         # easily. `rate` is the mean of the last three months WITH spend, so a
         # single €1 test line after a quiet stretch is a rate of €1 — against
@@ -8390,6 +9057,11 @@ class IssueRoleEndpoint(BaseAPIView):
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         if not Issue.issue_objects.filter(id=issue_id, project_id=project_id).exists():
             return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
+        # The discipline decides which rate the cost annex multiplies and which
+        # half of the roster the item is counted against. Named in the setting.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         role = str(request.data.get("role") or "").strip()[:80]
         if not role:
@@ -8691,7 +9363,16 @@ class WorkspaceGithubUnclassifiedEndpoint(BaseAPIView):
 
 # Gaps of 1000, matching what dragging produces: a later drop between two
 # neighbours takes their midpoint, and a gap of one would run out of room.
+#
+# The client depends on the exact value: a drag that begins by freezing the
+# sequence on screen computes its own midpoint against `(index + 1) * ORDER_STEP`
+# rather than the sort_orders its store still holds from before the freeze. See
+# `apps/web/ce/components/gantt-chart/reorder.ts`.
 ORDER_STEP = 1000
+
+# The most items one saved or frozen arrangement may carry. Both halves of the
+# feature use it: freezing wrote 2000 while saving silently kept 500.
+ORDER_CAP = 2000
 
 
 def _apply_issue_order(project_id, issue_ids):
@@ -8762,7 +9443,12 @@ class ProjectIssueOrdersEndpoint(BaseAPIView):
         # The client sends what it is showing, because what is on screen is what
         # somebody means by "this order" — a server-side read of sort_order would
         # save a different sequence whenever the view is sorted by anything else.
-        sent = _uuid_keys({str(i): 1 for i in (request.data.get("issue_ids") or [])})
+        # ORDER_CAP, not the helper's 500 default. Saving is the other half of
+        # freezing, and freezing caps at 2000 — so a board with 700 items froze
+        # all 700 and then saved the first 500, reporting success and a count
+        # that made the truncation look like the real length. The two halves of
+        # one feature have to agree about how big an order can be.
+        sent = _uuid_keys({str(i): 1 for i in (request.data.get("issue_ids") or [])}, limit=ORDER_CAP)
         ordered = [str(i) for i in sent]
         if not ordered:
             ordered = [
@@ -8831,7 +9517,7 @@ class ProjectIssueOrderApplyEndpoint(BaseAPIView):
         ids = request.data.get("issue_ids") or []
         if not isinstance(ids, list) or not ids:
             return Response({"error": "issue_ids required"}, status=status.HTTP_400_BAD_REQUEST)
-        applied = _apply_issue_order(project_id, [str(i) for i in ids][:2000])
+        applied = _apply_issue_order(project_id, [str(i) for i in ids][:ORDER_CAP])
         return Response({"applied": applied}, status=status.HTTP_200_OK)
 
 
@@ -9465,6 +10151,11 @@ class ProjectDisciplinesEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # The list every work item's discipline is chosen from. Adding to it is
+        # the same decision as setting one, taken one level up.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         name = str(request.data.get("name") or "").strip()[:80]
         if not name:
             return Response({"error": "name required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -9535,6 +10226,12 @@ class ProjectAssigneeGapEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        # One of the three gap fillers, and they go together. Gating the dates and
+        # the disciplines but not the assignees would be a boundary nobody could
+        # predict from the same screen.
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         assignments = request.data.get("assignments") or {}
         if not isinstance(assignments, dict):
             return Response({"error": "assignments must be an object"}, status=status.HTTP_400_BAD_REQUEST)
@@ -9593,7 +10290,7 @@ class ProjectUndatedGapEndpoint(BaseAPIView):
         )
         effort = dict(IssueEffort.objects.filter(issue__project_id=project_id).values_list("issue_id", "days"))
         schedule = ProjectSchedule.objects.filter(project_id=project_id).first()
-        default_start = (schedule.start_date if schedule else None) or timezone.now().date()
+        default_start = (schedule.start_date if schedule else None) or timezone.localdate()
 
         items = []
         for r in rows:
@@ -9620,6 +10317,9 @@ class ProjectUndatedGapEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
         dates = request.data.get("dates") or {}
         if not isinstance(dates, dict):
             return Response({"error": "dates must be an object"}, status=status.HTTP_400_BAD_REQUEST)
@@ -9710,6 +10410,9 @@ class ProjectDisciplineGapEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         if not _visible_projects(request, slug).filter(id=project_id).exists():
             return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        denied = _plan_guard(request, project_id)
+        if denied:
+            return denied
 
         assignments = request.data.get("assignments") or {}
         if not isinstance(assignments, dict):

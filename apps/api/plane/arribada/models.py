@@ -71,6 +71,26 @@ class ProjectSchedule(models.Model):
     # Whether a member may add work items to this project at all.
     allow_add_items = models.BooleanField(default=True)
 
+    # Whether only the lead may change THE PLAN — dates, effort estimates,
+    # disciplines, parents, dependencies, sprint and module membership, and the
+    # bulk planning tools that rewrite all of them at once.
+    #
+    # The line this draws is the whole point of the setting, so it is written
+    # here as well as in the help text the lead reads, and `_PLAN_LINE` in
+    # views.py is generated from the same sentence rather than restated:
+    #
+    #   the lead decides WHAT THE PLAN IS — when work happens, how big it is,
+    #   who does which discipline, what waits for what;
+    #   everyone else still does THE WORK — moving an item's state, commenting,
+    #   ticking a checklist, and recording the effort they actually spent.
+    #
+    # Off by default, like the other three, and for the same reason: a project
+    # that has not asked to be governed should behave exactly as it did before.
+    # Unlike `timeline_locked` this IS a permission — it names a person rather
+    # than a state of the plan — so, unlike the lock, it does not apply to the
+    # lead themselves.
+    lead_only_edits = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -133,9 +153,30 @@ class ProjectWikiDoc(models.Model):
     workspace_id = models.CharField(max_length=64, default=WIKI_WORKSPACE_ID)
     doc_id = models.CharField(max_length=64, null=True, blank=True)
     title = models.CharField(max_length=512, null=True, blank=True)
-    # A Google Drive folder/file URL where the project's documents live — shown as a
-    # reference link on the Pages view so the whole team has access, next to the wiki.
+    # DERIVED MIRROR of `google_drive_links[0]["url"]`, kept for one deploy cycle
+    # and written in exactly one place (`_drive_mirror` in views.py). Nothing here
+    # reads it as authority any more.
+    #
+    # It survives because the backend and the frontend of this fork ship as two
+    # images on two schedules — the web build is gated on `workflow_dispatch` and
+    # is not even in ghcr — so there is always a window where an old client is
+    # talking to a new server. Dropping the column outright would have shown that
+    # client no Drive link at all on every project until it was rebuilt, which is
+    # a regression that looks exactly like data loss. It is also what makes
+    # migration 0041 genuinely reversible.
     google_drive_url = models.CharField(max_length=1024, null=True, blank=True)
+    # Where the project's documents live. A list, because one project's files are
+    # rarely one folder — field data, CAD, and the reports that go to a funder are
+    # three different places with three different audiences, and three bare Drive
+    # URLs in a column are indistinguishable from each other.
+    #
+    # Entries are `{"url": str, "label": str}` rather than the bare strings
+    # `github_repo_urls` holds, and the difference is not an inconsistency: a
+    # GitHub URL labels itself (`arribada/linkit-v4-core` is right there in the
+    # path) and a Drive URL is a folder id nobody can read. The label may be
+    # empty — every row migrated from the old single column has an empty one,
+    # because nobody was ever asked for it.
+    google_drive_links = models.JSONField(default=list, blank=True)
     # The chat channel this project's notifications go to (link on the Pages view).
     chat_url = models.CharField(max_length=1024, null=True, blank=True)
     # GitHub repos associated with this project (a project can span several). Used both

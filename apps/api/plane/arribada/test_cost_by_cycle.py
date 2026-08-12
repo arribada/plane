@@ -30,30 +30,65 @@ than merely land in the wrong row — the one failure a Finance page may not hav
 the function's inputs — computed by `ProjectBudgetEndpoint` from the tasks and
 the ledger — and `test_budget_endpoint.py` is where they come under test.
 
+AND THE SPRINT DATES USED TO BE WRITTEN AT EXACT UTC MIDNIGHT, which is a value
+the product has never once stored. A cycle's dates go through `convert_to_utc`
+(plane/utils/timezone_converter.py): the start is the PROJECT'S LOCAL midnight
+plus one second, the end is the project's local 23:59. Both are instants, and
+which day they fall on depends on where the project is. A fixture that writes
+`00:00:00Z` tests the one arrangement of the clock in which every timezone
+question in this area has the same answer — and `00:00:00Z` is also the one
+instant at which "did this cycle start yet" and "had it ended" are both
+borderline, which is a second thing it was quietly deciding. The cycles below
+are built by calling `convert_to_utc` itself, so the fixture cannot drift from
+the thing it stands in for, and the last two tests put a project east and west
+of Greenwich where a bare `.date()` reads a different day from the project's.
+
+The whole file is frozen at a deliberately hostile instant for the same reason:
+`convert_to_utc` has a branch that fires only when a cycle starts on the day it
+is created, so an unfrozen suite runs a different code path on one day a year.
+
 Run explicitly: `python -m pytest plane/arribada/test_cost_by_cycle.py`
 """
 
-from datetime import datetime, timezone as tz
+from datetime import date
 
 import pytest
 from django.utils import timezone
+from freezegun import freeze_time
 
 from plane.arribada import views
-from plane.db.models import Cycle, CycleIssue, Issue
+from plane.db.models import Cycle, CycleIssue, Issue, Project
+from plane.utils.timezone_converter import convert_to_utc
+
+# Sunday 25 October 2026, late in the UTC day: Europe's clocks went back that
+# morning, and a reader at UTC+13 is already well into the 26th. Nothing in this
+# file may depend on the runner's own date, and this is the instant that says so.
+AWKWARD = "2026-10-25 23:30:00"
+
+
+@pytest.fixture(autouse=True)
+def _a_deliberately_awkward_clock():
+    with freeze_time(AWKWARD):
+        yield
 
 
 @pytest.fixture
 def sprints(money_project):
     """A helper bundle over the real project, so each test states only its own shape."""
 
-    def cycle(name, start=None, end=None, archived=False, deleted=False):
+    def cycle(name, start=None, end=None, archived=False, deleted=False, project=None):
+        project = project or money_project["project"]
         row = Cycle.objects.create(
             name=name,
-            project=money_project["project"],
+            project=project,
             workspace=money_project["workspace"],
             owned_by=money_project["users"]["owner"],
-            start_date=datetime(*start, tzinfo=tz.utc) if start else None,
-            end_date=datetime(*end, tzinfo=tz.utc) if end else None,
+            # Through the product's own converter rather than around it. A sprint
+            # planned for the 1st is stored as the project's local midnight PLUS
+            # ONE SECOND and read back as a day, and every defect in that round
+            # trip lives in the difference between those two.
+            start_date=convert_to_utc(date(*start).isoformat(), project.id, True) if start else None,
+            end_date=convert_to_utc(date(*end).isoformat(), project.id) if end else None,
             archived_at=timezone.now() if archived else None,
         )
         if deleted:
@@ -268,8 +303,6 @@ def test_a_project_with_nothing_at_all_draws_nothing(sprints):
 def test_another_projects_sprints_are_not_on_this_chart(sprints):
     """Scoping, which a fake `filter(**_)` that returned everything it was given
     could not have tested at all."""
-    from plane.db.models import Project
-
     other = Project.objects.create(
         name="Elsewhere",
         workspace=sprints["workspace"],
@@ -285,3 +318,68 @@ def test_another_projects_sprints_are_not_on_this_chart(sprints):
     mine = sprints["cycle"]("Ours")
     sprints["item"]("a", in_cycle=mine)
     assert [r["name"] for r in cost(sprints)["cycles"]] == ["Ours"]
+
+
+# --- the day a sprint is on, for a project that is not on UTC ----------------
+#
+# The fixture project sits on UTC, which is the one placement where a cycle's
+# stored instant and its plain day agree — so every test above passes without
+# saying anything at all about the conversion. These two say it.
+#
+# What is stored is an instant: the project's local midnight plus a second, or
+# its local 23:59. Read with a bare `.date()` that answers with the SERVER's day,
+# and the two ends then fail in OPPOSITE directions, which is why one test per
+# direction:
+#
+#     project timezone      sprint 1-30 Oct 2026    a bare .date() would say
+#     -------------------   ---------------------   ------------------------
+#     UTC                   1 Oct - 30 Oct          1 Oct - 30 Oct
+#     Pacific/Auckland      1 Oct - 30 Oct          30 SEP - 30 Oct
+#     America/Los_Angeles   1 Oct - 30 Oct          1 Oct  - 31 OCT
+#
+# A whole day on the boundary a funder is told the sprint ran between, on the one
+# page nobody can check against anything. `views.cycle_day` is what converts
+# first, and these two are its regression tests from this side of the API — an
+# instance running on UTC cannot fail them, which is exactly the point.
+
+
+def _project_on(sprints, zone, name, identifier):
+    return Project.objects.create(
+        name=name,
+        workspace=sprints["workspace"],
+        created_by=sprints["users"]["owner"],
+        identifier=identifier,
+        timezone=zone,
+    )
+
+
+def test_a_sprint_east_of_greenwich_starts_on_the_day_its_project_says(sprints):
+    """Auckland is UTC+13 in October, so a sprint that starts on the 1st is
+    stored at 11:00 on 30 SEPTEMBER — a start in the previous month."""
+    east = _project_on(sprints, "Pacific/Auckland", "Southern", "STH")
+    cycle = sprints["cycle"]("Spring", start=(2026, 10, 1), end=(2026, 10, 30), project=east)
+
+    assert cycle.start_date.isoformat() == "2026-09-30T11:00:01+00:00", (
+        "the fixture is no longer building what the product stores"
+    )
+
+    payload = views._cost_by_cycle(east.id, {}, {}, "EUR", [])
+    got = next(r for r in payload["cycles"] if r["cycle_id"] == str(cycle.id))
+
+    assert got["start_date"] == "2026-10-01"
+
+
+def test_a_sprint_west_of_greenwich_ends_on_the_day_its_project_says(sprints):
+    """The mirror image. Los Angeles is UTC-7 in October, so the last minute of
+    the 30th is 06:59 on the 31st — a sprint with a day it never had."""
+    west = _project_on(sprints, "America/Los_Angeles", "Western", "WST")
+    cycle = sprints["cycle"]("Fall", start=(2026, 10, 1), end=(2026, 10, 30), project=west)
+
+    assert cycle.end_date.isoformat() == "2026-10-31T06:59:00+00:00", (
+        "the fixture is no longer building what the product stores"
+    )
+
+    payload = views._cost_by_cycle(west.id, {}, {}, "EUR", [])
+    got = next(r for r in payload["cycles"] if r["cycle_id"] == str(cycle.id))
+
+    assert got["end_date"] == "2026-10-30"

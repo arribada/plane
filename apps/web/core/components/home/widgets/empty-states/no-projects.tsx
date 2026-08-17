@@ -85,7 +85,11 @@ export const NoProjectsEmptyState = observer(function NoProjectsEmptyState() {
       flag: "visited_workspace",
       cta: {
         text: "home.empty.configure_workspace.cta",
-        link: "settings",
+        // ARRIBADA FIX: bare "settings" is a RELATIVE link. The next/link compat shim hands
+        // it to react-router relative to the workspace-home route (":workspaceSlug"), which
+        // drops the slug and resolves to /settings — an unrouted path → error page. The three
+        // sibling cards all use absolute /${workspaceSlug}/... paths; match them. (fork drift)
+        link: `/${workspaceSlug}/settings`,
         disabled: !isWorkspaceAdmin,
       },
     },

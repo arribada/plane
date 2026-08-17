@@ -44,10 +44,12 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-08-12 10:45 |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), CI artifact of run 31588685459       |
-| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | the previous serve; **the roll-back target for this deploy**, built 2026-08-10 07:10             |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | the previous serve; pair it with the backend above                                               |
+| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-08-12 16:49; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.90` | `d37d47244cf4` | `aa13efe486`                | **currently served** (= `makeplane/plane-frontend:v1.3.1`), CI artifact; OCI revision label present |
+| `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | the previous serve; **the roll-back target for this deploy**, built on the droplet 2026-08-12 10:45 |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | the previous serve; pair with the backend above; CI artifact of run 31588685459 (past its 5-day window — may be gone) |
+| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | one before that, built 2026-08-10 07:10                                                          |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | one before that; pair it with the backend above                                                 |
 | `arribada/plane-backend:v1.3.1-arribada.87`          | `59d2c947c519` | `170c639e7b`                | one before that                                                                                  |
 | `arribada/plane-frontend:v1.3.1-arribada.87`         | `7bbff227cf0b` | `170c639e7b`                | one before that; pair it with the backend above                                                  |
 | `arribada/plane-backend:rollback-94f7adddea`         | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                         |
@@ -122,7 +124,25 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
-> **2026-08-12.** `c77edfad9e` is deployed and carries **two** migrations, `0040` and `0041`.
+> **2026-08-17 (reconciled).** Production is now `.90` = `aa13efe486`, which carries **two**
+> migrations on top of `.89`: `0042` and `0043`. **Both are safe to strand on a rollback and
+> neither needed a pre-deploy dump** — read them, do not grep them (`grep -l RunPython` over
+> these two files gives a FALSE positive, matching the word in each docstring's prose; there
+> is no `RunPython` in either).
+>
+> - `0042_project_schedule_external_edits` — `AddField`, a boolean `external_edits`
+>   `default=False`. Schema only, reversible, safe to strand. Rolling code back to `.89`
+>   just drops the answer to a question `.89`'s code never asks.
+> - `0043_issue_external_source_index` — `RunSQL` `CREATE INDEX CONCURRENTLY` (partial, on
+>   `issues (project_id, external_source) WHERE external_source IS NOT NULL`), `atomic=False`.
+>   Reversible via `DROP INDEX CONCURRENTLY`; leaving it applied under `.89` costs nothing.
+>   If ever reported failed, check for an INVALID index and drop it (see §2's index query).
+>
+> So a `.90 → .89` code rollback needs **no** database action. `git diff --name-only
+> c77edfad9e..aa13efe486 -- apps/api/plane/arribada/migrations/` lists `0042`+`0043`; both
+> are schema/DDL only.
+
+> **2026-08-12.** `c77edfad9e` (`.89`) carries **two** migrations, `0040` and `0041`.
 >
 > - `0040_project_schedule_lead_only_edits` — `AddField`, a boolean with `default=False`.
 >   Schema only; safe to strand.

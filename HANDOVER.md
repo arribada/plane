@@ -1,26 +1,39 @@
-# Handover — Arribada Plane fork, 2026-08-10
+# Handover — Arribada Plane fork, 2026-08-10 (reconciled 2026-08-17)
 
 State of the work after a four-agent audit and several fix passes. Written so a fresh
 session can continue without re-deriving anything.
 
+> **Reconciled 2026-08-17.** This file had production on `.89` / `c77edfad9e`. It was
+> wrong by one deploy. Verified against the running system (`docker inspect` on image
+> **ids**, not tags): production serves **`.90`**, both backend and frontend built from
+> **`aa13efe486`** — the same commit that is now the tip of `arribada/main` on the remote.
+> The three commits the old text called "neither built nor deployed" (the three-pass
+> frontend, its CI floor, and the wiki-sync `external_edits` backend pass) are **all
+> deployed**. DB reconciled too: migrations `0042` and `0043` are applied, 0 invalid
+> indexes. Note: the **local** `arribada/main` branch ref on the droplet was left stranded
+> at `c77edfad9e`; the remote and the running images are at `aa13efe486`.
+
 ## Where things stand
 
-Production `plane.arribada.org` serves **`c77edfad9e`** — image tag
-`v1.3.1-arribada.89`, backend image id `7d7b3e85559a`, frontend `976196a923c8`,
-deployed 2026-08-12 10:57. Everything committed **up to and including
-`c77edfad9e`** is deployed, with the docs-only commits that need no deploy.
+Production `plane.arribada.org` serves **`aa13efe486`** — image tag
+`v1.3.1-arribada.90`, backend image id `6a0c7e1faffd`, frontend `d37d47244cf4`,
+built 2026-08-12 16:49, deployed ~2026-08-13 (containers up 4 days as of 2026-08-17).
+OCI label `org.opencontainers.image.revision` on both `.90` images confirms the commit.
+Everything committed **up to and including `aa13efe486`** is deployed, with the docs-only
+commits that need no deploy.
 
-**No longer true above that line.** The two commits on top of `c77edfad9e` —
-the three-pass frontend integration (gantt state groups, gestures, arrows) and
-the CI floor that goes with it — are committed, verified and **neither built
-nor deployed**. They are frontend-only, so shipping them means a `web` build,
-which is the `workflow_dispatch` job gated on `build_web: true`; see the first
-trap below. A backend pass (wiki-sync `external_edits`, migrations `0042` and
-`0043`) was still being written when they landed and is not in either commit.
+**Above that line is empty.** `aa13efe486` is the tip of `arribada/main` on the remote;
+nothing is committed ahead of what production serves. (The prior handover's "not built
+nor deployed" list — the three-pass frontend `09115501c3`, its CI floor `7fbc60ae36`, and
+the backend `external_edits` pass `aa13efe486` — all shipped in `.90`.)
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `c77edfad9e` | **serving now** | CI: web suite under two non-UTC zones, `WEB_URL`, `freezegun`, measured floors (569 web / 580 backend).                          |
+| `aa13efe486` | **serving now** | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`.               |
+| `7fbc60ae36` | yes             | CI: web floor 725, measured on the merged tree.                                                                                  |
+| `09115501c3` | yes             | Frontend — timeline state groups, gestures and arrows (three passes, one commit).                                              |
+| `05c24aacc4` | n/a — docs only | Recorded what `.89` served, and the grep that lies about RunPython.                                                              |
+| `c77edfad9e` | yes             | CI: web suite under two non-UTC zones, `WEB_URL`, `freezegun`, measured floors (569 web / 580 backend). Was `.89`.               |
 | `d830927388` | yes             | Frontend — nested timeline, colours, exports, and dates that mean one day. 110 files.                                            |
 | `6448e35fd9` | yes             | Backend — plan governance, portfolio nesting, caller's-day dates. 30 files; migrations `0040` + `0041`.                          |
 | `ac98514a4d` | yes             | Timeline refresh: the write landed, the screen kept the old answer (MobX/React memo staleness).                                  |
@@ -35,7 +48,7 @@ trap below. A backend pass (wiki-sync `external_edits`, migrations `0042` and
 | `876cc26b2c` | yes             | Silent-failure class fixed (point 3). Web tests 24 → 75.                                                                         |
 
 `94f7adddea` — which an earlier version of this file named as production — is now
-five deploys behind. It survives on the droplet only as the rollback image
+six deploys behind (production is `.90`). It survives on the droplet only as the rollback image
 `arribada/plane-backend:rollback-94f7adddea`. See `ROLLBACK.md`, which is the
 authority on what is on that disk and what is not.
 
@@ -176,7 +189,7 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- `.88` is deployed. Next tag should be `.89` or higher — but prefer the commit SHA:
+- `.90` is deployed (= `aa13efe486`). Next tag should be `.91` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

@@ -313,8 +313,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # No build args on purpose: upstream's CI passes none either, so VITE_* stay
-      # empty and the SPA calls the API same-origin. Passing one would diverge.
+      # ARRIBADA: stamp the build time so the bottom-right VersionBadge can show it.
+      - name: Stamp build time
+        id: buildmeta
+        run: echo "time=$(date -u +%Y-%m-%dT%H:%MZ)" >> "$GITHUB_OUTPUT"
+
+      # The ONLY build args are the Arribada version stamp (tag / commit / build time),
+      # surfaced by the bottom-right VersionBadge so a refresh is visibly confirmable. The
+      # VITE_*_BASE_URL args are deliberately left unset, exactly as upstream: they stay empty
+      # so the SPA calls the API same-origin — passing one would diverge.
       # outputs=type=docker,dest writes the FULL single-platform image tar (all
       # layers) — reliable, unlike `load:true`+`docker save` which can capture an
       # empty image on a cache-only build. The tar (gzipped) is the artifact the
@@ -325,6 +332,10 @@ jobs:
           file: ./apps/web/Dockerfile.web
           outputs: type=docker,dest=/tmp/frontend-image.tar
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/plane-frontend:${{ env.TAG }}
+          build-args: |
+            VITE_APP_VERSION=${{ env.TAG }}
+            VITE_APP_COMMIT=${{ github.sha }}
+            VITE_APP_BUILD_TIME=${{ steps.buildmeta.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # Same reason as the backend: the tar the droplet loads carries its commit, so

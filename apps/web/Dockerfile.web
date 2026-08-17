@@ -67,6 +67,18 @@ ENV VITE_SPACE_BASE_PATH=$VITE_SPACE_BASE_PATH
 ARG VITE_WEB_BASE_URL=""
 ENV VITE_WEB_BASE_URL=$VITE_WEB_BASE_URL
 
+# ARRIBADA: build-version stamp surfaced by the bottom-right VersionBadge. The CI `web` job
+# passes these; vite exposes any VITE_* env into the bundle. Empty on a plain local build,
+# in which case the badge renders nothing.
+ARG VITE_APP_VERSION=""
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+
+ARG VITE_APP_COMMIT=""
+ENV VITE_APP_COMMIT=$VITE_APP_COMMIT
+
+ARG VITE_APP_BUILD_TIME=""
+ENV VITE_APP_BUILD_TIME=$VITE_APP_BUILD_TIME
+
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV TURBO_TELEMETRY_DISABLED=1
 

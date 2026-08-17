@@ -25,6 +25,9 @@ import globalStyles from "@/styles/globals.css?url";
 import type { Route } from "./+types/root";
 // components
 import { LogoSpinner } from "@/components/common/logo-spinner";
+// ARRIBADA: a tiny always-on build-version badge (bottom-right), so a refresh can be
+// confirmed visually and deploys tracked. (fork drift)
+import { VersionBadge } from "@/plane-web/components/common/version-badge";
 // local
 import { CustomErrorComponent } from "./error";
 import { AppProvider } from "./provider";
@@ -86,6 +89,8 @@ export function Layout({ children }: { children: ReactNode }) {
         <ThemeProvider themes={["light", "dark", "light-contrast", "dark-contrast", "custom"]} defaultTheme="system">
           {children}
         </ThemeProvider>
+        {/* ARRIBADA: build-version stamp, present on every page including sign-in and error. */}
+        <VersionBadge />
         <Scripts />
         {!!isSessionRecorderEnabled && process.env.VITE_SESSION_RECORDER_KEY && (
           <Script id="clarity-tracking">

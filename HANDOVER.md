@@ -15,20 +15,26 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`386e622001`** — **frontend** image tag
-`v1.3.1-arribada.91`, frontend image id `d618eb235591` (OCI revision `386e622001`),
-built + deployed 2026-08-17 07:55. The **backend is unchanged**: still image id
-`6a0c7e1faffd` (`.90`, built from `aa13efe486`). This is a **frontend-only deploy** —
-`386e622001` changed one frontend file and `5658072476` is docs-only, so there is no
-backend delta since `aa13efe486` and the backend was not rebuilt. Everything committed
-**up to and including `386e622001`** is therefore deployed.
+Production `plane.arribada.org` serves **`f8902dcd15`** — **frontend** image tag
+`v1.3.1-arribada.92`, frontend image id `be1449169e9f` (OCI revision `f8902dcd15`),
+built + deployed 2026-08-17 ~11:45. The **backend is unchanged**: still image id
+`6a0c7e1faffd` (`.90`, built from `aa13efe486`). Every commit since `aa13efe486`
+(`.91`'s quickstart fix, the version badge, and the docs) is frontend or docs only, so
+there is **no backend delta** and the backend has not been rebuilt since `.90`. Everything
+committed **up to and including `f8902dcd15`** is deployed.
 
-**Above that line is empty.** `386e622001` is the tip of `arribada/main` on the remote;
+Verified end-to-end over the public domain: `/assets/root-*.js` carries
+`VITE_APP_VERSION:"v1.3.1-arribada.92"` / `VITE_APP_COMMIT:"f8902dcd…"`. The bottom-right
+build-version badge (added in `f8902dcd15`) surfaces this on every page — the fastest way to
+confirm a deploy actually reached the browser is now to read that corner.
+
+**Above that line is empty.** `f8902dcd15` is the tip of `arribada/main` on the remote;
 nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `386e622001` | **serving now** | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Shipped as frontend `.91`; no backend change. |
+| `f8902dcd15` | **serving now** | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Shipped as frontend `.92`; no backend change. |
+| `386e622001` | yes             | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`. |
 | `5658072476` | n/a — docs only | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                    |
 | `aa13efe486` | yes             | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`. Backend of `.90` + `.91`. |
 | `7fbc60ae36` | yes             | CI: web floor 725, measured on the merged tree.                                                                                  |
@@ -190,8 +196,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.91` (= `386e622001`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.92` or higher — but prefer the commit SHA:
+- Frontend `.92` (= `f8902dcd15`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.93` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

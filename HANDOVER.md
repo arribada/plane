@@ -15,21 +15,22 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`aa13efe486`** — image tag
-`v1.3.1-arribada.90`, backend image id `6a0c7e1faffd`, frontend `d37d47244cf4`,
-built 2026-08-12 16:49, deployed ~2026-08-13 (containers up 4 days as of 2026-08-17).
-OCI label `org.opencontainers.image.revision` on both `.90` images confirms the commit.
-Everything committed **up to and including `aa13efe486`** is deployed, with the docs-only
-commits that need no deploy.
+Production `plane.arribada.org` serves **`386e622001`** — **frontend** image tag
+`v1.3.1-arribada.91`, frontend image id `d618eb235591` (OCI revision `386e622001`),
+built + deployed 2026-08-17 07:55. The **backend is unchanged**: still image id
+`6a0c7e1faffd` (`.90`, built from `aa13efe486`). This is a **frontend-only deploy** —
+`386e622001` changed one frontend file and `5658072476` is docs-only, so there is no
+backend delta since `aa13efe486` and the backend was not rebuilt. Everything committed
+**up to and including `386e622001`** is therefore deployed.
 
-**Above that line is empty.** `aa13efe486` is the tip of `arribada/main` on the remote;
-nothing is committed ahead of what production serves. (The prior handover's "not built
-nor deployed" list — the three-pass frontend `09115501c3`, its CI floor `7fbc60ae36`, and
-the backend `external_edits` pass `aa13efe486` — all shipped in `.90`.)
+**Above that line is empty.** `386e622001` is the tip of `arribada/main` on the remote;
+nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `aa13efe486` | **serving now** | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`.               |
+| `386e622001` | **serving now** | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Shipped as frontend `.91`; no backend change. |
+| `5658072476` | n/a — docs only | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                    |
+| `aa13efe486` | yes             | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`. Backend of `.90` + `.91`. |
 | `7fbc60ae36` | yes             | CI: web floor 725, measured on the merged tree.                                                                                  |
 | `09115501c3` | yes             | Frontend — timeline state groups, gestures and arrows (three passes, one commit).                                              |
 | `05c24aacc4` | n/a — docs only | Recorded what `.89` served, and the grep that lies about RunPython.                                                              |
@@ -189,7 +190,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- `.90` is deployed (= `aa13efe486`). Next tag should be `.91` or higher — but prefer the commit SHA:
+- Frontend `.91` (= `386e622001`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.92` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

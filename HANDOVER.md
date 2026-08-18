@@ -15,13 +15,13 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`f8902dcd15`** — **frontend** image tag
-`v1.3.1-arribada.92`, frontend image id `be1449169e9f` (OCI revision `f8902dcd15`),
-built + deployed 2026-08-17 ~11:45. The **backend is unchanged**: still image id
+Production `plane.arribada.org` serves **`06bf6626d0`** — **frontend** image tag
+`v1.3.1-arribada.93`, frontend image id `cd36c65d2f45` (OCI revision `06bf6626d0`),
+built + deployed 2026-08-18. The **backend is unchanged**: still image id
 `6a0c7e1faffd` (`.90`, built from `aa13efe486`). Every commit since `aa13efe486`
-(`.91`'s quickstart fix, the version badge, and the docs) is frontend or docs only, so
-there is **no backend delta** and the backend has not been rebuilt since `.90`. Everything
-committed **up to and including `f8902dcd15`** is deployed.
+(the quickstart fix, version badge, the safe mobile pass, and docs) is frontend or docs
+only, so there is **no backend delta** and the backend has not been rebuilt since `.90`.
+Everything committed **up to and including `06bf6626d0`** is deployed.
 
 Verified end-to-end over the public domain: `/assets/root-*.js` carries
 `VITE_APP_VERSION:"v1.3.1-arribada.92"` / `VITE_APP_COMMIT:"f8902dcd…"`. The bottom-right
@@ -33,7 +33,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `f8902dcd15` | **serving now** | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Shipped as frontend `.92`; no backend change. |
+| `06bf6626d0` | **serving now** | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Frontend `.93`. Authed mobile screens NOT browser-verified — Point 4 still human-blocked. |
+| `f8902dcd15` | yes             | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Was frontend `.92`. |
 | `386e622001` | yes             | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`. |
 | `5658072476` | n/a — docs only | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                    |
 | `aa13efe486` | yes             | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`. Backend of `.90` + `.91`. |
@@ -169,14 +170,42 @@ still cannot raise one. Whether to build it is a product call.
   figures already sent to a funder.
 - All five Home widgets ship enabled, contradicting their own comment.
 - Everything defaults to EUR in a GBP organisation.
-- ~40 hardcoded strings still say "cycle" after the Cycle→Sprint rename; the sign-in page
-  says "Welcome back to Plane" and shows SSO as "Sign in with GitLab". **Re-verified
-  2026-08-10**: `auth-header.tsx:31/35/39` and `hooks/oauth/core.tsx:66` still say both.
+- The sign-in copy ("Welcome back to Plane", "Sign in with GitLab") is still there — see the
+  **2026-08-18 audit** below, which supersedes this line. The "~40 hardcoded cycle strings"
+  once listed here are **resolved** (0 in the i18n values).
 - Droplet was at 90% disk; 18 GB reclaimed, now 80%. Docker log rotation is configured but
   has never taken effect — the daemon has not reloaded since before the config was written.
 
 Everything in this list except the two re-verified above was last checked **2026-08-08**
 and has not been re-confirmed against the deployed commit. Treat it as a lead, not a fact.
+
+### Frontend audit — re-verified 2026-08-18 (against `06bf6626d0`)
+
+A four-dimension read of `apps/web` (features, i18n, design, mobile). Corrections and adds:
+
+- **`cycle` strings — RESOLVED, remove from the list above.** `grep` over the i18n **values**
+  (not keys) returns **0** occurrences of user-visible "cycle"; the rename to Sprint is
+  complete in the copy. (A subagent that lacked `packages/i18n` wrongly "confirmed" both this
+  AND the login copy — do not trust an i18n conclusion from a tree without the i18n package.)
+- **Login copy — STILL TRUE, and it is hardcoded, not i18n.** `auth-header.tsx:31/35/39`
+  literally contain `subHeader: "Welcome back to Plane."` / `header: "Work in all dimensions."`
+  as **string literals** (no `t()`), and `hooks/oauth/core.tsx:66` renders a `… with GitLab`
+  button with a GitLab logo. The GitLab button only shows when `is_gitlab_enabled` — check
+  config before "fixing" it. All product/branding calls, left for the user.
+- **EUR default — PROVEN.** `expense-modal.tsx:82` `useState("EUR")` plus `?? "EUR"` fallbacks
+  in `budget-block.tsx` (131/461/486), `spend-curve.tsx`, `funder-report.tsx`. A GBP org is
+  offered EUR everywhere. Money policy → user's call; the fix (read org currency) is small.
+- **Expense edit — PROVEN missing.** Only delete exists (`budget-block.tsx:1313`); the modal
+  has `request`/`record` only, and `ProjectExpense` has no `updated_by`. Audit-trail gap.
+- **Arribada/Finance strings hardcoded, not translatable** (`arribada-widgets.tsx`,
+  `budget-block.tsx`, expense categories). A real i18n refactor, not a quick fix.
+
+**Mobile — the app is desktop-centric; nobody has opened an authed screen on a phone.**
+`.93` shipped the *safe, desktop-neutral* subset (kanban columns, module side-panels). Still
+open, needs a real device session to verify before shipping: spreadsheet/kanban horizontal
+UX, modals not full-screen on mobile (`image-picker-popover` etc.), the 4-column
+`workload/list.tsx` grid, Power-K width (`top-nav-power-k.tsx:212`). A `sidebar-menu-hamburger-toggle.tsx`
+DOES exist, so the main sidebar has a mobile toggle — the earlier "no hamburger" worry was wrong.
 
 ### Order tracking — closed 2026-08-10
 
@@ -196,8 +225,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.92` (= `f8902dcd15`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.93` or higher — but prefer the commit SHA:
+- Frontend `.93` (= `06bf6626d0`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.94` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

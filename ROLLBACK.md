@@ -44,9 +44,10 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), CI artifact loaded 2026-08-17 ~11:45; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91` | `d618eb235591` | `386e622001`                | previous frontend serve; **the frontend roll-back target for the `.92` deploy**; CI artifact loaded 2026-08-17 07:55; OCI revision label present |
-| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **currently served backend** (= `makeplane/plane-backend:v1.3.1`); `.91` and `.92` were frontend-only, so the backend stayed on this `.90` image. Built on the droplet 2026-08-12 16:49; **the backend roll-back target is itself** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), CI artifact loaded 2026-08-18; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | previous frontend serve; **the frontend roll-back target for the `.93` deploy**; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91` | `d618eb235591` | `386e622001`                | older frontend serve; OCI revision label present |
+| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **currently served backend** (= `makeplane/plane-backend:v1.3.1`); `.91`/`.92`/`.93` were frontend-only, so the backend stayed on this `.90` image. Built on the droplet 2026-08-12 16:49; **the backend roll-back target is itself** |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.90` | `d37d47244cf4` | `aa13efe486`                | older frontend serve; OCI revision label present |
 | `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | older backend serve, built on the droplet 2026-08-12 10:45 |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | the previous serve; pair with the backend above; CI artifact of run 31588685459 (past its 5-day window — may be gone) |
@@ -126,7 +127,11 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
-> **2026-08-17 (frontend `.92`).** The current frontend serve is `.92` = `f8902dcd15`
+> **2026-08-18 (frontend `.93`).** Current frontend serve is `.93` = `06bf6626d0` (safe
+> responsive pass, frontend-only, no migrations). Rollback `.93 → .92` is pure `docker tag`
+> + `--force-recreate web`. Backend still the `.90` image.
+>
+> **2026-08-17 (frontend `.92`).** The frontend serve `.92` = `f8902dcd15`
 > (the bottom-right build-version badge). `.91` = `386e622001` was the home-quickstart link
 > fix. Both are frontend-only and carry **no migrations** — a `.92 → .91` (or `→ .90`)
 > frontend rollback is pure `docker tag` + `--force-recreate web`, no DB action. The backend

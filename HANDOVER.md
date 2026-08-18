@@ -15,14 +15,14 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`e7ee0d36be`** — **frontend** image tag
-`v1.3.1-arribada.94`, frontend image id `9ade7a9552a4` (OCI revision `e7ee0d36be`),
-built + deployed 2026-08-18. The **backend is unchanged**: still image id
+Production `plane.arribada.org` serves **`dfe3b539bb`** — **frontend** image tag
+`v1.3.1-arribada.96`, deployed 2026-08-18. The **backend is unchanged**: still image id
 `6a0c7e1faffd` (`.90`, built from `aa13efe486`). Every commit since `aa13efe486`
-(the quickstart fix, version badge, two mobile passes, expense-edit/currency/login work,
-and docs) is frontend or docs only, so there is **no backend delta** and the backend has
-not been rebuilt since `.90`. Everything committed **up to and including `e7ee0d36be`** is
-deployed.
+(quickstart fix, version badge, two mobile passes, expense-edit/currency work, the login
+correction, the gantt state-colour dot, and docs) is frontend or docs only, so there is
+**no backend delta** and the backend has not been rebuilt since `.90`. Everything committed
+**up to and including `dfe3b539bb`** is deployed. (`.95` = the login correction
+`8c73cb6ac8`; `.96` = the gantt status dot `dfe3b539bb`.)
 
 Verified end-to-end over the public domain: `/assets/root-*.js` carries
 `VITE_APP_VERSION:"v1.3.1-arribada.92"` / `VITE_APP_COMMIT:"f8902dcd…"`. The bottom-right
@@ -34,7 +34,9 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `e7ee0d36be` | **serving now** | Frontend `.94`: expense EDITING (modal edit mode + per-row button, PATCHes the pre-existing `ProjectExpenseDetailEndpoint`); new-expense currency defaults to the project budget currency not EUR; login GitLab option removed + "Plane"→"Arribada" copy; mobile pass 2. Login VERIFIED in the served bundle; expense/currency/authed-mobile NOT browser-verified (no session). |
+| `dfe3b539bb` | **serving now** | Frontend `.96`: a state-colour status dot in the gantt "Work items" sidebar (green when the state is completed), so a group at "73%" shows which rows are done. |
+| `8c73cb6ac8` | yes             | Frontend `.95`: **login correction** — the "GitLab" provider IS the Arribada dashboard SSO (`GITLAB_HOST=devices.arribada.org`); restored + rebranded "Arribada", GitHub/Gitea buttons dropped. Visible login: Arribada SSO + Google + email/password. VERIFIED in bundle. |
+| `e7ee0d36be` | yes             | Frontend `.94`: expense EDITING (modal edit mode + per-row button, PATCHes the pre-existing `ProjectExpenseDetailEndpoint`); new-expense currency defaults to the project budget currency not EUR; **`.94` wrongly removed the GitLab button — corrected in `.95`**; mobile pass 2. |
 | `06bf6626d0` | yes             | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Was `.93`. |
 | `f8902dcd15` | yes             | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Was frontend `.92`. |
 | `386e622001` | yes             | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`. |
@@ -189,12 +191,19 @@ A four-dimension read of `apps/web` (features, i18n, design, mobile). Correction
   (not keys) returns **0** occurrences of user-visible "cycle"; the rename to Sprint is
   complete in the copy. (A subagent that lacked `packages/i18n` wrongly "confirmed" both this
   AND the login copy — do not trust an i18n conclusion from a tree without the i18n package.)
-- **Login copy + GitLab — FIXED in `.94` (`e7ee0d36be`), VERIFIED in the served bundle.**
-  `is_gitlab_enabled` was actually `true` in prod, so the button really showed. Removed the
-  gitlab option from `oauth/core.tsx` and rebranded the hardcoded `auth-header.tsx` copy
-  "Welcome back to Plane"→"…to Arribada". Proven in all served chunks: `with GitLab`=0,
-  `with Google`=1 (witness), `Welcome back to Arribada`=1, `Welcome back to Plane`=0. Server
-  config still has `is_gitlab_enabled=true` (harmless — the frontend no longer surfaces it).
+- **Login — the "GitLab" provider IS the Arribada dashboard SSO. Corrected in `.95`.**
+  ⚠️ `.94` removed the GitLab button thinking it was GitLab. It is NOT: Plane is configured
+  `GITLAB_CLIENT_ID=plane`, `GITLAB_HOST=https://devices.arribada.org` (verified in
+  `instance_configurations`), so `/auth/gitlab/` redirects to the **device dashboard SSO** —
+  the team's primary login. The dashboard runs a GitLab-compatible OAuth provider; Plane was
+  registered against it via `arribada-web-platform/packages/api/scripts/register-oauth-client.js`.
+  `.95` (`oauth/core.tsx`) restores that provider (endpoint unchanged, `/auth/gitlab/`),
+  rebranded "Sign in with **Arribada**" with the Arribada mark, and **drops the GitHub + Gitea
+  buttons** per the owner. Net visible login: **Arribada SSO + Google + email/password**
+  (Google is the same accounts as the dashboard; email/password kept as a fallback). The
+  `auth-header.tsx` copy is already "Welcome back to Arribada" from `.94`.
+  LESSON: a provider labelled "GitLab" here can be a white-label SSO — check `GITLAB_HOST`
+  before touching it.
 - **EUR default — FIXED in `.94`.** A NEW expense now defaults to the project's own budget
   currency (`allocCcy`) instead of hardcoded EUR; editing keeps the line's currency. NOT
   browser-verified (no session). Other `?? "EUR"` fallbacks in read paths (spend-curve,
@@ -215,6 +224,42 @@ unchanged — but the authed mobile result is NOT visually confirmed. A `sidebar
 exists, so the main sidebar has a mobile toggle. Real verified mobile work still needs a
 signed-in device session (Point 4).
 
+### GitHub sync — how it works, and a requested TODO (2026-08-18)
+
+Established by reading `plane/arribada/github_sync_task.py`:
+
+- **Routing.** A repo is mapped to a project via that project's `ProjectWikiDoc.github_repo_urls`.
+  At sync, a GitHub issue becomes a work item **only when exactly ONE project claims the repo**
+  (`_repo_owners` keeps repos with `len(owners) == 1`). A repo claimed by **two projects, or
+  none, goes to the triage queue** (`/github-triage`) for manual routing — deliberate, so work
+  is never filed under a project that did not ask.
+- **No shared/cross-project work item.** A Plane `Issue` has exactly one `project_id`; there is
+  no native "one work item in two projects, tick-one-ticks-both". The sync never duplicates an
+  issue into multiple projects. Building that would be a real feature against the data model.
+- **Direction is GitHub → Plane only.** Verified: **zero writes to the GitHub API** anywhere
+  (`GITHUB_API` is used only for GET list + GET single issue). The one reverse behaviour is
+  closure reconciliation: an issue **closed on GitHub** → the row is marked closed and its work
+  item moved to the project's done state. Finishing a task **in Plane does NOT touch GitHub.**
+
+- **TODO (requested by owner 2026-08-18, not started):** *Plane → GitHub write-back* — when a
+  GitHub-linked work item goes to done in Plane, close the issue on GitHub. Needs a PAT with
+  write scope (`GITHUB_PAT` today is read-only), a new backend task/hook in `plane.arribada`,
+  and a backend build+deploy. Scope to be agreed (only auto-created linked items? confirmation?
+  what about re-opening?). Owner chose "not now, but write it down" — this is the note.
+
+### Timeline / gantt sidebar — 2026-08-18
+
+- **DONE (`.96`):** a state-colour status dot per row in the "Work items" column
+  (`issue-layouts/gantt/blocks.tsx`, `IssueGanttSidebarBlock`), off `getProjectStates`.
+- **Drag-and-drop is REORDER-ONLY, not re-parent.** `gantt-dnd-HOC.tsx` handles only
+  `reorder-above`/`reorder-below`; there is no "make-child" instruction, and `canDrop`
+  requires an equal `dragScope` (rows position among their siblings). So dropping a top-level
+  item onto another to nest it is refused — the tree is rebuilt from `parent_id`, which the
+  drag never sets. To nest today, set the work item's **Parent** in its detail panel.
+- **TODO (open, not started):** *drag-to-nest in the timeline* — attach a make-child
+  instruction, call the parent/sub-issue update, refresh the tree. Owner asked whether to
+  build it; awaiting go-ahead. Non-trivial (touches sort_order + parent_id + the scope rule).
+
 ### Order tracking — closed 2026-08-10
 
 `trackPurchase` had zero call sites, so an approved purchase could never be marked ordered
@@ -233,8 +278,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.94` (= `e7ee0d36be`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.95` or higher — but prefer the commit SHA:
+- Frontend `.96` (= `dfe3b539bb`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.97` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

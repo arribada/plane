@@ -44,8 +44,10 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.94` | `9ade7a9552a4` | `e7ee0d36be`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), CI artifact loaded 2026-08-18; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | previous frontend serve; **the frontend roll-back target for the `.94` deploy**; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.96` | `7c86b64a045d` | `dfe3b539bb`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), gantt status dot; CI artifact loaded 2026-08-18; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.95` | `61c7cb867329` | `8c73cb6ac8`                | previous frontend serve (login correction); **the frontend roll-back target for the `.96` deploy**; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.94` | `9ade7a9552a4` | `e7ee0d36be`                | older frontend serve; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91` | `d618eb235591` | `386e622001`                | older frontend serve; OCI revision label present |
 | `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **currently served backend** (= `makeplane/plane-backend:v1.3.1`); `.91`/`.92`/`.93` were frontend-only, so the backend stayed on this `.90` image. Built on the droplet 2026-08-12 16:49; **the backend roll-back target is itself** |
@@ -128,11 +130,12 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
-> **2026-08-18 (frontend `.94`).** Current frontend serve is `.94` = `e7ee0d36be` (expense
-> editing, currency default, login GitLab removal + rebrand, mobile pass 2). Frontend-only,
-> **no migrations** — the expense-edit backend endpoint and the workspace currency model
-> already existed. Rollback `.94 → .93` is pure `docker tag` + `--force-recreate web`.
-> Backend still the `.90` image.
+> **2026-08-18 (frontend `.96`).** Current frontend serve is `.96` = `dfe3b539bb` (gantt
+> status dot). `.95` = `8c73cb6ac8` (login correction: the "GitLab" button IS the Arribada
+> dashboard SSO — restored + rebranded, GitHub/Gitea buttons dropped). `.94` = `e7ee0d36be`
+> (expense editing, currency default, mobile pass 2). All three are frontend-only, **no
+> migrations**. Rollback is pure `docker tag <target-id> makeplane/plane-frontend:v1.3.1` +
+> `--force-recreate web`; targets in the table above. Backend still the `.90` image.
 >
 > **2026-08-18 (frontend `.93`).** `.93` = `06bf6626d0` (safe responsive pass, frontend-only).
 >

@@ -68,7 +68,8 @@ function ModuleIssuesPage({ params }: Route.ComponentProps) {
           {!isSidebarCollapsed && (
             <div
               className={cn(
-                "vertical-scrollbar absolute right-0 z-13 flex scrollbar-sm h-full w-[24rem] flex-shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-subtle bg-surface-1 px-6 shadow-raised-200 duration-300"
+                // ARRIBADA FIX: full-width sidebar on a phone instead of a fixed 384px overlay; desktop unchanged. (fork drift)
+                "vertical-scrollbar absolute right-0 z-13 flex scrollbar-sm h-full w-full flex-shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-subtle bg-surface-1 px-6 shadow-raised-200 duration-300 sm:w-[24rem]"
               )}
             >
               <ModuleAnalyticsSidebar moduleId={moduleId} handleClose={toggleSidebar} />

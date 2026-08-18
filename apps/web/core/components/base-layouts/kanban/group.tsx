@@ -41,7 +41,8 @@ export const BaseKanbanGroup = observer(function BaseKanbanGroup<T extends IBase
     <div
       ref={groupRef}
       className={cn(
-        "relative flex max-h-full w-[350px] flex-shrink-0 flex-col overflow-y-auto rounded-md border-[1px] border-transparent bg-layer-1 p-2 pt-0",
+        // ARRIBADA FIX: 350px fixed columns overflow a phone; narrow them below sm, desktop unchanged. (fork drift)
+        "relative flex max-h-full w-[280px] flex-shrink-0 flex-col overflow-y-auto rounded-md border-[1px] border-transparent bg-layer-1 p-2 pt-0 sm:w-[350px]",
         {
           "bg-layer-1": isDraggingOver,
         },

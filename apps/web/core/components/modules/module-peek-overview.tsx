@@ -51,7 +51,10 @@ export const ModulePeekOverview = observer(function ModulePeekOverview({
       {peekModule && (
         <div
           ref={ref}
-          className="absolute right-0 z-[9] flex h-full w-full max-w-[24rem] flex-shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-subtle bg-surface-1 px-6 duration-300 md:relative"
+          // ARRIBADA FIX (fork drift): drop the 384px cap below sm so the panel is full-width on a phone; desktop unchanged.
+          className={
+            "absolute right-0 z-[9] flex h-full w-full flex-shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-subtle bg-surface-1 px-6 duration-300 sm:max-w-[24rem] md:relative"
+          }
           style={{
             boxShadow:
               "0px 1px 4px 0px rgba(0, 0, 0, 0.06), 0px 2px 4px 0px rgba(16, 24, 40, 0.06), 0px 1px 8px -1px rgba(16, 24, 40, 0.06)",

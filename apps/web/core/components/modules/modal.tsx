@@ -25,6 +25,9 @@ type Props = {
   data?: IModule;
   workspaceSlug: string;
   projectId: string;
+  // ARRIBADA: called after a successful CREATE (not update) with the new module id, so the caller
+  // can auto-select it in the work-item form.
+  onSuccess?: (moduleId: string) => void;
 };
 
 const defaultValues: Partial<IModule> = {
@@ -36,7 +39,7 @@ const defaultValues: Partial<IModule> = {
 };
 
 export const CreateUpdateModuleModal = observer(function CreateUpdateModuleModal(props: Props) {
-  const { isOpen, onClose, data, workspaceSlug, projectId } = props;
+  const { isOpen, onClose, data, workspaceSlug, projectId, onSuccess } = props;
   // states
   const [activeProject, setActiveProject] = useState<string | null>(null);
   // store hooks
@@ -58,7 +61,9 @@ export const CreateUpdateModuleModal = observer(function CreateUpdateModuleModal
 
     const selectedProjectId = payload.project_id ?? projectId.toString();
     await createModule(workspaceSlug.toString(), selectedProjectId, payload)
-      .then((_res) => {
+      .then((created) => {
+        // ARRIBADA: auto-select the freshly created module in the calling form.
+        if (created?.id) onSuccess?.(created.id);
         handleClose();
         setToast({
           type: TOAST_TYPE.SUCCESS,

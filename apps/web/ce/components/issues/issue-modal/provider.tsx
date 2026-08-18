@@ -14,8 +14,10 @@ import { IssueModalContext } from "@/components/issues/issue-modal/context";
 import type { TCreateUpdatePropertyValuesProps } from "@/components/issues/issue-modal/context/issue-modal-context";
 // hooks
 import { useUser } from "@/hooks/store/user/user-user";
-// ARRIBADA: collect + apply the fork's create-time work-item properties (discipline, effort).
+// ARRIBADA: collect + apply the fork's create-time work-item properties (discipline, effort,
+// milestone).
 import { ArribadaCreateContext } from "@/plane-web/components/issues/issue-modal/arribada-create-context";
+import type { TMilestoneKind } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const arribadaService = new ArribadaService();
@@ -31,10 +33,12 @@ export const IssueModalProvider = observer(function IssueModalProvider(props: TI
   const { children, allowedProjectIds } = props;
   // states
   const [selectedParentIssue, setSelectedParentIssue] = useState<ISearchIssueResponse | null>(null);
-  // ARRIBADA: create-time discipline + effort, unset until the user picks them (fresh each
-  // open, since a closed modal unmounts this provider).
+  // ARRIBADA: create-time discipline + effort + milestone, unset until the user picks them
+  // (fresh each open, since a closed modal unmounts this provider).
   const [discipline, setDiscipline] = useState<string | null>(null);
   const [effortDays, setEffortDays] = useState<number | null>(null);
+  const [milestoneKind, setMilestoneKind] = useState<TMilestoneKind | null>(null);
+  const [milestoneLabel, setMilestoneLabel] = useState("");
   // store hooks
   const { projectsWithCreatePermissions } = useUser();
   // derived values
@@ -49,6 +53,17 @@ export const IssueModalProvider = observer(function IssueModalProvider(props: TI
     const tasks: Promise<unknown>[] = [];
     if (effortDays !== null) tasks.push(arribadaService.setIssueEffort(workspaceSlug, projectId, issueId, effortDays));
     if (discipline) tasks.push(arribadaService.setIssueRole(workspaceSlug, projectId, issueId, discipline));
+    if (milestoneKind)
+      tasks.push(
+        arribadaService.setProjectMilestone(
+          workspaceSlug,
+          projectId,
+          issueId,
+          milestoneKind,
+          // Only send a label when one was typed — "" would tell the server to erase it.
+          milestoneLabel.trim() || undefined
+        )
+      );
     if (tasks.length === 0) return;
     const results = await Promise.allSettled(tasks);
     if (results.some((r) => r.status === "rejected")) {
@@ -61,7 +76,18 @@ export const IssueModalProvider = observer(function IssueModalProvider(props: TI
   };
 
   return (
-    <ArribadaCreateContext.Provider value={{ discipline, setDiscipline, effortDays, setEffortDays }}>
+    <ArribadaCreateContext.Provider
+      value={{
+        discipline,
+        setDiscipline,
+        effortDays,
+        setEffortDays,
+        milestoneKind,
+        setMilestoneKind,
+        milestoneLabel,
+        setMilestoneLabel,
+      }}
+    >
       <IssueModalContext.Provider
         value={{
           allowedProjectIds: allowedProjectIds ?? projectIdsWithCreatePermissions,

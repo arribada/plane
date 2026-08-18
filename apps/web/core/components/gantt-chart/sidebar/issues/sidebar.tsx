@@ -128,6 +128,43 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     }
   };
 
+  // ARRIBADA: dropping a work item onto the CENTRE of another row makes it a
+  // sub-task of that row. This is a re-parent, not a reorder — it writes
+  // `parent_id` and nothing else, and the tree rebuilds itself from parent_id on
+  // the next render (see subtasks.ts), so there is no local order to touch here.
+  const handleMakeChild = async (draggingBlockId: string, parentBlockId: string) => {
+    // Never let an item parent itself, and never re-parent onto one of its own
+    // descendants — that would make a cycle that buildSubtaskTree only papers
+    // over by cutting an edge. `groups.subtasks.parentOf` gives the in-list
+    // parent of a row; walk the target's ancestor chain, and if the dragged item
+    // is already an ancestor of the target, refuse. (A guard set caps the walk in
+    // case the store itself already holds a cycle.)
+    if (draggingBlockId === parentBlockId) return;
+    let cursor: string | null = parentBlockId;
+    const guard = new Set<string>();
+    while (cursor && !guard.has(cursor)) {
+      if (cursor === draggingBlockId) return; // would create a cycle
+      guard.add(cursor);
+      cursor = groups.subtasks.parentOf(cursor);
+    }
+    // No-op if it is already this parent.
+    if (groups.subtasks.parentOf(draggingBlockId) === parentBlockId) return;
+
+    const child = getBlockById(draggingBlockId);
+    if (!child?.data) return;
+
+    // Same channel as the reorder path: blockUpdateHandler forwards the payload
+    // to updateIssue (see base-gantt-root's updateIssueBlockStructure, which
+    // spreads it straight through), so a `parent_id` here is applied exactly like
+    // a `sort_order` there. Cast because IBlockUpdateData is the reorder/date
+    // payload shape and does not name parent_id.
+    blockUpdateHandler(child.data, { parent_id: parentBlockId } as unknown as IBlockUpdateData);
+
+    setLandedId(draggingBlockId);
+    if (landedTimer.current) window.clearTimeout(landedTimer.current);
+    landedTimer.current = window.setTimeout(() => setLandedId(null), 1000);
+  };
+
   // A signature of the sequence, not of its contents: the list should settle when
   // the ORDER changes, not when somebody edits a title. Re-keying the container
   // restarts the animation once, which is the only reliable way to replay a CSS
@@ -197,6 +234,14 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                     groups.subtasks.enabled ? (groups.subtasks.parentOf(block.id) ?? ROOT_DRAG_SCOPE) : undefined
                   }
                   onDrop={(a, b, c) => void handleOnDrop(a, b, c)}
+                  // ARRIBADA: only offer make-child where sub-tasks are actually
+                  // drawn nested — otherwise re-parenting changes nothing on
+                  // screen and the extra centre-drop band would only get in the
+                  // way of reordering. Passing undefined keeps the row on the
+                  // pure-reorder path (getData stays 0/0, make-child blocked).
+                  onMakeChild={
+                    groups.subtasks.enabled ? (a, b) => void handleMakeChild(a, b) : undefined
+                  }
                 >
                   {(isDragging: boolean) => (
                     <IssuesSidebarBlock

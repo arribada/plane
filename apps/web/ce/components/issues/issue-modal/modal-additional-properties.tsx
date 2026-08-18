@@ -14,8 +14,9 @@ import { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
 import type { TIssue } from "@plane/types";
 import { AiDraftButton } from "@/plane-web/components/issues/ai-draft-button";
-// ARRIBADA: set discipline + effort at creation, applied to the new item on save.
+// ARRIBADA: set discipline + effort + milestone at creation, applied to the new item on save.
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { MILESTONE_KINDS, MILESTONE_KIND_LABEL } from "@/plane-web/components/issues/milestone/kinds";
 import { useArribadaCreate } from "./arribada-create-context";
 
 const arribadaService = new ArribadaService();
@@ -122,6 +123,35 @@ export function WorkItemModalAdditionalProperties(props: TWorkItemModalAdditiona
               className={`${ARRIBADA_INPUT} w-32`}
             />
           </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-11 text-tertiary">Milestone</span>
+            <select
+              value={arribada.milestoneKind ?? ""}
+              onChange={(e) => arribada.setMilestoneKind((e.target.value || null) as typeof arribada.milestoneKind)}
+              className={ARRIBADA_INPUT}
+            >
+              <option value="">Not a milestone</option>
+              {MILESTONE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {MILESTONE_KIND_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* The funder-facing name, only when this IS a milestone. */}
+          {arribada.milestoneKind && (
+            <label className="flex flex-col gap-1">
+              <span className="text-11 text-tertiary">Milestone label (for funders)</span>
+              <input
+                type="text"
+                value={arribada.milestoneLabel}
+                onChange={(e) => arribada.setMilestoneLabel(e.target.value)}
+                placeholder="Optional — what a funder reads"
+                maxLength={255}
+                className={`${ARRIBADA_INPUT} w-56`}
+              />
+            </label>
+          )}
         </div>
       )}
     </div>

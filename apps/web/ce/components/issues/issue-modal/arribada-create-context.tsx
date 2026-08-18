@@ -15,6 +15,7 @@
  * unset — an untouched field applies nothing and ordinary creation is untouched.
  */
 import { createContext, useContext } from "react";
+import type { TMilestoneKind } from "@/plane-web/components/gantt-chart/use-project-milestones";
 
 export type TArribadaCreateProps = {
   /** The discipline (IssueRole) to set, or null for none. */
@@ -23,6 +24,12 @@ export type TArribadaCreateProps = {
   /** Planned effort in person-days (IssueEffort), or null to leave unset. */
   effortDays: number | null;
   setEffortDays: (value: number | null) => void;
+  /** Milestone kind (IssueMilestone), or null to not make this a milestone. */
+  milestoneKind: TMilestoneKind | null;
+  setMilestoneKind: (value: TMilestoneKind | null) => void;
+  /** The funder-facing milestone label; only meaningful when a kind is set. */
+  milestoneLabel: string;
+  setMilestoneLabel: (value: string) => void;
 };
 
 export const ArribadaCreateContext = createContext<TArribadaCreateProps | null>(null);

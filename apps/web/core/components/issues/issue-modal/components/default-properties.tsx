@@ -8,7 +8,7 @@ import { useState } from "react";
 import { observer } from "mobx-react";
 import { Plus } from "lucide-react";
 import type { Control } from "react-hook-form";
-import { Controller } from "react-hook-form";
+import { Controller, useFormContext } from "react-hook-form";
 import { ETabIndices, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { ParentPropertyIcon } from "@plane/propel/icons";
@@ -72,6 +72,8 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
   // ARRIBADA: inline sprint/module creation from the form.
   const [createCycleOpen, setCreateCycleOpen] = useState(false);
   const [createModuleOpen, setCreateModuleOpen] = useState(false);
+  // ARRIBADA: form context so newly created sprints/modules can be auto-selected in the form.
+  const { setValue, getValues } = useFormContext<TIssue>();
   // store hooks
   const { t } = useTranslation();
   const { areEstimateEnabledByProjectId } = useProjectEstimates();
@@ -393,12 +395,24 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
             handleClose={() => setCreateCycleOpen(false)}
             workspaceSlug={workspaceSlug}
             projectId={projectId}
+            // ARRIBADA: auto-select the new sprint in the form once created.
+            onSuccess={(id) => {
+              setValue("cycle_id", id, { shouldDirty: true });
+              handleFormChange();
+              setCreateCycleOpen(false);
+            }}
           />
           <CreateUpdateModuleModal
             isOpen={createModuleOpen}
             onClose={() => setCreateModuleOpen(false)}
             workspaceSlug={workspaceSlug}
             projectId={projectId}
+            // ARRIBADA: append the new module to the multi-select and keep the form in sync.
+            onSuccess={(id) => {
+              setValue("module_ids", [...(getValues("module_ids") ?? []), id], { shouldDirty: true });
+              handleFormChange();
+              setCreateModuleOpen(false);
+            }}
           />
         </>
       )}

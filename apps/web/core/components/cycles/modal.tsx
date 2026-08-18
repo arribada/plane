@@ -29,13 +29,16 @@ type CycleModalProps = {
   data?: ICycle | null;
   workspaceSlug: string;
   projectId: string;
+  // ARRIBADA: called after a successful CREATE (not update) with the new cycle id, so the caller
+  // can auto-select it in the work-item form.
+  onSuccess?: (cycleId: string) => void;
 };
 
 // services
 const cycleService = new CycleService();
 
 export function CycleCreateUpdateModal(props: CycleModalProps) {
-  const { isOpen, handleClose, data, workspaceSlug, projectId } = props;
+  const { isOpen, handleClose, data, workspaceSlug, projectId, onSuccess } = props;
   // states
   const [activeProject, setActiveProject] = useState<string | null>(null);
   // store hooks
@@ -50,7 +53,9 @@ export function CycleCreateUpdateModal(props: CycleModalProps) {
 
     const selectedProjectId = payload.project_id ?? projectId.toString();
     await createCycle(workspaceSlug, selectedProjectId, payload)
-      .then((_res) => {
+      .then((created) => {
+        // ARRIBADA: auto-select the freshly created cycle in the calling form.
+        if (created?.id) onSuccess?.(created.id);
         // mutate when the current cycle creation is active
         if (payload.start_date && payload.end_date) {
           const currentDate = new Date();

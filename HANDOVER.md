@@ -15,15 +15,21 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`dfb55ab323`** — **frontend** image tag
-`v1.3.1-arribada.100`, deployed 2026-08-18. The **backend is unchanged**: still image id
+Production `plane.arribada.org` serves **`cb28c2ed9f`** — **frontend** image tag
+`v1.3.1-arribada.101`, deployed 2026-08-18. The **backend is unchanged**: still image id
 `6a0c7e1faffd` (`.90`, built from `aa13efe486`). Everything since `aa13efe486` is frontend or
-docs only, so there is **no backend delta** and the backend has not been rebuilt since `.90`.
-Everything committed **up to and including `dfb55ab323`** is deployed. Frontend tags since `.96`:
-`.97` `e34286014c` (quick-add → full modal button), `.98` `ef58520e7a` (discipline+effort at
-creation), `.99` `6fea7ba658` (Home my-tasks opens the peek), `.100` `dfb55ab323` (inline
-sprint/module create). All frontend-only; NONE browser-verified — the owner chose to keep
-shipping and verify in bulk later.
+docs only — **no backend delta**, backend not rebuilt since `.90`. Frontend tags since `.96`:
+`.97` quick-add→full modal, `.98` discipline+effort at creation, `.99` Home my-tasks peek,
+`.100` inline sprint/module create, `.101` `cb28c2ed9f` (milestone at creation + auto-select
+created sprint/module + **drag-to-nest in the gantt sidebar**). All frontend-only; **NONE
+browser-verified** — the owner chose to keep shipping and verify in bulk. `.101`'s drag-to-nest
+is the highest-risk item (it changes the gantt DnD hitbox; middle-third = make-child when
+subtasks are on) — smoke-test reorder before trusting.
+
+**Deferred / blocked:** Plane→GitHub write-back (close a Plane-done item's GitHub issue) is
+NOT implemented — it needs a **write-scoped GitHub PAT** (`GITHUB_PAT` today is read-only) plus
+a backend build. Plan is ready (a function over `GithubIssue.state="open"` whose `filed_issue`
+is in a `completed` state → PATCH `issues/{n}` state=closed, gated on a new write-PAT env).
 
 Verified end-to-end over the public domain: `/assets/root-*.js` carries
 `VITE_APP_VERSION:"v1.3.1-arribada.92"` / `VITE_APP_COMMIT:"f8902dcd…"`. The bottom-right
@@ -35,7 +41,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `dfb55ab323` | **serving now** | Frontend `.100`: inline "+" to create a sprint/module from the work-item form (opens the existing create modal; new item then selectable). Nested modal — verify focus/z-index. |
+| `cb28c2ed9f` | **serving now** | Frontend `.101`: **milestone** kind+label at creation; **auto-select** the sprint/module made via "+"; **drag-to-nest** in the gantt sidebar (drop on a row's centre → sub-task; gated on subtasks + a handler; reorder unchanged when off). Drag-to-nest is unverified — smoke-test reorder. |
+| `dfb55ab323` | yes             | Frontend `.100`: inline "+" to create a sprint/module from the work-item form. |
 | `6fea7ba658` | yes             | Frontend `.99`: Home "my tasks" click opens the peek overview (full detail + built-in full-screen button) instead of navigating away. |
 | `ef58520e7a` | yes             | Frontend `.98`: set Discipline + Effort at creation via the modal-additional-properties seam; applied after create (`handleCreateUpdatePropertyValues`), no-op unless set. Milestone deferred. |
 | `e34286014c` | yes             | Frontend `.97`: the gantt quick-add gains an "expand" control that opens the full CreateUpdateIssueModal seeded with the typed title + project. |
@@ -283,8 +290,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.100` (= `dfb55ab323`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.101` or higher — but prefer the commit SHA:
+- Frontend `.101` (= `cb28c2ed9f`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.102` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

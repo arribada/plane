@@ -44,7 +44,8 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.100`| `2a487692f76b` | `dfb55ab323`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), inline sprint/module create; CI artifact loaded 2026-08-18; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.101`| `b79573b3469b` | `cb28c2ed9f`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), milestone-at-creation + auto-select + drag-to-nest; CI artifact loaded 2026-08-18; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.100`| `2a487692f76b` | `dfb55ab323`                | previous serve; **the frontend roll-back target for the `.101` deploy** (esp. if drag-to-nest misbehaves); inline sprint/module create |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.99` | (built, may be unloaded) | `6fea7ba658`       | Home my-tasks peek; the `.100` tree contains it, so `.100` was deployed directly |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.98` | (built, may be unloaded) | `ef58520e7a`       | discipline+effort at creation; contained in `.100` |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.97` | `70ae4ec9baeb` | `e34286014c`                | quick-add full-modal button; **the frontend roll-back target for the `.100` deploy** (last serve before it) |

@@ -115,6 +115,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // Which form is open, if any: "request" goes to the lead, "record" writes the
   // line. Both are the same modal — see the comment where it is rendered.
   const [expenseForm, setExpenseForm] = useState<"request" | "record" | null>(null);
+  // The recorded line whose edit form is open, if any. Separate from expenseForm
+  // because it carries the row to prefill; the same modal serves both.
+  const [editingExpense, setEditingExpense] = useState<TProjectExpense | null>(null);
   const [saving, setSaving] = useState(false);
   // The two workspace-level tables that make the labour figure mean anything.
   // Edited here rather than behind a settings page: this is where somebody
@@ -1224,11 +1227,17 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
             cost belongs to could be named from none of them. */}
         {(canRequest || canEdit) && (
           <ExpenseModal
-            isOpen={expenseForm !== null}
-            onClose={() => setExpenseForm(null)}
+            isOpen={expenseForm !== null || editingExpense !== null}
+            onClose={() => {
+              setExpenseForm(null);
+              setEditingExpense(null);
+            }}
             workspaceSlug={slug}
             projectId={pid}
             mode={expenseForm === "record" ? "record" : "request"}
+            expense={editingExpense}
+            // A new line defaults to the project's own budget currency, not EUR.
+            defaultCurrency={allocCcy}
             onSaved={() => void load(displayCcy)}
           />
         )}
@@ -1309,6 +1318,18 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 </span>
                 {e.incurred_on && (
                   <span className="flex-shrink-0 text-11 text-tertiary">{renderFormattedDate(e.incurred_on)}</span>
+                )}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingExpense(e)}
+                    aria-label={`Edit ${e.label}`}
+                    // p-2 -m-2 keeps the icon where it is and takes the tap target to
+                    // roughly 44px, which is what a finger needs.
+                    className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-accent-primary"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
                 )}
                 {canEdit && (
                   <button

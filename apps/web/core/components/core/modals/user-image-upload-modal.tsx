@@ -99,9 +99,10 @@ export const UserImageUploadModal = observer(function UserImageUploadModal(props
         <h3 className="text-16 leading-6 font-medium text-primary">Upload Image</h3>
         <div className="space-y-3">
           <div className="flex items-center justify-center gap-3">
+            {/* ARRIBADA FIX (mobile): w-full max-w-80 keeps the dropzone inside viewports <320px ; desktop unchanged (max-w-80 == w-80 at >=320px) */}
             <div
               {...getRootProps()}
-              className={`relative grid h-80 w-80 cursor-pointer place-items-center rounded-lg p-12 text-center focus:ring-2 focus:ring-accent-strong focus:ring-offset-2 focus:outline-none ${
+              className={`relative grid h-80 w-full max-w-80 cursor-pointer place-items-center rounded-lg p-12 text-center focus:ring-2 focus:ring-accent-strong focus:ring-offset-2 focus:outline-none ${
                 (image === null && isDragActive) || !value
                   ? "border-2 border-dashed border-subtle hover:bg-surface-2"
                   : ""

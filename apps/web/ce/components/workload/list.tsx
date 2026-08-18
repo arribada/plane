@@ -73,8 +73,10 @@ export const WorkloadList = observer(function WorkloadList() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-4 py-6 md:px-6">
+        {/* ARRIBADA FIX (mobile): let the table scroll horizontally on <sm instead of crushing the columns ; desktop unchanged (sm:overflow-x-visible + sm:min-w-0 restore the fluid layout) */}
         <div className="overflow-hidden rounded-lg border border-subtle">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle bg-layer-1 px-4 py-2 text-11 font-medium tracking-wide text-secondary uppercase">
+          <div className="overflow-x-auto sm:overflow-x-visible">
+          <div className="grid min-w-[560px] grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle bg-layer-1 px-4 py-2 text-11 font-medium tracking-wide text-secondary uppercase sm:min-w-0">
             <span>Person</span>
             <span className="text-right">Overdue</span>
             <span className="text-right">Due 7d</span>
@@ -87,7 +89,7 @@ export const WorkloadList = observer(function WorkloadList() {
               type="button"
               onClick={() => router.push(`/${workspaceSlug}/profile/${r.user_id}/assigned`)}
               title={`Open ${r.name}'s assigned work items`}
-              className="grid w-full cursor-pointer grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 text-left last:border-b-0 hover:bg-layer-transparent-hover"
+              className="grid w-full min-w-[560px] cursor-pointer grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-subtle px-4 py-2.5 text-left last:border-b-0 hover:bg-layer-transparent-hover sm:min-w-0"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -160,6 +162,7 @@ export const WorkloadList = observer(function WorkloadList() {
               <span className="text-right text-13 text-secondary tabular-nums">{r.points || "—"}</span>
             </button>
           ))}
+          </div>
         </div>
       </div>
     </div>

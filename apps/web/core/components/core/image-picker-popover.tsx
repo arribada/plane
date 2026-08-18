@@ -198,9 +198,10 @@ export const ImagePickerPopover = observer(function ImagePickerPopover(props: Pr
           className="absolute right-0 z-20 mt-2 rounded-md border border-subtle bg-surface-1 shadow-raised-200"
           static
         >
+          {/* ARRIBADA FIX (mobile): fit the picker within phone viewport on <sm ; desktop unchanged (sm:/md: keep h-96 w-80 / 36rem) */}
           <div
             ref={imagePickerRef}
-            className="flex h-96 w-80 flex-col overflow-auto rounded border border-subtle bg-surface-1 shadow-raised-200 md:h-[36rem] md:w-[36rem]"
+            className="flex h-80 w-[calc(100vw-2rem)] max-w-[20rem] flex-col overflow-auto rounded border border-subtle bg-surface-1 shadow-raised-200 sm:h-96 sm:w-80 md:h-[36rem] md:w-[36rem]"
           >
             <Tabs defaultValue={enabledTabs[0]?.key || "images"} className="flex h-full flex-col p-3">
               <Tabs.List className="flex rounded bg-layer-3 p-1">

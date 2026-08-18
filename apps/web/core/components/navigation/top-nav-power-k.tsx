@@ -209,9 +209,13 @@ export const TopNavPowerK = observer(() => {
   return (
     <div ref={containerRef} className="relative">
       <div
-        className={cn("relative z-30 flex w-[364px] items-center transition-all duration-300 ease-in-out", {
-          "w-[554px]": isOpen,
-        })}
+        className={cn(
+          // ARRIBADA FIX (mobile): fluid width under sm so the search bar never overflows the top nav ; desktop unchanged (sm:w-[364px] / sm:w-[554px] restore fixed widths)
+          "relative z-30 flex w-[calc(100vw-2rem)] max-w-[364px] items-center transition-all duration-300 ease-in-out sm:w-[364px] sm:max-w-none",
+          {
+            "max-w-[554px] sm:w-[554px]": isOpen,
+          }
+        )}
       >
         <div
           className={cn(
@@ -249,7 +253,8 @@ export const TopNavPowerK = observer(() => {
         className={cn(
           "shadow-lg absolute -top-[6px] left-1/2 z-20 flex -translate-x-1/2 flex-col overflow-hidden rounded-md border border-subtle bg-surface-1 px-0 pt-10 transition-all duration-300 ease-in-out",
           {
-            "max-h-[80vh] w-[574px] opacity-100": isOpen,
+            // ARRIBADA FIX (mobile): cap the open panel to the viewport under sm ; desktop unchanged (sm:w-[574px])
+            "max-h-[80vh] w-[calc(100vw-2rem)] max-w-[574px] opacity-100 sm:w-[574px] sm:max-w-none": isOpen,
             "h-0 w-0 opacity-0": !isOpen,
           }
         )}

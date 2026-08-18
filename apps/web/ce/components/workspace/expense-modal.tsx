@@ -33,7 +33,7 @@ import type { ISearchIssueResponse } from "@plane/types";
 import { useProject } from "@/hooks/store/use-project";
 import { ProjectService } from "@/services/project";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
-import type { TExpenseCategory } from "@/plane-web/types/arribada";
+import type { TExpenseCategory, TProjectExpense } from "@/plane-web/types/arribada";
 
 const service = new ArribadaService();
 const projectService = new ProjectService();
@@ -65,12 +65,34 @@ type Props = {
    *  The caller decides, because only it knows whether this reader owns the
    *  sheet — the server enforces the same rule either way. */
   mode?: "request" | "record";
+  /** An existing line to edit. Given, the modal prefills from it and PATCHes on
+   *  save instead of creating — same fields, so the same form. The backend's
+   *  ProjectExpenseDetailEndpoint.patch already enforces the money rules. */
+  expense?: TProjectExpense | null;
+  /** The currency a NEW line should default to — the project's own budget
+   *  currency, so a GBP project does not open every form reading EUR. Ignored
+   *  when editing, which keeps the line's own currency. */
+  defaultCurrency?: string;
   /** So the page that opened it can re-read its figures. */
   onSaved?: () => void;
 };
 
 export const ExpenseModal = observer(function ExpenseModal(props: Props) {
-  const { isOpen, onClose, workspaceSlug, projectId: fixedProjectId, mode = "request", onSaved } = props;
+  const {
+    isOpen,
+    onClose,
+    workspaceSlug,
+    projectId: fixedProjectId,
+    mode = "request",
+    expense = null,
+    defaultCurrency,
+    onSaved,
+  } = props;
+  // Editing an existing line rather than creating one. It reuses the "record"
+  // field layout (a spent toggle, no justification) because an edited line is a
+  // committed one, not a request.
+  const isEdit = !!expense;
+  const isRequest = mode === "request" && !isEdit;
   // store hooks
   const { joinedProjectIds, getProjectById } = useProject();
   // state
@@ -108,29 +130,60 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
   }, [isOpen, projectId]);
 
   // A modal that reopens holding the last request would let somebody file the
-  // same thing twice by pressing Enter, so every open starts clean.
+  // same thing twice by pressing Enter, so every open starts clean — or, when
+  // editing, prefilled from the line so a save that touches one field does not
+  // silently blank the others.
   useEffect(() => {
     if (!isOpen) return;
     setPickedProjectId(null);
     setProjectQuery("");
-    setLabel("");
-    setAmount("");
-    setQuantity("1");
-    setCurrency("EUR");
-    setCategory("other");
-    setSupplier("");
     setNeededBy("");
     setJustification("");
-    setUrl("");
-    setPartNumber("");
-    setLeadTime("");
-    setSpent(false);
-    setIssue(null);
     setIssueQuery("");
     setIssueResults([]);
-    setReplacesLabour(false);
     setSaving(false);
-  }, [isOpen]);
+    if (expense) {
+      setLabel(expense.label);
+      setAmount(String(expense.amount));
+      setQuantity(String(expense.quantity));
+      setCurrency(expense.currency);
+      setCategory(expense.category);
+      setSupplier(expense.supplier ?? "");
+      setUrl(expense.url ?? "");
+      setPartNumber(expense.manufacturer_part_number ?? "");
+      setLeadTime(expense.lead_time_days != null ? String(expense.lead_time_days) : "");
+      // planned === budgeted; the toggle is "already spent", so it is the inverse.
+      setSpent(!expense.planned);
+      setReplacesLabour(!!expense.replaces_labour);
+      // A partial stand-in for the search result: enough for the chip to name the
+      // linked item. The project identifier is this project's, since the line
+      // could not belong to another one.
+      setIssue(
+        expense.issue_id
+          ? ({
+              id: expense.issue_id,
+              name: expense.issue_name ?? "",
+              sequence_id: expense.issue_sequence_id ?? 0,
+              project__identifier: getProjectById(fixedProjectId ?? "")?.identifier ?? "",
+            } as unknown as ISearchIssueResponse)
+          : null
+      );
+    } else {
+      setLabel("");
+      setAmount("");
+      setQuantity("1");
+      // The project's own budget currency, not a hardcoded EUR.
+      setCurrency(defaultCurrency || "EUR");
+      setCategory("other");
+      setSupplier("");
+      setUrl("");
+      setPartNumber("");
+      setLeadTime("");
+      setSpent(false);
+      setReplacesLabour(false);
+      setIssue(null);
+    }
+  }, [isOpen, expense, defaultCurrency, fixedProjectId, getProjectById]);
 
   // joinedProjectIds is already "projects of this workspace where I am a member
   // and which are not archived" — the same set the server's _visible_projects
@@ -230,7 +283,19 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
       replaces_labour: !!issue && replacesLabour,
     };
     try {
-      if (mode === "record") {
+      if (isEdit && expense) {
+        // PATCH only the fields the form owns; notes and incurred_on are absent
+        // from the payload, so the server keeps them rather than blanking them.
+        await service.updateExpense(workspaceSlug, projectId, expense.id, {
+          ...common,
+          planned: !spent,
+        });
+        setToast({
+          type: TOAST_TYPE.SUCCESS,
+          title: "Saved",
+          message: `Updated on ${selectedProject?.name ?? "the project"}'s sheet.`,
+        });
+      } else if (mode === "record") {
         await service.addExpense(workspaceSlug, projectId, {
           ...common,
           // Unticked is a budget line; ticked is money that has gone.
@@ -260,7 +325,11 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
     } catch (error) {
       setToast({
         type: TOAST_TYPE.ERROR,
-        title: mode === "record" ? "Could not record that line" : "Could not send the request",
+        title: isEdit
+          ? "Could not save that change"
+          : mode === "record"
+            ? "Could not record that line"
+            : "Could not send the request",
         message: (error as { error?: string })?.error ?? "Nothing was saved. Please try again.",
       });
     } finally {
@@ -268,7 +337,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
     }
   };
 
-  const title = mode === "record" ? "Record an expense" : "Request an expense";
+  const title = isEdit ? "Edit expense" : mode === "record" ? "Record an expense" : "Request an expense";
 
   return (
     <ModalCore isOpen={isOpen} handleClose={onClose} width={EModalWidth.XXL}>
@@ -291,9 +360,11 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
             <h2 className="text-14 font-medium text-primary">{title}</h2>
             <p className="truncate text-11 text-tertiary">
               {selectedProject
-                ? mode === "record"
-                  ? `Straight onto ${selectedProject.name}'s sheet`
-                  : `${selectedProject.name} — the lead decides`
+                ? isEdit
+                  ? `Editing a line on ${selectedProject.name}'s sheet`
+                  : mode === "record"
+                    ? `Straight onto ${selectedProject.name}'s sheet`
+                    : `${selectedProject.name} — the lead decides`
                 : "Which project pays for it?"}
             </p>
           </div>
@@ -406,7 +477,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
                     ))}
                   </select>
                 </label>
-                {mode === "request" ? (
+                {isRequest ? (
                   <label className="flex flex-col gap-1">
                     <span className="text-12 text-tertiary">Needed by</span>
                     <input
@@ -580,7 +651,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
                 </div>
               )}
 
-              {mode === "request" && (
+              {isRequest && (
                 <label className="flex flex-col gap-1">
                   <span className="text-12 text-tertiary">Why</span>
                   <textarea
@@ -617,7 +688,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
               )}
             >
               {saving && <Loader2 className="size-3.5 animate-spin" />}
-              {mode === "record" ? "Add the line" : "Send request"}
+              {isEdit ? "Save changes" : mode === "record" ? "Add the line" : "Send request"}
             </button>
           </footer>
         )}

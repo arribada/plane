@@ -13,7 +13,7 @@ import type { TOAuthConfigs, TOAuthOption } from "@plane/types";
 import giteaLogo from "@/app/assets/logos/gitea-logo.svg?url";
 import GithubLightLogo from "@/app/assets/logos/github-black.png?url";
 import GithubDarkLogo from "@/app/assets/logos/github-dark.svg?url";
-import gitlabLogo from "@/app/assets/logos/gitlab-logo.svg?url";
+// ARRIBADA: gitlab logo import removed (GitLab option dropped)
 import googleLogo from "@/app/assets/logos/google-logo.svg?url";
 // hooks
 import { useInstance } from "@/hooks/store/use-instance";
@@ -32,7 +32,7 @@ export const useCoreOAuthConfig = (oauthActionText: string): TOAuthConfigs => {
     (config &&
       (config?.is_google_enabled ||
         config?.is_github_enabled ||
-        config?.is_gitlab_enabled ||
+        // ARRIBADA: GitLab removed
         config?.is_gitea_enabled)) ||
     false;
   const oAuthOptions: TOAuthOption[] = [
@@ -61,15 +61,7 @@ export const useCoreOAuthConfig = (oauthActionText: string): TOAuthConfigs => {
       },
       enabled: config?.is_github_enabled,
     },
-    {
-      id: "gitlab",
-      text: `${oauthActionText} with GitLab`,
-      icon: <img src={gitlabLogo} height={18} width={18} alt="GitLab Logo" />,
-      onClick: () => {
-        window.location.assign(`${API_BASE_URL}/auth/gitlab/${next_path ? `?next_path=${next_path}` : ``}`);
-      },
-      enabled: config?.is_gitlab_enabled,
-    },
+    // ARRIBADA: GitLab OAuth option removed
     {
       id: "gitea",
       text: `${oauthActionText} with Gitea`,

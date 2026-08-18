@@ -309,7 +309,8 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
             {/* Workitem section */}
             <div
               className={cn("flex flex-grow items-center gap-0.5 py-2", {
-                "min-w-[360px]": !displayProperties?.key,
+                // ARRIBADA FIX (mobile): narrower min-width on <sm so the row fits phone width ; desktop unchanged (sm:min-w-[360px])
+                "min-w-[280px] sm:min-w-[360px]": !displayProperties?.key,
                 "min-w-60": displayProperties?.key,
               })}
             >

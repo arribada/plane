@@ -38,10 +38,13 @@ export type TQuickAddIssueFormRoot = {
   onSubmit: () => void;
   onClose: () => void;
   isEpic: boolean;
+  /** ARRIBADA: switch this quick-add to the full create modal (gantt only for now). */
+  onOpenFullModal?: () => void;
 };
 
 export const QuickAddIssueFormRoot = observer(function QuickAddIssueFormRoot(props: TQuickAddIssueFormRoot) {
-  const { isOpen, layout, projectId, hasError = false, setFocus, register, onSubmit, onClose, isEpic } = props;
+  const { isOpen, layout, projectId, hasError = false, setFocus, register, onSubmit, onClose, isEpic, onOpenFullModal } =
+    props;
   // store hooks
   const { getProjectById } = useProject();
   // derived values
@@ -79,6 +82,7 @@ export const QuickAddIssueFormRoot = observer(function QuickAddIssueFormRoot(pro
       register={register}
       onSubmit={onSubmit}
       isEpic={isEpic}
+      onOpenFullModal={onOpenFullModal}
     />
   );
 });

@@ -18,6 +18,10 @@ import type { IProject, TIssue, EIssueLayoutTypes } from "@plane/types";
 import { cn, createIssuePayload } from "@plane/utils";
 // plane web imports
 import { QuickAddIssueFormRoot } from "@/plane-web/components/issues/quick-add";
+// components
+// ARRIBADA: the full create-issue modal, so a quick-add can be promoted to a form with all
+// properties without losing what was already typed.
+import { CreateUpdateIssueModal } from "@/components/issues/issue-modal/modal";
 // local imports
 import { CreateIssueToastActionItems } from "../../create-issue-toast-action-items";
 
@@ -29,6 +33,10 @@ export type TQuickAddIssueForm = {
   register: UseFormRegister<TIssue>;
   onSubmit: () => void;
   isEpic: boolean;
+  /** ARRIBADA: open the full create-issue modal, seeded with whatever has been typed,
+   *  so properties can be set at creation instead of name-then-edit. Optional: only the
+   *  layouts that offer the switch (gantt today) render a control for it. */
+  onOpenFullModal?: () => void;
 };
 
 export type TQuickAddIssueButton = {
@@ -70,12 +78,16 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
   const { workspaceSlug, projectId } = useParams();
   // states
   const [isOpen, setIsOpen] = useState(isQuickAddOpen ?? false);
+  // ARRIBADA: the full-modal switch, and the name it opens seeded with.
+  const [isFullModalOpen, setIsFullModalOpen] = useState(false);
+  const [fullModalName, setFullModalName] = useState("");
   // form info
   const {
     reset,
     handleSubmit,
     setFocus,
     register,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<TIssue>({ defaultValues });
 
@@ -95,6 +107,14 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
     } else {
       setIsOpen(isOpen);
     }
+  };
+
+  // ARRIBADA: promote the inline quick-add to the full create modal, carrying whatever has
+  // already been typed so nothing is lost in the switch.
+  const handleOpenFullModal = () => {
+    setFullModalName(getValues("name") ?? "");
+    handleIsOpen(false);
+    setIsFullModalOpen(true);
   };
 
   const onSubmitHandler = async (formData: TIssue) => {
@@ -143,6 +163,13 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
         errors && errors?.name && errors?.name?.message ? `border-danger-strong bg-danger-subtle` : ``
       )}
     >
+      {/* ARRIBADA: the full modal, seeded with the typed name + the current project, so the
+          quick-add "expand" switches to a full property form without losing anything. */}
+      <CreateUpdateIssueModal
+        isOpen={isFullModalOpen}
+        onClose={() => setIsFullModalOpen(false)}
+        data={{ ...(prePopulatedData ?? {}), project_id: projectId?.toString(), name: fullModalName }}
+      />
       {isOpen ? (
         <QuickAddIssueFormRoot
           isOpen={isOpen}
@@ -154,6 +181,7 @@ export const QuickAddIssueRoot = observer(function QuickAddIssueRoot(props: TQui
           register={register}
           onSubmit={handleSubmit(onSubmitHandler)}
           onClose={() => handleIsOpen(false)}
+          onOpenFullModal={handleOpenFullModal}
           isEpic={isEpic}
         />
       ) : (

@@ -15,13 +15,14 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`06bf6626d0`** — **frontend** image tag
-`v1.3.1-arribada.93`, frontend image id `cd36c65d2f45` (OCI revision `06bf6626d0`),
+Production `plane.arribada.org` serves **`e7ee0d36be`** — **frontend** image tag
+`v1.3.1-arribada.94`, frontend image id `9ade7a9552a4` (OCI revision `e7ee0d36be`),
 built + deployed 2026-08-18. The **backend is unchanged**: still image id
 `6a0c7e1faffd` (`.90`, built from `aa13efe486`). Every commit since `aa13efe486`
-(the quickstart fix, version badge, the safe mobile pass, and docs) is frontend or docs
-only, so there is **no backend delta** and the backend has not been rebuilt since `.90`.
-Everything committed **up to and including `06bf6626d0`** is deployed.
+(the quickstart fix, version badge, two mobile passes, expense-edit/currency/login work,
+and docs) is frontend or docs only, so there is **no backend delta** and the backend has
+not been rebuilt since `.90`. Everything committed **up to and including `e7ee0d36be`** is
+deployed.
 
 Verified end-to-end over the public domain: `/assets/root-*.js` carries
 `VITE_APP_VERSION:"v1.3.1-arribada.92"` / `VITE_APP_COMMIT:"f8902dcd…"`. The bottom-right
@@ -33,7 +34,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `06bf6626d0` | **serving now** | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Frontend `.93`. Authed mobile screens NOT browser-verified — Point 4 still human-blocked. |
+| `e7ee0d36be` | **serving now** | Frontend `.94`: expense EDITING (modal edit mode + per-row button, PATCHes the pre-existing `ProjectExpenseDetailEndpoint`); new-expense currency defaults to the project budget currency not EUR; login GitLab option removed + "Plane"→"Arribada" copy; mobile pass 2. Login VERIFIED in the served bundle; expense/currency/authed-mobile NOT browser-verified (no session). |
+| `06bf6626d0` | yes             | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Was `.93`. |
 | `f8902dcd15` | yes             | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Was frontend `.92`. |
 | `386e622001` | yes             | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`. |
 | `5658072476` | n/a — docs only | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                    |
@@ -187,25 +189,31 @@ A four-dimension read of `apps/web` (features, i18n, design, mobile). Correction
   (not keys) returns **0** occurrences of user-visible "cycle"; the rename to Sprint is
   complete in the copy. (A subagent that lacked `packages/i18n` wrongly "confirmed" both this
   AND the login copy — do not trust an i18n conclusion from a tree without the i18n package.)
-- **Login copy — STILL TRUE, and it is hardcoded, not i18n.** `auth-header.tsx:31/35/39`
-  literally contain `subHeader: "Welcome back to Plane."` / `header: "Work in all dimensions."`
-  as **string literals** (no `t()`), and `hooks/oauth/core.tsx:66` renders a `… with GitLab`
-  button with a GitLab logo. The GitLab button only shows when `is_gitlab_enabled` — check
-  config before "fixing" it. All product/branding calls, left for the user.
-- **EUR default — PROVEN.** `expense-modal.tsx:82` `useState("EUR")` plus `?? "EUR"` fallbacks
-  in `budget-block.tsx` (131/461/486), `spend-curve.tsx`, `funder-report.tsx`. A GBP org is
-  offered EUR everywhere. Money policy → user's call; the fix (read org currency) is small.
-- **Expense edit — PROVEN missing.** Only delete exists (`budget-block.tsx:1313`); the modal
-  has `request`/`record` only, and `ProjectExpense` has no `updated_by`. Audit-trail gap.
-- **Arribada/Finance strings hardcoded, not translatable** (`arribada-widgets.tsx`,
-  `budget-block.tsx`, expense categories). A real i18n refactor, not a quick fix.
+- **Login copy + GitLab — FIXED in `.94` (`e7ee0d36be`), VERIFIED in the served bundle.**
+  `is_gitlab_enabled` was actually `true` in prod, so the button really showed. Removed the
+  gitlab option from `oauth/core.tsx` and rebranded the hardcoded `auth-header.tsx` copy
+  "Welcome back to Plane"→"…to Arribada". Proven in all served chunks: `with GitLab`=0,
+  `with Google`=1 (witness), `Welcome back to Arribada`=1, `Welcome back to Plane`=0. Server
+  config still has `is_gitlab_enabled=true` (harmless — the frontend no longer surfaces it).
+- **EUR default — FIXED in `.94`.** A NEW expense now defaults to the project's own budget
+  currency (`allocCcy`) instead of hardcoded EUR; editing keeps the line's currency. NOT
+  browser-verified (no session). Other `?? "EUR"` fallbacks in read paths (spend-curve,
+  funder-report) are display fallbacks off server data and were left as-is.
+- **Expense edit — ADDED in `.94`.** KEY FACT: the backend already had a full edit endpoint
+  (`ProjectExpenseDetailEndpoint.patch`, MONEY_ROLES + lead guard) AND the frontend already
+  had `updateExpense()` — only the UI was missing. Added an edit mode to the ExpenseModal
+  (prefill + PATCH) and a per-row Edit button. PATCH is partial, so `notes`/`incurred_on` are
+  preserved. `ProjectExpense` still has no `updated_by` — an audit-trail nicety, not shipped.
+  NOT browser-verified.
+- **Arribada/Finance strings hardcoded, not translatable** — user said leave i18n for now.
 
 **Mobile — the app is desktop-centric; nobody has opened an authed screen on a phone.**
-`.93` shipped the *safe, desktop-neutral* subset (kanban columns, module side-panels). Still
-open, needs a real device session to verify before shipping: spreadsheet/kanban horizontal
-UX, modals not full-screen on mobile (`image-picker-popover` etc.), the 4-column
-`workload/list.tsx` grid, Power-K width (`top-nav-power-k.tsx:212`). A `sidebar-menu-hamburger-toggle.tsx`
-DOES exist, so the main sidebar has a mobile toggle — the earlier "no hamburger" worry was wrong.
+`.93` + `.94` shipped *safe, desktop-neutral* responsive fixes (kanban columns, module
+side-panels, spreadsheet row min-width, image/upload modals, `workload/list.tsx` grid now
+scrolls instead of crushing, Power-K width). All gated `<sm`, so desktop is provably
+unchanged — but the authed mobile result is NOT visually confirmed. A `sidebar-menu-hamburger-toggle.tsx`
+exists, so the main sidebar has a mobile toggle. Real verified mobile work still needs a
+signed-in device session (Point 4).
 
 ### Order tracking — closed 2026-08-10
 
@@ -225,8 +233,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.93` (= `06bf6626d0`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.94` or higher — but prefer the commit SHA:
+- Frontend `.94` (= `e7ee0d36be`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.95` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

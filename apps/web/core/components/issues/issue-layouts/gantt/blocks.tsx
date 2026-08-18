@@ -242,6 +242,9 @@ export const IssueGanttSidebarBlock = observer(function IssueGanttSidebarBlock(p
   const storeType = useIssueStoreType() as GanttStoreType;
   const { issuesFilter } = useIssues(storeType);
   const { getProjectIdentifierById } = useProject();
+  // ARRIBADA: the row's state, so the "Work items" column can carry a status colour —
+  // otherwise a group reading "73%" gives no way to see WHICH rows are done.
+  const { getProjectStates } = useProjectState();
 
   // handlers
   const { handleRedirection } = useIssuePeekOverviewRedirection(isEpic);
@@ -249,6 +252,11 @@ export const IssueGanttSidebarBlock = observer(function IssueGanttSidebarBlock(p
   // derived values
   const issueDetails = getIssueById(issueId);
   const projectIdentifier = getProjectIdentifierById(issueDetails?.project_id);
+  // ARRIBADA: a completed state's own colour is green in the default set, so a dot in this
+  // colour reads as "green when done" while staying correct for every other state group and
+  // for any custom palette a workspace has set.
+  const stateDetails =
+    issueDetails && getProjectStates(issueDetails.project_id)?.find((state) => state?.id == issueDetails.state_id);
 
   const handleIssuePeekOverview = (e: any) => {
     e.stopPropagation(true);
@@ -274,6 +282,17 @@ export const IssueGanttSidebarBlock = observer(function IssueGanttSidebarBlock(p
       disabled={!!issueDetails?.tempId}
     >
       <div className="relative flex h-full w-full cursor-pointer items-center gap-2">
+        {/* ARRIBADA: status dot in the row's state colour (green when the state is a
+            completed one), so "which of these is done?" is answerable at a glance. */}
+        {stateDetails?.color && (
+          <Tooltip tooltipContent={stateDetails.name} isMobile={isMobile}>
+            <span
+              className="size-2 flex-shrink-0 rounded-full"
+              style={{ backgroundColor: stateDetails.color }}
+              aria-label={`State: ${stateDetails.name}`}
+            />
+          </Tooltip>
+        )}
         {issueDetails?.project_id && (
           <IssueIdentifier
             issueId={issueDetails.id}

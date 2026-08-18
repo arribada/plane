@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 import { cn, renderFormattedDateWithoutYear } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
+// ARRIBADA: open the work item in the Home peek overview instead of navigating away.
+import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useUser } from "@/hooks/store/user";
 import { IssueService } from "@/services/issue/issue.service";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -141,6 +143,7 @@ type Bucket = { key: string; label: string; icon: typeof AlertTriangle; tone: st
 export const MyTasksWidget = observer(function MyTasksWidget() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
+  const { setPeekIssue } = useIssueDetail();
   const { data: currentUser } = useUser();
   const service = useMemo(() => new ArribadaService(), []);
   const [items, setItems] = useState<TMyWorkItem[]>([]);
@@ -216,8 +219,12 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
 
   const total = items.length;
 
+  // ARRIBADA: open the peek overview (a modal with the item's full detail AND its own
+  // full-screen button to the page) instead of navigating away, so glancing at a task does
+  // not lose the Home view. The Home page already mounts the peek — the recents widget uses
+  // the same setPeekIssue.
   const openItem = (it: TMyWorkItem) =>
-    router.push(`/${workspaceSlug}/browse/${it.project_identifier}-${it.sequence_id}/`);
+    setPeekIssue({ workspaceSlug: workspaceSlug?.toString() ?? "", projectId: it.project_id, issueId: it.id });
 
   if (loading) {
     return (

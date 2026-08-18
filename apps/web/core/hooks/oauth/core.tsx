@@ -6,14 +6,14 @@
 
 // plane imports
 import { useSearchParams } from "next/navigation";
-import { useTheme } from "next-themes";
 import { API_BASE_URL } from "@plane/constants";
 import type { TOAuthConfigs, TOAuthOption } from "@plane/types";
 // assets
-import giteaLogo from "@/app/assets/logos/gitea-logo.svg?url";
-import GithubLightLogo from "@/app/assets/logos/github-black.png?url";
-import GithubDarkLogo from "@/app/assets/logos/github-dark.svg?url";
-// ARRIBADA: gitlab logo import removed (GitLab option dropped)
+// ARRIBADA: the "GitLab" provider IS our device dashboard (GITLAB_HOST=devices.arribada.org),
+// so it is surfaced and branded as "Arribada", not GitLab. Google is kept (same accounts as
+// the dashboard). GitHub and Gitea buttons are dropped — the team signs in through the
+// Arribada dashboard, Google, or email/password only.
+import arribadaLogo from "@/app/assets/favicon/arribada-favicon.svg?url";
 import googleLogo from "@/app/assets/logos/google-logo.svg?url";
 // hooks
 import { useInstance } from "@/hooks/store/use-instance";
@@ -23,19 +23,24 @@ export const useCoreOAuthConfig = (oauthActionText: string): TOAuthConfigs => {
   const searchParams = useSearchParams();
   // query params
   const next_path = searchParams.get("next_path");
-  // theme
-  const { resolvedTheme } = useTheme();
   // store hooks
   const { config } = useInstance();
   // derived values
-  const isOAuthEnabled =
-    (config &&
-      (config?.is_google_enabled ||
-        config?.is_github_enabled ||
-        // ARRIBADA: GitLab removed
-        config?.is_gitea_enabled)) ||
-    false;
+  // ARRIBADA: only the two providers we surface — the Arribada dashboard SSO
+  // (is_gitlab_enabled, GITLAB_HOST=devices.arribada.org) and Google.
+  const isOAuthEnabled = (config && (config?.is_google_enabled || config?.is_gitlab_enabled)) || false;
   const oAuthOptions: TOAuthOption[] = [
+    {
+      // The id stays "gitlab" because the endpoint is /auth/gitlab/ — but it resolves to the
+      // Arribada device dashboard (GITLAB_HOST), so it is labelled and iconed as Arribada.
+      id: "gitlab",
+      text: `${oauthActionText} with Arribada`,
+      icon: <img src={arribadaLogo} height={18} width={18} alt="Arribada" />,
+      onClick: () => {
+        window.location.assign(`${API_BASE_URL}/auth/gitlab/${next_path ? `?next_path=${next_path}` : ``}`);
+      },
+      enabled: config?.is_gitlab_enabled,
+    },
     {
       id: "google",
       text: `${oauthActionText} with Google`,
@@ -44,32 +49,6 @@ export const useCoreOAuthConfig = (oauthActionText: string): TOAuthConfigs => {
         window.location.assign(`${API_BASE_URL}/auth/google/${next_path ? `?next_path=${next_path}` : ``}`);
       },
       enabled: config?.is_google_enabled,
-    },
-    {
-      id: "github",
-      text: `${oauthActionText} with GitHub`,
-      icon: (
-        <img
-          src={resolvedTheme === "dark" ? GithubDarkLogo : GithubLightLogo}
-          height={18}
-          width={18}
-          alt="GitHub Logo"
-        />
-      ),
-      onClick: () => {
-        window.location.assign(`${API_BASE_URL}/auth/github/${next_path ? `?next_path=${next_path}` : ``}`);
-      },
-      enabled: config?.is_github_enabled,
-    },
-    // ARRIBADA: GitLab OAuth option removed
-    {
-      id: "gitea",
-      text: `${oauthActionText} with Gitea`,
-      icon: <img src={giteaLogo} height={18} width={18} alt="Gitea Logo" />,
-      onClick: () => {
-        window.location.assign(`${API_BASE_URL}/auth/gitea/${next_path ? `?next_path=${next_path}` : ``}`);
-      },
-      enabled: config?.is_gitea_enabled,
     },
   ];
 

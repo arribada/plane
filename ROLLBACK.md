@@ -44,8 +44,12 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.96` | `7c86b64a045d` | `dfe3b539bb`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), gantt status dot; CI artifact loaded 2026-08-18; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.95` | `61c7cb867329` | `8c73cb6ac8`                | previous frontend serve (login correction); **the frontend roll-back target for the `.96` deploy**; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.100`| `2a487692f76b` | `dfb55ab323`                | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), inline sprint/module create; CI artifact loaded 2026-08-18; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.99` | (built, may be unloaded) | `6fea7ba658`       | Home my-tasks peek; the `.100` tree contains it, so `.100` was deployed directly |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.98` | (built, may be unloaded) | `ef58520e7a`       | discipline+effort at creation; contained in `.100` |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.97` | `70ae4ec9baeb` | `e34286014c`                | quick-add full-modal button; **the frontend roll-back target for the `.100` deploy** (last serve before it) |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.96` | `7c86b64a045d` | `dfe3b539bb`                | gantt status dot; older serve; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.95` | `61c7cb867329` | `8c73cb6ac8`                | login correction; older serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.94` | `9ade7a9552a4` | `e7ee0d36be`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | older frontend serve; OCI revision label present |
@@ -130,6 +134,12 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
+> **2026-08-18 (frontend `.100`).** Current serve `.100` = `dfb55ab323` (inline sprint/module
+> create). `.97`–`.100` (quick-add full-modal button, discipline+effort at creation, Home
+> my-tasks peek, inline create) shipped in one deploy of `.100`, whose tree contains them;
+> `.98`/`.99` were never served alone, so the roll-back target is **`.97`** = `70ae4ec9baeb`.
+> All frontend-only, **no migrations**. Backend still `.90`.
+>
 > **2026-08-18 (frontend `.96`).** Current frontend serve is `.96` = `dfe3b539bb` (gantt
 > status dot). `.95` = `8c73cb6ac8` (login correction: the "GitLab" button IS the Arribada
 > dashboard SSO — restored + rebranded, GitHub/Gitea buttons dropped). `.94` = `e7ee0d36be`

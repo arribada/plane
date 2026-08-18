@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
+import { Plus } from "lucide-react";
 import type { Control } from "react-hook-form";
 import { Controller } from "react-hook-form";
 import { ETabIndices, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -34,6 +35,9 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web components
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
+// ARRIBADA: create a sprint / module inline from the work-item form, without leaving it.
+import { CycleCreateUpdateModal } from "@/components/cycles/modal";
+import { CreateUpdateModuleModal } from "@/components/modules/modal";
 
 type TIssueDefaultPropertiesProps = {
   control: Control<TIssue>;
@@ -65,6 +69,9 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
   } = props;
   // states
   const [parentIssueListModalOpen, setParentIssueListModalOpen] = useState(false);
+  // ARRIBADA: inline sprint/module creation from the form.
+  const [createCycleOpen, setCreateCycleOpen] = useState(false);
+  const [createModuleOpen, setCreateModuleOpen] = useState(false);
   // store hooks
   const { t } = useTranslation();
   const { areEstimateEnabledByProjectId } = useProjectEstimates();
@@ -78,6 +85,19 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
 
   const canCreateLabel =
     projectId && allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT, workspaceSlug, projectId);
+  // ARRIBADA: sprints and modules can be made by members, not only admins.
+  const canCreateCycleOrModule =
+    !!projectId &&
+    allowPermissions(
+      [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+      EUserPermissionsLevel.PROJECT,
+      workspaceSlug,
+      projectId
+    );
+  // The "+" opens the same create modal Plane uses elsewhere; a plain icon button that shares
+  // the dropdown's height so the row stays aligned.
+  const addButtonClass =
+    "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-subtle text-tertiary hover:bg-layer-2 hover:text-primary";
 
   const minDate = getDate(startDate);
   minDate?.setDate(minDate.getDate());
@@ -205,7 +225,7 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           control={control}
           name="cycle_id"
           render={({ field: { value, onChange } }) => (
-            <div className="h-7">
+            <div className="flex h-7 items-center gap-1">
               <CycleDropdown
                 projectId={projectId ?? undefined}
                 onChange={(cycleId) => {
@@ -217,6 +237,19 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
                 buttonVariant="border-with-text"
                 tabIndex={getIndex("cycle_id")}
               />
+              {/* ARRIBADA: create a new sprint without leaving the form. After it is made it
+                  appears in the dropdown above to select. */}
+              {canCreateCycleOrModule && (
+                <button
+                  type="button"
+                  onClick={() => setCreateCycleOpen(true)}
+                  title="Create a new sprint"
+                  aria-label="Create a new sprint"
+                  className={addButtonClass}
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              )}
             </div>
           )}
         />
@@ -226,7 +259,7 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           control={control}
           name="module_ids"
           render={({ field: { value, onChange } }) => (
-            <div className="h-7">
+            <div className="flex h-7 items-center gap-1">
               <ModuleDropdown
                 projectId={projectId ?? undefined}
                 value={value ?? []}
@@ -240,6 +273,18 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
                 multiple
                 showCount
               />
+              {/* ARRIBADA: create a new module inline; it then appears in the dropdown above. */}
+              {canCreateCycleOrModule && (
+                <button
+                  type="button"
+                  onClick={() => setCreateModuleOpen(true)}
+                  title="Create a new module"
+                  aria-label="Create a new module"
+                  className={addButtonClass}
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              )}
             </div>
           )}
         />
@@ -338,6 +383,25 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           />
         )}
       />
+
+      {/* ARRIBADA: the inline sprint/module create modals, opened by the "+" buttons above.
+          They create in the current project; the new item then appears in its dropdown. */}
+      {projectId && workspaceSlug && (
+        <>
+          <CycleCreateUpdateModal
+            isOpen={createCycleOpen}
+            handleClose={() => setCreateCycleOpen(false)}
+            workspaceSlug={workspaceSlug}
+            projectId={projectId}
+          />
+          <CreateUpdateModuleModal
+            isOpen={createModuleOpen}
+            onClose={() => setCreateModuleOpen(false)}
+            workspaceSlug={workspaceSlug}
+            projectId={projectId}
+          />
+        </>
+      )}
     </div>
   );
 });

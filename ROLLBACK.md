@@ -58,7 +58,7 @@ record:
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | older frontend serve; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91` | `d618eb235591` | `386e622001`                | older frontend serve; OCI revision label present |
-| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **currently served backend** (= `makeplane/plane-backend:v1.3.1`); `.91`/`.92`/`.93` were frontend-only, so the backend stayed on this `.90` image. Built on the droplet 2026-08-12 16:49; **the backend roll-back target is itself** |
+| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **the backend roll-back target** (served `.90`→`.102`; superseded by `31608607b1` on 2026-08-19). Built on the droplet 2026-08-12 16:49. To roll the backend back: `docker tag 6a0c7e1faffd makeplane/plane-backend:v1.3.1` + recreate api/worker/beat |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.90` | `d37d47244cf4` | `aa13efe486`                | older frontend serve; OCI revision label present |
 | `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | older backend serve, built on the droplet 2026-08-12 10:45 |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | the previous serve; pair with the backend above; CI artifact of run 31588685459 (past its 5-day window — may be gone) |

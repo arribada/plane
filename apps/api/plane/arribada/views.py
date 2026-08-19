@@ -1894,13 +1894,20 @@ class MyWorkEndpoint(BaseAPIView):
         issues = (
             Issue.issue_objects.filter(workspace__slug=slug, id__in=assigned_ids, deleted_at__isnull=True)
             .exclude(state__group__in=["completed", "cancelled"])
-            .select_related("project")
+            .select_related("project", "state")
             .values(
                 "id",
                 "name",
+                # ARRIBADA: start_date + the state, so the Home calendar can draw a task as a
+                # duration bar (start -> due) coloured by its status instead of a due-date dot.
+                "start_date",
                 "target_date",
                 "priority",
                 "sequence_id",
+                "state_id",
+                "state__group",
+                "state__color",
+                "state__name",
                 "project_id",
                 "project__identifier",
                 "project__name",
@@ -1911,9 +1918,16 @@ class MyWorkEndpoint(BaseAPIView):
             {
                 "id": str(i["id"]),
                 "name": i["name"],
+                "start_date": i["start_date"],
                 "target_date": i["target_date"],
                 "priority": i["priority"],
                 "sequence_id": i["sequence_id"],
+                # ARRIBADA: state, for the calendar's status colour. Null-safe — an item with
+                # no state still serialises (group/colour/name come back null).
+                "state_id": str(i["state_id"]) if i["state_id"] else None,
+                "state_group": i["state__group"],
+                "state_color": i["state__color"],
+                "state_name": i["state__name"],
                 "project_id": str(i["project_id"]),
                 "project_identifier": i["project__identifier"],
                 "project_name": i["project__name"],

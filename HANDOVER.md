@@ -15,18 +15,23 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`3480aaf0d5`** — **frontend** image tag
-`v1.3.1-arribada.102`, deployed 2026-08-18. (`.101` `cb28c2ed9f` = milestone/auto-select/
-drag-to-nest; `.102` `3480aaf0d5` = drag-to-**un**-nest + the sprint/module "+" moved INTO
-the dropdown as a footer.) The **backend is unchanged**: still image id
-`6a0c7e1faffd` (`.90`, built from `aa13efe486`). Everything since `aa13efe486` is frontend or
-docs only — **no backend delta**, backend not rebuilt since `.90`. Frontend tags since `.96`:
-`.97` quick-add→full modal, `.98` discipline+effort at creation, `.99` Home my-tasks peek,
-`.100` inline sprint/module create, `.101` `cb28c2ed9f` (milestone at creation + auto-select
-created sprint/module + **drag-to-nest in the gantt sidebar**). All frontend-only; **NONE
-browser-verified** — the owner chose to keep shipping and verify in bulk. `.101`'s drag-to-nest
-is the highest-risk item (it changes the gantt DnD hitbox; middle-third = make-child when
-subtasks are on) — smoke-test reorder before trusting.
+Production `plane.arribada.org` serves **frontend `dab8d3f293`** (image tag
+`v1.3.1-arribada.103`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
+served digest `41c2e1c34113`), deployed 2026-08-19.
+
+**The backend moved for the first time since `.90`.** `31608607b1` adds `start_date` + the
+state to `MyWorkEndpoint` (for the Home calendar's duration bars); no migration, no schema
+change. It was built on the droplet with `build-be.sh`, retagged `makeplane/plane-backend:v1.3.1`,
+and api/worker/beat force-recreated (API back in ~64s). The backend rollback target is now
+`.90` = `6a0c7e1faffd`.
+
+Frontend tags since `.96`: `.97` quick-add→full modal, `.98` discipline+effort at creation,
+`.99` Home my-tasks peek, `.100` inline sprint/module create, `.101` `cb28c2ed9f`
+(milestone + auto-select + drag-to-nest), `.102` `3480aaf0d5` (drag-to-un-nest + "+"
+in the dropdown), `.103` `dab8d3f293` (calendar duration bars coloured by status +
+collapsible portfolio controls). **NONE browser-verified** — the owner ships and verifies in
+bulk. `.101`/`.102`'s gantt drag (nest/un-nest changes the DnD hitbox) is the highest-risk —
+smoke-test reorder before trusting.
 
 **Deferred / blocked:** Plane→GitHub write-back (close a Plane-done item's GitHub issue) is
 NOT implemented — it needs a **write-scoped GitHub PAT** (`GITHUB_PAT` today is read-only) plus
@@ -43,7 +48,9 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `3480aaf0d5` | **serving now** | Frontend `.102`: **drag-to-un-nest** (cross-level reorder — drop between two rows of a different parent re-parents to that level; a sub-task dropped among top-level rows leaves its parent) + the sprint/module create **"+" moved into the dropdown** as a "Create a new …" footer. Owner-tested `.101`: nest works; this adds un-nest + the requested dropdown UX. |
+| `dab8d3f293` | **serving now** | Frontend `.103`: Home calendar draws duration bars (start→due, lane-packed per week) coloured by **status**; portfolio timeline toolbar+legend behind a Show/Hide bar (collapsed on mobile). Reads the new `MyWorkEndpoint` fields. |
+| `31608607b1` | **serving now** | **Backend** (first change since `.90`): `MyWorkEndpoint` returns `start_date` + state. No migration. |
+| `3480aaf0d5` | yes             | Frontend `.102`: drag-to-un-nest + the sprint/module create "+" moved into the dropdown footer. |
 | `cb28c2ed9f` | yes             | Frontend `.101`: milestone kind+label at creation; auto-select the sprint/module made via "+"; drag-to-nest (drop on a row's centre → sub-task). |
 | `dfb55ab323` | yes             | Frontend `.100`: inline "+" to create a sprint/module from the work-item form. |
 | `6fea7ba658` | yes             | Frontend `.99`: Home "my tasks" click opens the peek overview (full detail + built-in full-screen button) instead of navigating away. |
@@ -293,8 +300,9 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.102` (= `3480aaf0d5`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.103` or higher — but prefer the commit SHA:
+- Frontend `.103` (= `dab8d3f293`) is deployed; backend is now `31608607b1` (image
+  `arribada/plane-backend:31608607b1`), the `.90` image `6a0c7e1faffd` being its rollback
+  target. Next frontend tag should be `.104` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

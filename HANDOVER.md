@@ -15,8 +15,10 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **`cb28c2ed9f`** — **frontend** image tag
-`v1.3.1-arribada.101`, deployed 2026-08-18. The **backend is unchanged**: still image id
+Production `plane.arribada.org` serves **`3480aaf0d5`** — **frontend** image tag
+`v1.3.1-arribada.102`, deployed 2026-08-18. (`.101` `cb28c2ed9f` = milestone/auto-select/
+drag-to-nest; `.102` `3480aaf0d5` = drag-to-**un**-nest + the sprint/module "+" moved INTO
+the dropdown as a footer.) The **backend is unchanged**: still image id
 `6a0c7e1faffd` (`.90`, built from `aa13efe486`). Everything since `aa13efe486` is frontend or
 docs only — **no backend delta**, backend not rebuilt since `.90`. Frontend tags since `.96`:
 `.97` quick-add→full modal, `.98` discipline+effort at creation, `.99` Home my-tasks peek,
@@ -41,7 +43,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `cb28c2ed9f` | **serving now** | Frontend `.101`: **milestone** kind+label at creation; **auto-select** the sprint/module made via "+"; **drag-to-nest** in the gantt sidebar (drop on a row's centre → sub-task; gated on subtasks + a handler; reorder unchanged when off). Drag-to-nest is unverified — smoke-test reorder. |
+| `3480aaf0d5` | **serving now** | Frontend `.102`: **drag-to-un-nest** (cross-level reorder — drop between two rows of a different parent re-parents to that level; a sub-task dropped among top-level rows leaves its parent) + the sprint/module create **"+" moved into the dropdown** as a "Create a new …" footer. Owner-tested `.101`: nest works; this adds un-nest + the requested dropdown UX. |
+| `cb28c2ed9f` | yes             | Frontend `.101`: milestone kind+label at creation; auto-select the sprint/module made via "+"; drag-to-nest (drop on a row's centre → sub-task). |
 | `dfb55ab323` | yes             | Frontend `.100`: inline "+" to create a sprint/module from the work-item form. |
 | `6fea7ba658` | yes             | Frontend `.99`: Home "my tasks" click opens the peek overview (full detail + built-in full-screen button) instead of navigating away. |
 | `ef58520e7a` | yes             | Frontend `.98`: set Discipline + Effort at creation via the modal-additional-properties seam; applied after create (`handleCreateUpdatePropertyValues`), no-op unless set. Milestone deferred. |
@@ -290,8 +293,8 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.101` (= `cb28c2ed9f`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
-  (= `aa13efe486`). Next tag should be `.102` or higher — but prefer the commit SHA:
+- Frontend `.102` (= `3480aaf0d5`) is deployed; backend is still the `.90` image `6a0c7e1faffd`
+  (= `aa13efe486`). Next tag should be `.103` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

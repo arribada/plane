@@ -30,6 +30,7 @@ type TModuleDropdownBaseProps = TDropdownProps & {
   itemClassName?: string;
   moduleIds?: string[];
   onClose?: () => void;
+  onCreateNew?: () => void; // ARRIBADA: shows a "create a new module" footer in the dropdown.
   onDropdownOpen?: () => void;
   projectId: string | undefined;
   renderByDefault?: boolean;
@@ -64,6 +65,7 @@ export const ModuleDropdownBase = observer(function ModuleDropdownBase(props: TM
     multiple,
     onChange,
     onClose,
+    onCreateNew, // ARRIBADA
     placeholder = "",
     placement,
     projectId,
@@ -194,6 +196,15 @@ export const ModuleDropdownBase = observer(function ModuleDropdownBase(props: TM
           getModuleById={getModuleById}
           moduleIds={moduleIds}
           value={value}
+          // ARRIBADA: close the dropdown when the footer opens the create-module modal.
+          onCreateNew={
+            onCreateNew
+              ? () => {
+                  onCreateNew();
+                  handleClose();
+                }
+              : undefined
+          }
         />
       )}
     </ComboDropDown>

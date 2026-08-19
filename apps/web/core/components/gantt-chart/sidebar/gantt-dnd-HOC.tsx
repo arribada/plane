@@ -77,12 +77,17 @@ export const GanttDnDHOC = observer(function GanttDnDHOC(props: Props) {
         return makeChildEnabled ? "DRAG_MAKE_CHILD" : undefined;
       }
 
-      // Everything below is the reorder path, and it must behave exactly as it
-      // did before: this row must be a reorder target, and — since canDrop no
-      // longer enforces it when make-child is on — the scopes must match.
+      // The reorder path. The row must be a reorder target.
       if (!isReorderTarget) return undefined;
-      const sameScope = (source?.data?.dragScope ?? undefined) === dragScope;
-      if (!sameScope) return undefined;
+      // ARRIBADA: with make-child on, a reorder is ALSO how you move between levels — a
+      // sub-task dropped between two top-level rows leaves its parent (un-nest), and the
+      // consumer re-parents it to the drop target's level. So cross-scope reorder is allowed
+      // here; it is only refused (original behaviour) for the other consumers that never wire
+      // make-child, where a cross-scope drop would write a sort_order that changes nothing.
+      if (!makeChildEnabled) {
+        const sameScope = (source?.data?.dragScope ?? undefined) === dragScope;
+        if (!sameScope) return undefined;
+      }
 
       return extracted === "reorder-below" && isLastChild ? "DRAG_BELOW" : "DRAG_OVER";
     };

@@ -21,6 +21,7 @@ type TModuleDropdownProps = TDropdownProps & {
   projectId: string | undefined;
   showCount?: boolean;
   onClose?: () => void;
+  onCreateNew?: () => void; // ARRIBADA: shows a "create a new module" footer in the dropdown.
   renderByDefault?: boolean;
   itemClassName?: string;
 } & (

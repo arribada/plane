@@ -33,6 +33,7 @@ type Props = TDropdownProps & {
   canRemoveCycle?: boolean;
   renderByDefault?: boolean;
   currentCycleId?: string;
+  onCreateNew?: () => void; // ARRIBADA: shows a "create a new sprint" footer in the dropdown.
 };
 
 export const CycleDropdown = observer(function CycleDropdown(props: Props) {
@@ -57,6 +58,7 @@ export const CycleDropdown = observer(function CycleDropdown(props: Props) {
     canRemoveCycle = true,
     renderByDefault = true,
     currentCycleId,
+    onCreateNew, // ARRIBADA
   } = props;
   // i18n
   const { t } = useTranslation();
@@ -154,6 +156,15 @@ export const CycleDropdown = observer(function CycleDropdown(props: Props) {
           referenceElement={referenceElement}
           canRemoveCycle={canRemoveCycle}
           currentCycleId={currentCycleId}
+          // ARRIBADA: close the dropdown when the footer opens the create-sprint modal.
+          onCreateNew={
+            onCreateNew
+              ? () => {
+                  onCreateNew();
+                  handleClose();
+                }
+              : undefined
+          }
         />
       )}
     </ComboDropDown>

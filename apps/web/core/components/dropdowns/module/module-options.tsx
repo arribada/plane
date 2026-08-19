@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Placement } from "@popperjs/core";
+import { Plus } from "lucide-react"; // ARRIBADA
 import { observer } from "mobx-react";
 import { usePopper } from "react-popper";
 import { Combobox } from "@headlessui/react";
@@ -34,10 +35,12 @@ interface Props {
   placement: Placement | undefined;
   referenceElement: HTMLButtonElement | null;
   value?: string[] | string | null;
+  onCreateNew?: () => void; // ARRIBADA: renders a "create a new module" footer inside the dropdown.
 }
 
 export const ModuleOptions = observer(function ModuleOptions(props: Props) {
-  const { getModuleById, isOpen, moduleIds, multiple, onDropdownOpen, placement, referenceElement, value } = props;
+  const { getModuleById, isOpen, moduleIds, multiple, onDropdownOpen, placement, referenceElement, value, onCreateNew } =
+    props;
   // refs
   const inputRef = useRef<HTMLInputElement | null>(null);
   // states
@@ -166,6 +169,17 @@ export const ModuleOptions = observer(function ModuleOptions(props: Props) {
             <p className="px-1.5 py-1 text-placeholder italic">{t("common.loading")}</p>
           )}
         </div>
+        {/* ARRIBADA: create a new module straight from the dropdown, in a footer below the list. */}
+        {onCreateNew && (
+          <button
+            type="button"
+            onClick={onCreateNew}
+            className="mt-1 flex w-full items-center gap-1.5 rounded-sm border-t border-subtle px-1 pt-1.5 pb-1 text-11 text-accent-primary hover:bg-layer-transparent-hover"
+          >
+            <Plus className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="flex-grow truncate text-left">Create a new module</span>
+          </button>
+        )}
       </div>
     </Combobox.Options>
   );

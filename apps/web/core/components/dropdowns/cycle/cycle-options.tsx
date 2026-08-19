@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Placement } from "@popperjs/core";
+import { Plus } from "lucide-react"; // ARRIBADA
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { usePopper } from "react-popper";
@@ -37,10 +38,11 @@ type CycleOptionsProps = {
   isOpen: boolean;
   canRemoveCycle: boolean;
   currentCycleId?: string;
+  onCreateNew?: () => void; // ARRIBADA: renders a "create a new sprint" footer inside the dropdown.
 };
 
 export const CycleOptions = observer(function CycleOptions(props: CycleOptionsProps) {
-  const { projectId, isOpen, referenceElement, placement, canRemoveCycle, currentCycleId } = props;
+  const { projectId, isOpen, referenceElement, placement, canRemoveCycle, currentCycleId, onCreateNew } = props;
   // i18n
   const { t } = useTranslation();
   //state hooks
@@ -172,6 +174,17 @@ export const CycleOptions = observer(function CycleOptions(props: CycleOptionsPr
             <p className="px-1.5 py-1 text-placeholder italic">{t("common.loading")}</p>
           )}
         </div>
+        {/* ARRIBADA: create a new sprint straight from the dropdown, in a footer below the list. */}
+        {onCreateNew && (
+          <button
+            type="button"
+            onClick={onCreateNew}
+            className="mt-1 flex w-full items-center gap-1.5 rounded-sm border-t border-subtle px-1 pt-1.5 pb-1 text-11 text-accent-primary hover:bg-layer-transparent-hover"
+          >
+            <Plus className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="flex-grow truncate text-left">Create a new sprint</span>
+          </button>
+        )}
       </div>
     </Combobox.Options>
   );

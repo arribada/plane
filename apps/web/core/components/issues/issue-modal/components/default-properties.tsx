@@ -6,7 +6,6 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
-import { Plus } from "lucide-react";
 import type { Control } from "react-hook-form";
 import { Controller, useFormContext } from "react-hook-form";
 import { ETabIndices, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -96,10 +95,6 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
       workspaceSlug,
       projectId
     );
-  // The "+" opens the same create modal Plane uses elsewhere; a plain icon button that shares
-  // the dropdown's height so the row stays aligned.
-  const addButtonClass =
-    "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-subtle text-tertiary hover:bg-layer-2 hover:text-primary";
 
   const minDate = getDate(startDate);
   minDate?.setDate(minDate.getDate());
@@ -227,7 +222,7 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           control={control}
           name="cycle_id"
           render={({ field: { value, onChange } }) => (
-            <div className="flex h-7 items-center gap-1">
+            <div className="h-7">
               <CycleDropdown
                 projectId={projectId ?? undefined}
                 onChange={(cycleId) => {
@@ -238,20 +233,9 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
                 value={value}
                 buttonVariant="border-with-text"
                 tabIndex={getIndex("cycle_id")}
+                // ARRIBADA: footer inside the dropdown that opens the create-sprint modal below.
+                onCreateNew={canCreateCycleOrModule ? () => setCreateCycleOpen(true) : undefined}
               />
-              {/* ARRIBADA: create a new sprint without leaving the form. After it is made it
-                  appears in the dropdown above to select. */}
-              {canCreateCycleOrModule && (
-                <button
-                  type="button"
-                  onClick={() => setCreateCycleOpen(true)}
-                  title="Create a new sprint"
-                  aria-label="Create a new sprint"
-                  className={addButtonClass}
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              )}
             </div>
           )}
         />
@@ -261,7 +245,7 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           control={control}
           name="module_ids"
           render={({ field: { value, onChange } }) => (
-            <div className="flex h-7 items-center gap-1">
+            <div className="h-7">
               <ModuleDropdown
                 projectId={projectId ?? undefined}
                 value={value ?? []}
@@ -274,19 +258,9 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
                 tabIndex={getIndex("module_ids")}
                 multiple
                 showCount
+                // ARRIBADA: footer inside the dropdown that opens the create-module modal below.
+                onCreateNew={canCreateCycleOrModule ? () => setCreateModuleOpen(true) : undefined}
               />
-              {/* ARRIBADA: create a new module inline; it then appears in the dropdown above. */}
-              {canCreateCycleOrModule && (
-                <button
-                  type="button"
-                  onClick={() => setCreateModuleOpen(true)}
-                  title="Create a new module"
-                  aria-label="Create a new module"
-                  className={addButtonClass}
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              )}
             </div>
           )}
         />

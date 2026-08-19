@@ -96,6 +96,21 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     "100% 0% 100% 0%"
   );
 
+  // ARRIBADA: true if making `dragId` a child of `targetParentId` would create a cycle — the
+  // target, or an ancestor of it, IS the dragged row. A null target is the top level and never
+  // cycles. Shared by make-child (nest) and cross-level reorder (un-nest / move level).
+  const wouldCycle = (dragId: string, targetParentId: string | null | undefined): boolean => {
+    if (!targetParentId) return false;
+    let cursor: string | null | undefined = targetParentId;
+    const guard = new Set<string>();
+    while (cursor && !guard.has(cursor)) {
+      if (cursor === dragId) return true;
+      guard.add(cursor);
+      cursor = groups.subtasks.parentOf(cursor);
+    }
+    return false;
+  };
+
   const handleOnDrop = async (
     draggingBlockId: string | undefined,
     droppedBlockId: string | undefined,
@@ -112,6 +127,19 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     // group headers still in it — so the move has to be computed against what
     // the freeze actually wrote.
     const frozen = await onReorderStart?.();
+    // ARRIBADA: a reorder can now cross levels — dropping BETWEEN two rows of a different
+    // parent moves the item to that level. A sub-task dropped among top-level rows leaves its
+    // parent (un-nest); the reverse joins a parent's children. Re-parent to the drop target's
+    // parent (null = top level) first, then let handleOrderChange position it. Guarded against
+    // cycles and no-op'd when the level is unchanged.
+    if (groups.subtasks.enabled && draggingBlockId && droppedBlockId) {
+      const newParent = groups.subtasks.parentOf(droppedBlockId) ?? null;
+      const curParent = groups.subtasks.parentOf(draggingBlockId) ?? null;
+      if (newParent !== curParent && draggingBlockId !== newParent && !wouldCycle(draggingBlockId, newParent)) {
+        const child = getBlockById(draggingBlockId);
+        if (child?.data) blockUpdateHandler(child.data, { parent_id: newParent } as unknown as IBlockUpdateData);
+      }
+    }
     handleOrderChange(
       draggingBlockId,
       droppedBlockId,
@@ -133,20 +161,9 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
   // `parent_id` and nothing else, and the tree rebuilds itself from parent_id on
   // the next render (see subtasks.ts), so there is no local order to touch here.
   const handleMakeChild = async (draggingBlockId: string, parentBlockId: string) => {
-    // Never let an item parent itself, and never re-parent onto one of its own
-    // descendants — that would make a cycle that buildSubtaskTree only papers
-    // over by cutting an edge. `groups.subtasks.parentOf` gives the in-list
-    // parent of a row; walk the target's ancestor chain, and if the dragged item
-    // is already an ancestor of the target, refuse. (A guard set caps the walk in
-    // case the store itself already holds a cycle.)
-    if (draggingBlockId === parentBlockId) return;
-    let cursor: string | null = parentBlockId;
-    const guard = new Set<string>();
-    while (cursor && !guard.has(cursor)) {
-      if (cursor === draggingBlockId) return; // would create a cycle
-      guard.add(cursor);
-      cursor = groups.subtasks.parentOf(cursor);
-    }
+    // Never let an item parent itself, and never re-parent onto one of its own descendants —
+    // that would make a cycle that buildSubtaskTree only papers over by cutting an edge.
+    if (draggingBlockId === parentBlockId || wouldCycle(draggingBlockId, parentBlockId)) return;
     // No-op if it is already this parent.
     if (groups.subtasks.parentOf(draggingBlockId) === parentBlockId) return;
 

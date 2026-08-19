@@ -74,9 +74,18 @@ export type TUserTimeline = {
 export type TMyWorkItem = {
   id: string;
   name: string;
+  /** ARRIBADA: the start of the work, so the calendar can draw a duration bar. Null = the
+   *  item only has a due date and is shown as a single day. */
+  start_date?: string | null;
   target_date: string | null;
   priority: "urgent" | "high" | "medium" | "low" | "none";
   sequence_id: number;
+  /** ARRIBADA: the state, for the calendar's status colour. Optional so an older API that
+   *  does not send them still typechecks. */
+  state_id?: string | null;
+  state_group?: "backlog" | "unstarted" | "started" | "completed" | "cancelled" | null;
+  state_color?: string | null;
+  state_name?: string | null;
   project_id: string;
   project_identifier: string;
   project_name: string;

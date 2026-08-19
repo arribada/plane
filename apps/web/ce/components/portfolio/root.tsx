@@ -4,8 +4,9 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
 import type { IBlockUpdateData, IBlockUpdateDependencyData } from "@plane/types";
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
@@ -17,6 +18,7 @@ import { TimeLineTypeContext } from "@/components/gantt-chart/contexts";
 import { IssuePeekOverview } from "@/components/issues/peek-overview";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { useUser } from "@/hooks/store/user";
+import { usePlatformOS } from "@/hooks/use-platform-os";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { GanttColorScaleProvider } from "@/plane-web/components/gantt-chart/color-scale";
 import { GanttLegend, type TLegendMark } from "@/plane-web/components/gantt-chart/legend";
@@ -43,6 +45,10 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   const portfolio = usePortfolio();
   const { data: currentUser } = useUser();
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.PROJECT);
+  // ARRIBADA: the controls (toolbar + legend) eat the screen — half of it on a phone. A slim
+  // always-visible bar shows/hides them; collapsed by default on a phone, open on desktop.
+  const { isMobile } = usePlatformOS();
+  const [controlsOpen, setControlsOpen] = useState(() => !isMobile);
 
   useEffect(() => {
     initGantt();
@@ -296,15 +302,31 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   return (
     <GanttColorScaleProvider value={colorContext}>
       <div className="flex h-full w-full flex-col">
-        <PortfolioToolbar />
+        {/* ARRIBADA: the show/hide bar for the controls below. Small, always visible, so the
+            timeline can have the whole screen on a phone. */}
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-subtle px-4 py-1">
+          <span className="text-11 font-medium text-tertiary">Portfolio controls</span>
+          <button
+            type="button"
+            onClick={() => setControlsOpen((o) => !o)}
+            aria-expanded={controlsOpen}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-11 font-medium text-secondary hover:bg-layer-2"
+          >
+            {controlsOpen ? "Hide" : "Show"}
+            {controlsOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </button>
+        </div>
+        {controlsOpen && <PortfolioToolbar />}
         {/* Mandatory the moment the colour means something. Without it the hues
             are a puzzle rather than an encoding, and there is nowhere on a bar to
             write "this teal one is Ruby". */}
-        <GanttLegend
-          scale={isSeriesDimension(portfolio.colorBy as TPortfolioColorBy) ? colorContext.scale : null}
-          dimensionLabel={colorContext.dimensionLabel}
-          marks={legendMarks}
-        />
+        {controlsOpen && (
+          <GanttLegend
+            scale={isSeriesDimension(portfolio.colorBy as TPortfolioColorBy) ? colorContext.scale : null}
+            dimensionLabel={colorContext.dimensionLabel}
+            marks={legendMarks}
+          />
+        )}
         {/* An empty portfolio and a portfolio that could not be read draw the
             same blank board. Only one of them is a statement about the work, so
             the other has to say so before anybody reads the emptiness as news. */}

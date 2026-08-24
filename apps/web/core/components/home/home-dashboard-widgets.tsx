@@ -28,6 +28,8 @@ import {
   DriftWidget,
   MyApprovalsWidget,
 } from "@/plane-web/components/home/arribada-widgets";
+// ARRIBADA: the customisable two-column layout for the Home widgets.
+import { HomeWidgetsLayout, type THomeWidgetItem } from "@/plane-web/components/home/home-widgets-layout";
 // local imports
 import { StickiesWidget } from "../stickies/widget";
 import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widgets";
@@ -116,10 +118,22 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
   if (!workspaceSlug) return null;
   if (loading || loader !== "loaded") return <HomeLoader />;
 
+  // ARRIBADA: my-tasks + every enabled widget, as draggable items for the two-column layout.
+  // my-tasks leads because it is the one thing everybody wants first; it is now part of the
+  // arrangement rather than pinned above it.
+  const layoutItems: THomeWidgetItem[] = [
+    { key: "my_tasks", node: <MyTasksWidget /> },
+    ...orderedWidgets
+      .filter((key) => HOME_WIDGETS_LIST[key]?.component && widgetsMap[key]?.is_enabled)
+      .map((key) => {
+        const WidgetComponent = HOME_WIDGETS_LIST[key].component!;
+        return { key, node: <WidgetComponent workspaceSlug={workspaceSlug.toString()} /> };
+      }),
+  ];
+
   return (
     <div className="relative flex h-full w-full flex-col gap-7">
       <HomePageHeader />
-      <MyTasksWidget />
       <ManageWidgetsModal
         workspaceSlug={workspaceSlug.toString()}
         isModalOpen={showWidgetSettings}
@@ -127,21 +141,10 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
       />
       {!isWikiApp && <NoProjectsEmptyState />}
 
-      {isAnyWidgetEnabled ? (
-        <div className="flex flex-col">
-          {orderedWidgets.map((key) => {
-            const WidgetComponent = HOME_WIDGETS_LIST[key]?.component;
-            const isEnabled = widgetsMap[key]?.is_enabled;
-            if (!WidgetComponent || !isEnabled) return null;
-            return (
-              <div key={key} className="py-4">
-                <WidgetComponent workspaceSlug={workspaceSlug.toString()} />
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="grid h-full w-full place-items-center">
+      <HomeWidgetsLayout items={layoutItems} />
+
+      {!isAnyWidgetEnabled && (
+        <div className="grid w-full place-items-center">
           <SimpleEmptyState
             title={t("home.empty.widgets.title")}
             description={t("home.empty.widgets.description")}

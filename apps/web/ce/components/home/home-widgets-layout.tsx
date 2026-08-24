@@ -21,7 +21,7 @@ import type { ReactNode } from "react";
 import { observer } from "mobx-react";
 import { GripVertical, RotateCcw } from "lucide-react";
 import { cn } from "@plane/utils";
-import { homeLayout, type THomeBox } from "./home-layout";
+import { homeLayout, type THomeBox, type THomeBoxes } from "./home-layout";
 
 export type THomeWidgetItem = { key: string; node: ReactNode };
 
@@ -52,8 +52,44 @@ const clampBox = (box: THomeBox): THomeBox => ({
   height: Math.max(MIN_HEIGHT, box.height),
 });
 
+// --- semi-free mode: snap to a grid and never overlap ------------------------------------------
+/** The snap unit in semi mode. Coarse enough that widgets line up into tidy rows and columns,
+ *  fine enough that they can still be different sizes. */
+const GRID = 20;
+const snap = (v: number) => Math.round(v / GRID) * GRID;
+const snapBox = (box: THomeBox): THomeBox => ({
+  x: Math.max(0, snap(box.x)),
+  y: Math.max(0, snap(box.y)),
+  width: Math.max(MIN_WIDTH, snap(box.width)),
+  height: Math.max(MIN_HEIGHT, snap(box.height)),
+});
+const boxesOverlap = (a: THomeBox, b: THomeBox): boolean =>
+  a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+/** Push any widget that overlaps the just-moved one down below it, and cascade — so a drop never
+ *  lands on top of another, but widgets it does not touch stay exactly where they were. */
+const resolveOverlaps = (boxes: THomeBoxes, movedKey: string): THomeBoxes => {
+  const result: THomeBoxes = { ...boxes };
+  const queue = [movedKey];
+  let guard = 0;
+  while (queue.length > 0 && guard < 1000) {
+    guard += 1;
+    const key = queue.shift() as string;
+    const anchor = result[key];
+    if (!anchor) continue;
+    for (const other of Object.keys(result)) {
+      if (other === key) continue;
+      if (boxesOverlap(result[other], anchor)) {
+        result[other] = { ...result[other], y: anchor.y + anchor.height + GAP };
+        queue.push(other);
+      }
+    }
+  }
+  return result;
+};
+
 export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: Props) {
-  const enabled = homeLayout.enabled;
+  const mode = homeLayout.mode;
+  const enabled = mode !== "straight";
   const boxes = homeLayout.boxes;
   // refs / state
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -154,13 +190,29 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
     ) {
       return;
     }
-    homeLayout.setBox(gesture.key, clampBox(box));
+    if (mode === "semi") {
+      // Snap the moved widget to the grid, then push anything it now overlaps out of the way and
+      // persist the whole arrangement — so semi mode never leaves two widgets on top of each other.
+      const current: THomeBoxes = {};
+      items.forEach((item) => {
+        const b = layoutBoxes.get(item.key);
+        if (b) current[item.key] = b;
+      });
+      current[gesture.key] = snapBox(box);
+      homeLayout.setBoxes(resolveOverlaps(current, gesture.key));
+    } else {
+      homeLayout.setBox(gesture.key, clampBox(box));
+    }
   };
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-end gap-3">
-        <span className="text-11 text-tertiary">Drag the grip to move, pull the corner to resize</span>
+        <span className="text-11 text-tertiary">
+          {mode === "semi"
+            ? "Drag to move, pull the corner to resize — snaps to a grid and never overlaps"
+            : "Drag to move, pull the corner to resize — place anything anywhere"}
+        </span>
         <button
           type="button"
           onClick={() => homeLayout.reset()}

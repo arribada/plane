@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { AlignJustify, LayoutGrid, Shapes } from "lucide-react";
+import { AlignJustify, LayoutGrid, Move, Shapes } from "lucide-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { Button } from "@plane/propel/button";
@@ -42,17 +42,29 @@ export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHead
           <Button
             variant="secondary"
             size="lg"
-            onClick={() => homeLayout.setEnabled(!homeLayout.enabled)}
-            className="my-auto mb-0"
-            prependIcon={homeLayout.enabled ? <AlignJustify /> : <LayoutGrid />}
-            title={
-              homeLayout.enabled
-                ? "Back to the straight single-column dashboard (your placements are kept)"
-                : "Arrange the widgets freely — drag and resize each one"
+            onClick={() =>
+              homeLayout.setMode(
+                homeLayout.mode === "straight" ? "semi" : homeLayout.mode === "semi" ? "free" : "straight"
+              )
             }
+            className="my-auto mb-0"
+            prependIcon={
+              homeLayout.mode === "straight" ? (
+                <AlignJustify />
+              ) : homeLayout.mode === "semi" ? (
+                <LayoutGrid />
+              ) : (
+                <Move />
+              )
+            }
+            title="Switch dashboard mode: straight column → semi-free (snaps to a grid, never overlaps) → free (place anything anywhere). Your placements are kept."
           >
             <div className="hidden sm:hidden md:block">
-              {homeLayout.enabled ? "Straight dashboard" : "Free dashboard"}
+              {homeLayout.mode === "straight"
+                ? "Straight dashboard"
+                : homeLayout.mode === "semi"
+                  ? "Semi-free dashboard"
+                  : "Free dashboard"}
             </div>
           </Button>
           <Button

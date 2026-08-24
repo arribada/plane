@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { Shapes } from "lucide-react";
+import { AlignJustify, LayoutGrid, Shapes } from "lucide-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { Button } from "@plane/propel/button";
@@ -15,6 +15,8 @@ import { Breadcrumbs, Header } from "@plane/ui";
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 // hooks
 import { useHome } from "@/hooks/store/use-home";
+// ARRIBADA: the straight ⇄ free dashboard switch, sitting next to Manage widgets.
+import { homeLayout } from "@/plane-web/components/home/home-layout";
 
 export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHeader() {
   // plane hooks
@@ -37,6 +39,22 @@ export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHead
           </div>
         </Header.LeftItem>
         <Header.RightItem>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => homeLayout.setEnabled(!homeLayout.enabled)}
+            className="my-auto mb-0"
+            prependIcon={homeLayout.enabled ? <AlignJustify /> : <LayoutGrid />}
+            title={
+              homeLayout.enabled
+                ? "Back to the straight single-column dashboard (your placements are kept)"
+                : "Arrange the widgets freely — drag and resize each one"
+            }
+          >
+            <div className="hidden sm:hidden md:block">
+              {homeLayout.enabled ? "Straight dashboard" : "Free dashboard"}
+            </div>
+          </Button>
           <Button
             variant="secondary"
             size="lg"

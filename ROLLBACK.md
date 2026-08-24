@@ -44,7 +44,9 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.105`| `dd96c7a401a2` | `53aa7b643e`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), stickies floating overlay (v1); CI artifact loaded 2026-08-19; **frontend roll-back target is `.104`** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.107`| `d1f82fd628fe` | `748bfa345f`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), two-column drag-drop Home layout; CI artifact loaded 2026-08-19; **frontend roll-back target is `.106`** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.106`| `0c558e199139` | `24434dd7ef`  | previous frontend serve (**roll-back target for `.107`**); stickies hide-all + translucency; my-tasks "+"; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.105`| `dd96c7a401a2` | `53aa7b643e`  | older frontend serve; stickies floating overlay (v1); OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.104`| `1e5230bfc1ad` | `2dda93197b`  | previous frontend serve (**roll-back target for `.105`**); Home my-tasks refresh (peek-close + button); OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.103`| `79f576735eb5` | `dab8d3f293`  | previous frontend serve (**the roll-back target for `.104`**); calendar duration bars + collapsible portfolio controls; OCI revision label present |
 | `arribada/plane-backend:31608607b1`                  | `41c2e1c34113` | `31608607b1`         | **currently served backend** (= `makeplane/plane-backend:v1.3.1`), MyWorkEndpoint start_date+state; built on the droplet 2026-08-19; OCI revision label present. **The `.90` image below is its rollback target.** |

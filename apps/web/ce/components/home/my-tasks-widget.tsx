@@ -7,7 +7,7 @@
  * grouped Overdue / This week / Later. Serves both project managers (a glance at
  * their own load) and engineers (their day) — the highest-ROI home surface.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import {
@@ -19,6 +19,7 @@ import {
   ChevronRight,
   LayoutGrid,
   List,
+  RefreshCw,
 } from "lucide-react";
 import { cn, renderFormattedDateWithoutYear } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
@@ -143,11 +144,14 @@ type Bucket = { key: string; label: string; icon: typeof AlertTriangle; tone: st
 export const MyTasksWidget = observer(function MyTasksWidget() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
-  const { setPeekIssue } = useIssueDetail();
+  const { setPeekIssue, peekIssue } = useIssueDetail();
   const { data: currentUser } = useUser();
   const service = useMemo(() => new ArribadaService(), []);
   const [items, setItems] = useState<TMyWorkItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // ARRIBADA: a manual + automatic refresh, because editing a task from the peek (e.g. its
+  // status) does not flow back into this list on its own.
+  const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<"list" | "calendar">("list");
   // Which buckets the reader has asked to see in full. "+3 more" used to be a
   // plain <li> with no handler, sitting under six rows that are all buttons —
@@ -166,26 +170,36 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
     }
   };
 
+  const load = useCallback(
+    async (mode: "initial" | "refresh" = "initial") => {
+      if (!workspaceSlug) return;
+      if (mode === "refresh") setRefreshing(true);
+      else setLoading(true);
+      try {
+        const r = await service.getMyWork(workspaceSlug.toString());
+        setItems(r || []);
+      } catch {
+        // A failed refresh keeps the rows already on screen; only the first load falls to empty.
+        if (mode === "initial") setItems([]);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [workspaceSlug, service]
+  );
+
   useEffect(() => {
-    let cancelled = false;
-    if (!workspaceSlug) return;
-    setLoading(true);
-    service
-      .getMyWork(workspaceSlug.toString())
-      .then((r) => {
-        if (!cancelled) setItems(r || []);
-        return undefined;
-      })
-      .catch(() => {
-        if (!cancelled) setItems([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceSlug, service]);
+    void load("initial");
+  }, [load]);
+
+  // ARRIBADA: when the peek overview closes, the reader may have just changed a status or a
+  // date on it — pull the list back into step. The ref guards against firing when it OPENS.
+  const prevPeek = useRef(peekIssue);
+  useEffect(() => {
+    if (prevPeek.current && !peekIssue) void load("refresh");
+    prevPeek.current = peekIssue;
+  }, [peekIssue, load]);
 
   const buckets = useMemo<Bucket[]>(() => {
     // Compare date-only strings (YYYY-MM-DD sorts chronologically) against local
@@ -246,6 +260,18 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
           <span className="bg-neutral-500/10 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* ARRIBADA: icon-only refresh — the list also refreshes itself when the peek closes,
+              but this is the manual pull for anything edited elsewhere. */}
+          <button
+            type="button"
+            onClick={() => void load("refresh")}
+            title="Refresh"
+            aria-label="Refresh my tasks"
+            disabled={refreshing}
+            className="rounded p-1 text-secondary hover:text-primary disabled:opacity-50"
+          >
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+          </button>
           {total > 0 && (
             <div className="flex items-center rounded-md border border-subtle p-0.5">
               <button

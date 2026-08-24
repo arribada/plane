@@ -15,7 +15,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
-import { Github, Loader2, ExternalLink, X } from "lucide-react";
+import { Github, Loader2, ExternalLink, X, Search } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
@@ -40,6 +40,20 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ARRIBADA: a search box, and a default that hides issues from repos NOT linked to this
+  // project — you almost always want this project's own repos, but the escape hatch is one click.
+  const [search, setSearch] = useState("");
+  const [showOthers, setShowOthers] = useState(false);
+  const [projectRepos, setProjectRepos] = useState<Set<string>>(new Set());
+
+  // "owner/name", lower-cased, from a github URL — the shape listGithubInbox reports repos in.
+  const normaliseRepo = (value: string) =>
+    value
+      .trim()
+      .replace(/^https?:\/\/github\.com\//i, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/+$/, "")
+      .toLowerCase();
 
   // Escape, a focus trap, focus restored on close and a page that stops
   // scrolling underneath — the four things this hand-rolled overlay lacked.
@@ -52,7 +66,19 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
     setItems([]); // clear the previous open's list so it can't flash on reopen
     setSelected(new Set());
     setError(null);
+    setSearch("");
+    setShowOthers(false);
+    setProjectRepos(new Set());
     setLoading(true);
+    // The project's own repos, so the list can default to them. Best effort: if this fails the
+    // list simply shows everything, which is the old behaviour rather than an empty modal.
+    service
+      .getWikiDoc(workspaceSlug, projectId)
+      .then((docs) => {
+        if (!ignore) setProjectRepos(new Set((docs?.github_repo_urls ?? []).map(normaliseRepo)));
+        return undefined;
+      })
+      .catch(() => {});
     service
       .listGithubInbox(workspaceSlug)
       .then((rows) => {
@@ -68,7 +94,7 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
     return () => {
       ignore = true;
     };
-  }, [isOpen, workspaceSlug, service]);
+  }, [isOpen, workspaceSlug, projectId, service]);
 
   if (!isOpen) return null;
 
@@ -101,6 +127,21 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
     }
   };
 
+  // Default view: only issues from repos this project owns. `projectRepos.size === 0` means the
+  // project has none linked, in which case hiding everything would be worse than showing all.
+  const inProject = (it: TGithubInboxItem) => projectRepos.size === 0 || projectRepos.has(it.repo.toLowerCase());
+  const query = search.trim().toLowerCase();
+  const hiddenOtherCount = items.filter((it) => !inProject(it)).length;
+  const visibleItems = items.filter((it) => {
+    if (!showOthers && !inProject(it)) return false;
+    if (!query) return true;
+    return (
+      it.title.toLowerCase().includes(query) ||
+      it.repo.toLowerCase().includes(query) ||
+      `${it.repo}#${it.number}`.toLowerCase().includes(query)
+    );
+  });
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button
@@ -123,6 +164,19 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
           </button>
         </div>
 
+        <div className="border-b border-subtle px-4 py-2">
+          <div className="flex items-center gap-2 rounded-md border border-subtle bg-layer-2 px-2 py-1.5">
+            <Search className="size-3.5 text-placeholder" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search issues…"
+              className="w-full bg-transparent text-13 text-primary outline-none placeholder:text-placeholder"
+            />
+          </div>
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-13 text-secondary">
@@ -130,8 +184,14 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
             </div>
           ) : items.length === 0 ? (
             <div className="py-10 text-center text-13 text-secondary">The GitHub inbox is empty — nothing to link.</div>
+          ) : visibleItems.length === 0 ? (
+            <div className="py-10 text-center text-13 text-secondary">
+              {query
+                ? "No issues match your search."
+                : "No open issues in this project's linked repos."}
+            </div>
           ) : (
-            items.map((it) => {
+            visibleItems.map((it) => {
               const checked = selected.has(it.id);
               return (
                 <label
@@ -176,6 +236,24 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
                 </label>
               );
             })
+          )}
+          {!loading && !showOthers && hiddenOtherCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowOthers(true)}
+              className="mt-1 mb-1 w-full rounded-md px-2.5 py-2 text-center text-12 text-accent-primary hover:bg-layer-2"
+            >
+              Show {hiddenOtherCount} issue{hiddenOtherCount === 1 ? "" : "s"} from other projects
+            </button>
+          )}
+          {!loading && showOthers && hiddenOtherCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowOthers(false)}
+              className="mt-1 mb-1 w-full rounded-md px-2.5 py-2 text-center text-12 text-secondary hover:bg-layer-2"
+            >
+              Show only this project's repos
+            </button>
           )}
         </div>
 

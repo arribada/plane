@@ -91,20 +91,22 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
   const step = DEFAULT_WIDTH + GAP;
   const perRow = Math.max(1, Math.floor((canvasWidth || 800) / step));
   const layoutBoxes = new Map<string, THomeBox>();
-  let unplaced = 0;
-  items.forEach((item) => {
+  items.forEach((item, index) => {
     const stored = boxes[item.key];
     if (stored) {
       layoutBoxes.set(item.key, clampBox(stored));
       return;
     }
+    // A not-yet-placed widget sits in a grid slot keyed on its STABLE index in the list — never
+    // on a running "unplaced" counter. With the counter, placing one widget shrank the unplaced
+    // set and every other unplaced widget shifted a slot, sliding out from under the one you just
+    // dropped. Keyed on the fixed index, moving one never disturbs the rest.
     layoutBoxes.set(item.key, {
-      x: (unplaced % perRow) * step,
-      y: Math.floor(unplaced / perRow) * (DEFAULT_HEIGHT + GAP),
+      x: (index % perRow) * step,
+      y: Math.floor(index / perRow) * (DEFAULT_HEIGHT + GAP),
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
     });
-    unplaced += 1;
   });
 
   const boxOf = (key: string): THomeBox =>

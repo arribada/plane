@@ -22,10 +22,12 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { cn, renderFormattedDateWithoutYear } from "@plane/utils";
+import { cn, generateWorkItemLink, renderFormattedDateWithoutYear } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
 // ARRIBADA: open the work item in the Home peek overview instead of navigating away.
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+// ARRIBADA: the project's full name, for the hover tooltip on its reference.
+import { useProject } from "@/hooks/store/use-project";
 import { useUser } from "@/hooks/store/user";
 // ARRIBADA: the full create modal, opened by the "+" so a task can be added on any project
 // straight from Home.
@@ -148,6 +150,7 @@ type Bucket = { key: string; label: string; icon: typeof AlertTriangle; tone: st
 export const MyTasksWidget = observer(function MyTasksWidget() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
+  const { getProjectById } = useProject();
   const { setPeekIssue, peekIssue } = useIssueDetail();
   const { data: currentUser } = useUser();
   const service = useMemo(() => new ArribadaService(), []);
@@ -373,9 +376,27 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                       </button>
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <DueDateSetter item={it} onSet={(v) => setDue(it, v)} />
-                        <span className="text-[11px] tracking-wide text-secondary/70 uppercase">
+                        {/* ARRIBADA: the reference now tells you WHICH project on hover (full name)
+                            and takes you to the work item on click, rather than being dead text. */}
+                        <button
+                          type="button"
+                          title={getProjectById(it.project_id)?.name ?? "Open work item"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(
+                              generateWorkItemLink({
+                                workspaceSlug: workspaceSlug?.toString(),
+                                projectId: it.project_id,
+                                issueId: it.id,
+                                projectIdentifier: it.project_identifier,
+                                sequenceId: it.sequence_id,
+                              })
+                            );
+                          }}
+                          className="text-[11px] tracking-wide text-secondary/70 uppercase hover:text-accent-primary hover:underline"
+                        >
                           {it.project_identifier}-{it.sequence_id}
-                        </span>
+                        </button>
                       </span>
                     </li>
                   ))}

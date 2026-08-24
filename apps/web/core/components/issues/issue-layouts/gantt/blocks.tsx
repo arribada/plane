@@ -174,6 +174,12 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
                 title="Past its due date and not finished"
               />
             )}
+            {/* ARRIBADA: a one-day (milestone) item is drawn as a NAMED diamond by the overlay,
+                which already carries the label. The bar behind it is transparent and one day wide,
+                so printing the name here too stacks a second copy in a sliver of space — the
+                cramped, overlapping text that reads as a rendering fault. Let the diamond own the
+                name; the bar draws nothing. */}
+            {!look.milestone && (
             <div
               className={
                 showCancelled
@@ -201,6 +207,7 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
               )}
               {issueDetails?.name}
             </div>
+            )}
             {isEpic && (
               <IssueStats
                 issueId={issueId}

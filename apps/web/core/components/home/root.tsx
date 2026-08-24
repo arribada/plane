@@ -9,6 +9,7 @@ import { useParams } from "next/navigation";
 import useSWR from "swr";
 // plane imports
 import { ContentWrapper } from "@plane/ui";
+import { cn } from "@plane/utils";
 // hooks
 import { useHome } from "@/hooks/store/use-home";
 import { useUserProfile, useUser } from "@/hooks/store/user";
@@ -16,6 +17,7 @@ import { useUserProfile, useUser } from "@/hooks/store/user";
 import { HomePeekOverviewsRoot } from "@/plane-web/components/home";
 import { TourRoot } from "@/plane-web/components/onboarding/tour/root";
 // local imports
+import { homeLayout } from "@/plane-web/components/home/home-layout";
 import { HomeStickiesFloatingOverlay } from "@/plane-web/components/home/stickies-floating-overlay";
 import { DashboardWidgets } from "./home-dashboard-widgets";
 import { UserGreetingsView } from "./user-greetings";
@@ -59,7 +61,10 @@ export const WorkspaceHomeView = observer(function WorkspaceHomeView() {
           {/* ARRIBADA: the floating stickies layer — absolute inside this scroll container so
               notes scroll with the page; renders only when the user turns floating on. */}
           <HomeStickiesFloatingOverlay />
-          <div className="mx-auto w-full max-w-[800px]">
+          {/* ARRIBADA: the straight dashboard stays a centred 800px column; the free canvas drops
+              the cap so it can fill the whole width — otherwise x=0 sits inset from the left edge
+              (centring margin) and notes/widgets could only ever be pushed rightward, never left. */}
+          <div className={cn("w-full", homeLayout.enabled ? "" : "mx-auto max-w-[800px]")}>
             {currentUser && <UserGreetingsView user={currentUser} />}
             <DashboardWidgets />
           </div>

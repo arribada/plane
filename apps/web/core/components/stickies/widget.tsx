@@ -84,11 +84,15 @@ export const StickiesWidget = observer(function StickiesWidget() {
           </button>
         </div>
       </div>
-      {/* ARRIBADA: hidden hides the preview here; the floating overlay honours the same flag. */}
-      {!stickiesHidden.on && (
+      {/* ARRIBADA: hide the preview when hidden, and also when floating — the notes are then
+          on the page overlay and showing them here too just duplicates them. */}
+      {!stickiesHidden.on && !stickiesFloating.on && (
         <div className="-mx-2">
           <StickiesTruncated />
         </div>
+      )}
+      {stickiesFloating.on && !stickiesHidden.on && (
+        <p className="px-1 py-2 text-11 text-tertiary">Notes are floating on the page. Toggle off to dock them here.</p>
       )}
     </div>
   );

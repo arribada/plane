@@ -108,7 +108,18 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
         <BlockedByBanner issueId={issueId} />
 
         <div className="mb-2.5 flex items-center justify-between gap-4">
-          <IssueTypeSwitcher issueId={issueId} disabled={isArchived || !isEditable} />
+          <div className="flex min-w-0 items-center gap-2">
+            <IssueTypeSwitcher issueId={issueId} disabled={isArchived || !isEditable} />
+            {/* ARRIBADA: the ID alone (e.g. STUG-19) does not say WHICH project — show the name. */}
+            {projectDetails?.name && (
+              <>
+                <span className="text-tertiary">·</span>
+                <span className="truncate text-13 text-secondary" title={projectDetails.name}>
+                  {projectDetails.name}
+                </span>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <NameDescriptionUpdateStatus isSubmitting={isSubmitting} />
             {duplicateIssues?.length > 0 && (

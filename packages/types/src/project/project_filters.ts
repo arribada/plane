@@ -26,6 +26,8 @@ export type TProjectFilters = {
   lead?: string[] | null;
   members?: string[] | null;
   created_at?: string[] | null;
+  // ARRIBADA: filter the all-projects view by lifecycle status (active/on_hold/completed/cancelled).
+  lifecycle_status?: string[] | null;
 };
 
 export type TProjectStoredFilters = {

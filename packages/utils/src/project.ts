@@ -74,6 +74,8 @@ export const shouldFilterProject = (
       const memberIds = project.members;
       fallsInFilters = fallsInFilters && filters.members.some((memberId) => memberIds?.includes(memberId));
     }
+    if (filterKey === "lifecycle_status" && filters.lifecycle_status && filters.lifecycle_status.length > 0)
+      fallsInFilters = fallsInFilters && filters.lifecycle_status.includes(project.lifecycle_status ?? "active");
     if (filterKey === "created_at" && filters.created_at && filters.created_at.length > 0) {
       const createdDate = getDate(project.created_at);
       filters.created_at.forEach((dateFilter) => {

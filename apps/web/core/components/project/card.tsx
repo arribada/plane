@@ -28,6 +28,8 @@ import { useProject } from "@/hooks/store/use-project";
 import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
+// plane web
+import { PROJECT_LIFECYCLE_STATUSES } from "@/plane-web/types/arribada";
 // local imports
 import { CoverImage } from "@/components/common/cover-image";
 import { DeleteProjectModal } from "./delete-project-modal";
@@ -57,6 +59,12 @@ export const ProjectCard = observer(function ProjectCard(props: Props) {
   const { isMobile } = usePlatformOS();
   // derived values
   const projectMembersIds = project.members;
+  // ARRIBADA: the lifecycle-status badge, shown only when the project is NOT active — every
+  // project is active by default, so a badge on all of them would be noise.
+  const statusMeta =
+    project.lifecycle_status && project.lifecycle_status !== "active"
+      ? PROJECT_LIFECYCLE_STATUSES.find((s) => s.key === project.lifecycle_status)
+      : undefined;
   const shouldRenderFavorite = allowPermissions(
     [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
     EUserPermissionsLevel.WORKSPACE
@@ -230,6 +238,12 @@ export const ProjectCard = observer(function ProjectCard(props: Props) {
                 <span className="flex items-center gap-1.5">
                   <p className="text-11 font-medium text-on-color">{project.identifier} </p>
                   {project.network === 0 && <LockIcon className="h-2.5 w-2.5 text-on-color" />}
+                  {statusMeta && (
+                    <span className="flex items-center gap-1 rounded-full bg-black/30 px-1.5 py-0.5 text-[10px] font-medium text-on-color">
+                      <span className="size-1.5 rounded-full" style={{ backgroundColor: statusMeta.color }} />
+                      {statusMeta.label}
+                    </span>
+                  )}
                 </span>
               </div>
             </div>

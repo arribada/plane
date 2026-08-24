@@ -11,6 +11,7 @@ import { FormProvider, useForm } from "react-hook-form";
 import { useTranslation } from "@plane/i18n";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { EFileAssetType } from "@plane/types";
+import { cn } from "@plane/utils";
 // components
 import ProjectCommonAttributes from "@/components/project/create/common-attributes";
 import ProjectCreateHeader from "@/components/project/create/header";
@@ -21,8 +22,14 @@ import { useProject } from "@/hooks/store/use-project";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web types
 import type { TProject } from "@/plane-web/types/projects";
+// ARRIBADA: optional dates + lifecycle status set at creation, written to the schedule after
+// the project exists (they are schedule fields, not project fields).
+import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { PROJECT_LIFECYCLE_STATUSES, type TProjectLifecycleStatus } from "@/plane-web/types/arribada";
 import { ProjectAttributes } from "./attributes";
 import { getProjectFormValues } from "./utils";
+
+const arribadaService = new ArribadaService();
 
 export type TCreateProjectFormProps = {
   setToFavorite?: boolean;
@@ -41,6 +48,10 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
   const { addProjectToFavorites, createProject, updateProject } = useProject();
   // states
   const [shouldAutoSyncIdentifier, setShouldAutoSyncIdentifier] = useState(true);
+  // ARRIBADA: optional schedule fields, all off by default so a plain create is unchanged.
+  const [lifecycleStatus, setLifecycleStatus] = useState<TProjectLifecycleStatus>("active");
+  const [startDate, setStartDate] = useState("");
+  const [targetDate, setTargetDate] = useState("");
   // form info
   const methods = useForm<TProject>({
     defaultValues: { ...getProjectFormValues(), ...data },
@@ -106,6 +117,18 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
           title: t("success"),
           message: t("project_created_successfully"),
         });
+
+        // ARRIBADA: persist the optional dates + status onto the new project's schedule. Best
+        // effort — the project is already made, so a schedule that would not save must not fail it.
+        if (startDate || targetDate || lifecycleStatus !== "active") {
+          await arribadaService
+            .updateSchedule(workspaceSlug.toString(), res.id, {
+              lifecycle_status: lifecycleStatus,
+              ...(startDate ? { start_date: startDate } : {}),
+              ...(targetDate ? { target_date: targetDate } : {}),
+            })
+            .catch(() => {});
+        }
 
         if (setToFavorite) {
           handleAddToFavorites(res.id);
@@ -176,6 +199,52 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
             setShouldAutoSyncIdentifier={setShouldAutoSyncIdentifier}
           />
           <ProjectAttributes isMobile={isMobile} />
+
+          {/* ARRIBADA: optional lifecycle status + planned dates. All optional — leave them and a
+              plain create is unchanged; they are written to the project's schedule after it exists. */}
+          <div className="space-y-3 border-t border-subtle pt-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-16 text-13 font-medium text-secondary">Status</span>
+              {PROJECT_LIFECYCLE_STATUSES.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setLifecycleStatus(s.key)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-12",
+                    lifecycleStatus === s.key
+                      ? "border-accent-primary text-primary"
+                      : "border-subtle text-tertiary hover:text-primary"
+                  )}
+                >
+                  <span className="size-2 rounded-full" style={{ backgroundColor: s.color }} />
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-13 text-secondary">
+                <span className="w-16 font-medium">Start</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  max={targetDate || undefined}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-13 text-secondary">
+                <span className="font-medium">Target</span>
+                <input
+                  type="date"
+                  value={targetDate}
+                  min={startDate || undefined}
+                  onChange={(e) => setTargetDate(e.target.value)}
+                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                />
+              </label>
+            </div>
+          </div>
         </div>
         <ProjectCreateButtons handleClose={handleClose} />
       </form>

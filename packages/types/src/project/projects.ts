@@ -59,6 +59,8 @@ export interface IProject extends IPartialProject {
   members?: string[];
   timezone?: string;
   next_work_item_sequence?: number;
+  // ARRIBADA: the project lifecycle status, surfaced read-only by ProjectListSerializer.
+  lifecycle_status?: "active" | "on_hold" | "completed" | "cancelled";
 }
 
 export type TProjectAnalyticsCountParams = {

@@ -748,6 +748,7 @@ export class ArribadaService extends APIService {
         TProjectSchedule,
         | "start_date"
         | "target_date"
+        | "lifecycle_status"
         | "budget_amount"
         | "budget_currency"
         | "schedule_from_deliveries"

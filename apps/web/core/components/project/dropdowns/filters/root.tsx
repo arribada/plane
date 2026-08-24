@@ -17,6 +17,7 @@ import { usePlatformOS } from "@/hooks/use-platform-os";
 import { FilterAccess } from "./access";
 import { FilterCreatedDate } from "./created-at";
 import { FilterLead } from "./lead";
+import { FilterLifecycleStatus } from "./lifecycle-status";
 import { FilterMembers } from "./members";
 
 type Props = {
@@ -64,6 +65,15 @@ export const ProjectFiltersSelection = observer(function ProjectFiltersSelection
               })
             }
             title="My projects"
+          />
+        </div>
+
+        {/* lifecycle status */}
+        <div className="py-2">
+          <FilterLifecycleStatus
+            appliedFilters={filters.lifecycle_status ?? null}
+            handleUpdate={(val) => handleFiltersUpdate("lifecycle_status", val)}
+            searchQuery={filtersSearchQuery}
           />
         </div>
 

@@ -140,7 +140,22 @@ export type TProjectStatusUpdate = {
   author: string | null;
 };
 
+/** Where a project is in its life — not its health (that is a status update). */
+export type TProjectLifecycleStatus = "active" | "on_hold" | "completed" | "cancelled";
+
+/** The lifecycle statuses, with the label and colour every surface draws them in — the create
+ *  form, the projects-list badge and filter, and the project settings all read from this one list. */
+export const PROJECT_LIFECYCLE_STATUSES: { key: TProjectLifecycleStatus; label: string; color: string }[] = [
+  { key: "active", label: "Active", color: "#22c55e" },
+  { key: "on_hold", label: "On hold", color: "#f59e0b" },
+  { key: "completed", label: "Completed", color: "#3b82f6" },
+  { key: "cancelled", label: "Cancelled", color: "#9ca3af" },
+];
+
 export type TProjectSchedule = {
+  /** The project's lifecycle status (Active / On hold / Completed / Cancelled). Writable
+   *  through the schedule endpoint; the projects list also surfaces it read-only. */
+  lifecycle_status?: TProjectLifecycleStatus;
   /** Whether a reflow treats an expected delivery as a floor for the item waiting
    *  on it. Off unless the project asked: most projects have no hardware waiting
    *  on anything, and moving dates nobody opted into is how a planner loses trust. */

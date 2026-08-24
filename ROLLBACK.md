@@ -44,7 +44,8 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.107`| `d1f82fd628fe` | `748bfa345f`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), two-column drag-drop Home layout; CI artifact loaded 2026-08-19; **frontend roll-back target is `.106`** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.108`| `ef383081f343` | `aa1df053d8`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), configurable per-project widget; CI artifact loaded 2026-08-19; **frontend roll-back target is `.107`** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.107`| `d1f82fd628fe` | `748bfa345f`  | previous frontend serve (**roll-back target for `.108`**); two-column drag-drop Home layout; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.106`| `0c558e199139` | `24434dd7ef`  | previous frontend serve (**roll-back target for `.107`**); stickies hide-all + translucency; my-tasks "+"; OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.105`| `dd96c7a401a2` | `53aa7b643e`  | older frontend serve; stickies floating overlay (v1); OCI revision label present |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.104`| `1e5230bfc1ad` | `2dda93197b`  | previous frontend serve (**roll-back target for `.105`**); Home my-tasks refresh (peek-close + button); OCI revision label present |

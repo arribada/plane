@@ -15,12 +15,13 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **frontend `748bfa345f`** (image tag
-`v1.3.1-arribada.107`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
+Production `plane.arribada.org` serves **frontend `aa1df053d8`** (image tag
+`v1.3.1-arribada.108`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
 served digest `41c2e1c34113`), deployed 2026-08-19. Frontend since `.105`:
-`.106` `24434dd7ef` (stickies hide-all + translucency; my-tasks "+" full create modal),
-`.107` `748bfa345f` (customisable **two-column drag-and-drop Home layout**, saved per browser +
-Reset). Both frontend-only, backend unchanged.
+`.106` (stickies hide-all + translucency; my-tasks "+"), `.107` (two-column drag-drop Home
+layout), `.108` `aa1df053d8` (a **configurable per-project widget** — tasks / budget / spend,
+frontend-only, reusing getProjectAnalyticsCount + Finance getBudget). All frontend-only, backend
+unchanged.
 
 **The backend moved for the first time since `.90`.** `31608607b1` adds `start_date` + the
 state to `MyWorkEndpoint` (for the Home calendar's duration bars); no migration, no schema
@@ -51,7 +52,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `748bfa345f` | **serving now** | Frontend `.107`: customisable **two-column drag-and-drop Home layout** ("Customise layout" → drag widgets between columns, saved per browser, "Reset layout"). my-tasks is now part of the arrangement. Native HTML5 DnD. v1, browser-unverified. |
+| `aa1df053d8` | **serving now** | Frontend `.108`: a **configurable per-project widget** (pick a project → Tasks counts / Budget / Spend-over-time), reusing existing endpoints (project-stats + Finance getBudget), permission-safe. Frontend-only widget in the Home layout; project+view persist per browser. First slice of the #3 "managed widgets" enhancement. |
+| `748bfa345f` | yes             | Frontend `.107`: customisable two-column drag-and-drop Home layout (Customise/Reset, saved). |
 | `24434dd7ef` | yes             | Frontend `.106`: stickies hide-all (eye) + translucent floating notes; my-tasks "+" opens the full create modal (any project from Home). |
 | `53aa7b643e` | yes             | Frontend `.105`: Home stickies can float over the whole page (v1) via a Move toggle (`StickiesFree` `overlay` mode). Fold = v2. |
 | `2dda93197b` | yes             | Frontend `.104`: Home my-tasks list refreshes when the peek closes + an icon-only refresh button. |
@@ -307,9 +309,9 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.107` (= `748bfa345f`) is deployed; backend is `31608607b1` (image
+- Frontend `.108` (= `aa1df053d8`) is deployed; backend is `31608607b1` (image
   `arribada/plane-backend:31608607b1`), the `.90` image `6a0c7e1faffd` being its rollback
-  target. Next frontend tag should be `.108` or higher — but prefer the commit SHA:
+  target. Next frontend tag should be `.109` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

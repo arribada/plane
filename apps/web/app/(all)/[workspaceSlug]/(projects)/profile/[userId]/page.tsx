@@ -16,7 +16,10 @@ import { ProfileActivity } from "@/components/profile/overview/activity";
 import { ProfilePriorityDistribution } from "@/components/profile/overview/priority-distribution";
 import { ProfileStateDistribution } from "@/components/profile/overview/state-distribution";
 import { ProfileStats } from "@/components/profile/overview/stats";
+// ARRIBADA: "Your work" broken down by project (where you work most) and by discipline.
+import { ProfileWorkBreakdown } from "@/components/profile/overview/work-breakdown";
 import { ProfileWorkload } from "@/components/profile/overview/workload";
+import { capitalizeFirstLetter } from "@plane/utils";
 // constants
 import { USER_PROFILE_DATA } from "@/constants/fetch-keys";
 // services
@@ -39,6 +42,18 @@ export default function ProfileOverviewPage({ params }: Route.ComponentProps) {
     else return { state_group: key as TStateGroups, state_count: 0 };
   });
 
+  // ARRIBADA: rank the person's assigned work by project and by discipline for "Your work".
+  const projectItems = (userProfile?.project_distribution ?? []).map((p) => ({
+    key: p.project_id,
+    label: p.project__name || p.project__identifier,
+    count: p.count,
+  }));
+  const disciplineItems = (userProfile?.discipline_distribution ?? []).map((d) => ({
+    key: d.role,
+    label: capitalizeFirstLetter(d.role),
+    count: d.count,
+  }));
+
   return (
     <>
       <PageHead title={t("profile.page_label")} />
@@ -48,6 +63,19 @@ export default function ProfileOverviewPage({ params }: Route.ComponentProps) {
         <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-2">
           <ProfilePriorityDistribution userProfile={userProfile} />
           <ProfileStateDistribution stateDistribution={stateDistribution} userProfile={userProfile} />
+        </div>
+        {/* ARRIBADA: which projects the person works on most, and which disciplines their work needs. */}
+        <div className="grid grid-cols-1 items-stretch gap-5 xl:grid-cols-2">
+          <ProfileWorkBreakdown
+            title="Work by project"
+            items={projectItems}
+            emptyText="No assigned work items yet."
+          />
+          <ProfileWorkBreakdown
+            title="Work by discipline"
+            items={disciplineItems}
+            emptyText="No disciplines set on the assigned work items yet."
+          />
         </div>
         <ProfileActivity />
       </ContentWrapper>

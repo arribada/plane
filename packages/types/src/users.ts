@@ -161,6 +161,9 @@ export interface IUserProfileData {
   priority_distribution: IUserPriorityDistribution[];
   state_distribution: IUserStateDistribution[];
   subscribed_issues: number;
+  // ARRIBADA: which projects this person's assigned work sits in, and which disciplines it needs.
+  project_distribution?: { project_id: string; project__name: string; project__identifier: string; count: number }[];
+  discipline_distribution?: { role: string; count: number }[];
 }
 
 export interface IUserProfileProjectSegregation {

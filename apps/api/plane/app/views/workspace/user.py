@@ -393,6 +393,9 @@ class WorkspaceUserActivityEndpoint(BaseAPIView):
         )
 
 
+from plane.arribada.models import IssueRole
+
+
 class WorkspaceUserProfileStatsEndpoint(BaseAPIView):
     def get(self, request, slug, user_id):
         filters = issue_filters(request.query_params, "GET")
@@ -505,9 +508,40 @@ class WorkspaceUserProfileStatsEndpoint(BaseAPIView):
             issue__assignees__in=[user_id],
         ).values("cycle__name", "cycle__id", "cycle__project_id")
 
+        # ARRIBADA: which projects this person's assigned work sits in (where they work most),
+        # and which disciplines it needs (firmware / hardware / ...), for the profile "Your work".
+        project_distribution = (
+            Issue.issue_objects.filter(
+                (Q(assignees__in=[user_id]) & Q(issue_assignee__deleted_at__isnull=True)),
+                workspace__slug=slug,
+                project__project_projectmember__member=request.user,
+                project__project_projectmember__is_active=True,
+            )
+            .filter(**filters)
+            .values("project_id", "project__name", "project__identifier")
+            .annotate(count=Count("id", distinct=True))
+            .order_by("-count")
+        )
+
+        discipline_distribution = (
+            IssueRole.objects.filter(
+                issue__assignees__in=[user_id],
+                issue__issue_assignee__deleted_at__isnull=True,
+                issue__workspace__slug=slug,
+                issue__project__project_projectmember__member=request.user,
+                issue__project__project_projectmember__is_active=True,
+            )
+            .exclude(role="")
+            .values("role")
+            .annotate(count=Count("issue_id", distinct=True))
+            .order_by("-count")
+        )
+
         return Response(
             {
                 "state_distribution": state_distribution,
+                "project_distribution": list(project_distribution),
+                "discipline_distribution": list(discipline_distribution),
                 "priority_distribution": priority_distribution,
                 "created_issues": created_issues,
                 "assigned_issues": assigned_issues_count,

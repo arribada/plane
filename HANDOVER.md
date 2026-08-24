@@ -15,10 +15,12 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **frontend `2dda93197b`** (image tag
-`v1.3.1-arribada.104`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
-served digest `41c2e1c34113`), deployed 2026-08-19. (`.104` = the Home my-tasks list refreshes
-on peek-close + an icon refresh button; frontend-only, backend unchanged.)
+Production `plane.arribada.org` serves **frontend `53aa7b643e`** (image tag
+`v1.3.1-arribada.105`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
+served digest `41c2e1c34113`), deployed 2026-08-19. (`.104` = Home my-tasks refresh on
+peek-close + button; `.105` = Home stickies can **float over the whole page** (v1) via a Move
+toggle — reuses `StickiesFree` in a new `overlay` mode; per-sticky fold is planned v2. Both
+frontend-only, backend unchanged.)
 
 **The backend moved for the first time since `.90`.** `31608607b1` adds `start_date` + the
 state to `MyWorkEndpoint` (for the Home calendar's duration bars); no migration, no schema
@@ -49,7 +51,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `2dda93197b` | **serving now** | Frontend `.104`: Home my-tasks list refreshes when the peek closes + an icon-only refresh button (was stale after editing a status from the peek). |
+| `53aa7b643e` | **serving now** | Frontend `.105`: Home stickies can float over the whole page (v1) — a Move toggle on the stickies widget mounts a click-through overlay rendering `StickiesFree` in `overlay` mode. Per-browser preference. Fold = v2. Whole-page overlay is browser-unverified (owner opted in). |
+| `2dda93197b` | yes             | Frontend `.104`: Home my-tasks list refreshes when the peek closes + an icon-only refresh button. |
 | `dab8d3f293` | yes             | Frontend `.103`: Home calendar duration bars coloured by **status**; portfolio timeline toolbar+legend behind a Show/Hide bar (collapsed on mobile). Reads the new `MyWorkEndpoint` fields. |
 | `31608607b1` | **serving now** | **Backend** (first change since `.90`): `MyWorkEndpoint` returns `start_date` + state. No migration. |
 | `3480aaf0d5` | yes             | Frontend `.102`: drag-to-un-nest + the sprint/module create "+" moved into the dropdown footer. |
@@ -302,9 +305,9 @@ scheduler reads the dates, so the dates are the fact.
   force-recreate or `docker ps` shows the right tag while serving old code.
 - Compose lives at `/opt/arribada-platform/tools/docker-compose.plane.yml`. The one inside
   `/opt/plane-fork` is a decoy. On the droplet the fork remote is `arribada`, not `origin`.
-- Frontend `.104` (= `2dda93197b`) is deployed; backend is `31608607b1` (image
+- Frontend `.105` (= `53aa7b643e`) is deployed; backend is `31608607b1` (image
   `arribada/plane-backend:31608607b1`), the `.90` image `6a0c7e1faffd` being its rollback
-  target. Next frontend tag should be `.105` or higher — but prefer the commit SHA:
+  target. Next frontend tag should be `.106` or higher — but prefer the commit SHA:
   `TAG` now defaults to `github.sha`, and the numbered tags are not a history (`.77`–`.80`
   are all one image id). See `ROLLBACK.md`.
 - **The droplet cannot pull from ghcr.** Its credential is a `gho_` OAuth token with no

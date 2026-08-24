@@ -28,8 +28,9 @@ import {
   DriftWidget,
   MyApprovalsWidget,
 } from "@/plane-web/components/home/arribada-widgets";
-// ARRIBADA: the customisable two-column layout for the Home widgets.
+// ARRIBADA: the customisable two-column layout + the configurable per-project widget.
 import { HomeWidgetsLayout, type THomeWidgetItem } from "@/plane-web/components/home/home-widgets-layout";
+import { ProjectSpotlightWidget } from "@/plane-web/components/home/project-spotlight-widget";
 // local imports
 import { StickiesWidget } from "../stickies/widget";
 import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widgets";
@@ -123,6 +124,9 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
   // arrangement rather than pinned above it.
   const layoutItems: THomeWidgetItem[] = [
     { key: "my_tasks", node: <MyTasksWidget /> },
+    // ARRIBADA: a frontend-only configurable widget (project tasks / budget / spend), always
+    // available and draggable like the rest — no server widget-registry entry needed.
+    { key: "arribada_project_spotlight", node: <ProjectSpotlightWidget /> },
     ...orderedWidgets
       .filter((key) => HOME_WIDGETS_LIST[key]?.component && widgetsMap[key]?.is_enabled)
       .map((key) => {

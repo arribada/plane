@@ -39,6 +39,11 @@ import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widget
 import { DashboardQuickLinks } from "./widgets/links";
 import { ManageWidgetsModal } from "./widgets/manage";
 
+// ARRIBADA: the registry entry is the single, always-there Project widget — it takes no
+// instance, so the workspaceSlug the registry hands every widget is simply ignored here. Added
+// instances (with their own project + remove button) are wired separately, in layoutItems below.
+const ProjectSpotlightRegistryWidget: React.FC<THomeWidgetProps> = () => <ProjectSpotlightWidget />;
+
 export const HOME_WIDGETS_LIST: {
   [key in THomeWidgetKeys]: {
     component: React.FC<THomeWidgetProps> | null;
@@ -102,7 +107,7 @@ export const HOME_WIDGETS_LIST: {
   // rest, so it shows up in Manage widgets with its own toggle and can be reordered. Its
   // preference row is seeded server-side (WorkspaceHomePreference.HomeWidgetKeys).
   arribada_project_spotlight: {
-    component: ProjectSpotlightWidget,
+    component: ProjectSpotlightRegistryWidget,
     fullWidth: false,
     title: "Project spotlight",
   },

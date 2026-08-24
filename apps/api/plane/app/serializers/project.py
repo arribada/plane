@@ -121,6 +121,9 @@ class ProjectListSerializer(DynamicBaseSerializer):
     cover_image_url = serializers.CharField(read_only=True)
     inbox_view = serializers.BooleanField(read_only=True, source="intake_view")
     next_work_item_sequence = serializers.SerializerMethodField()
+    # ARRIBADA: the project's lifecycle status, read off its schedule so the all-projects
+    # view can show and filter by it. Defaults to active when no schedule row exists yet.
+    lifecycle_status = serializers.SerializerMethodField()
 
     def get_members(self, obj):
         project_members = getattr(obj, "members_list", None)
@@ -133,6 +136,10 @@ class ProjectListSerializer(DynamicBaseSerializer):
         """Get the next sequence ID that will be assigned to a new issue"""
         max_sequence = IssueSequence.objects.filter(project_id=obj.id).aggregate(max_seq=Max("sequence"))["max_seq"]
         return (max_sequence + 1) if max_sequence else 1
+
+    def get_lifecycle_status(self, obj):
+        schedule = getattr(obj, "arribada_schedule", None)
+        return schedule.lifecycle_status if schedule else "active"
 
     class Meta:
         model = Project

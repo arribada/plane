@@ -40,6 +40,24 @@ class ProjectSchedule(models.Model):
     # read. The dates say when, this says how much.
     budget_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     budget_currency = models.CharField(max_length=3, default="EUR")
+
+    # ARRIBADA: where the project is in its life (Active / On hold / Completed / Cancelled),
+    # which is a different question from its HEALTH (ProjectStatusUpdate: on/at-risk/off track).
+    # Kept here on the schedule — the per-project arribada extension — so db.Project stays
+    # untouched. Default Active: every project that exists is ongoing until a human says so.
+    LIFECYCLE_ACTIVE = "active"
+    LIFECYCLE_ON_HOLD = "on_hold"
+    LIFECYCLE_COMPLETED = "completed"
+    LIFECYCLE_CANCELLED = "cancelled"
+    LIFECYCLE_STATUS_CHOICES = [
+        (LIFECYCLE_ACTIVE, "Active"),
+        (LIFECYCLE_ON_HOLD, "On hold"),
+        (LIFECYCLE_COMPLETED, "Completed"),
+        (LIFECYCLE_CANCELLED, "Cancelled"),
+    ]
+    lifecycle_status = models.CharField(
+        max_length=16, choices=LIFECYCLE_STATUS_CHOICES, default=LIFECYCLE_ACTIVE
+    )
     # Whether the scheduler should treat an expected delivery as a constraint on
     # the work item waiting for it.
     #

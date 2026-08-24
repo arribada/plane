@@ -26,6 +26,9 @@ class ProjectScheduleSerializer(serializers.ModelSerializer):
             "project",
             "start_date",
             "target_date",
+            # ARRIBADA: lifecycle status (Active/On hold/Completed/Cancelled). Writable: it is a
+            # plan state a human sets, not money, so it is not in read_only_fields.
+            "lifecycle_status",
             # What the project was given to spend. Null means nobody has said,
             # which the budget view reports differently from zero.
             "budget_amount",

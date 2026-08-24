@@ -96,6 +96,14 @@ export const HOME_WIDGETS_LIST: {
     fullWidth: false,
     title: "Drifting past the plan",
   },
+  // ARRIBADA: the configurable per-project widget now flows through the registry like the
+  // rest, so it shows up in Manage widgets with its own toggle and can be reordered. Its
+  // preference row is seeded server-side (WorkspaceHomePreference.HomeWidgetKeys).
+  arribada_project_spotlight: {
+    component: ProjectSpotlightWidget,
+    fullWidth: false,
+    title: "Project spotlight",
+  },
 };
 
 export const DashboardWidgets = observer(function DashboardWidgets() {
@@ -124,9 +132,6 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
   // arrangement rather than pinned above it.
   const layoutItems: THomeWidgetItem[] = [
     { key: "my_tasks", node: <MyTasksWidget /> },
-    // ARRIBADA: a frontend-only configurable widget (project tasks / budget / spend), always
-    // available and draggable like the rest — no server widget-registry entry needed.
-    { key: "arribada_project_spotlight", node: <ProjectSpotlightWidget /> },
     ...orderedWidgets
       .filter((key) => HOME_WIDGETS_LIST[key]?.component && widgetsMap[key]?.is_enabled)
       .map((key) => {

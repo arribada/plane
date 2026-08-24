@@ -387,6 +387,7 @@ class WorkspaceHomePreference(BaseModel):
         WORKLOAD_CONFLICTS = "arribada_conflicts", "Workload conflicts"
         MY_APPROVALS = "arribada_approvals", "Purchases awaiting me"
         DRIFTING_PROJECTS = "arribada_drift", "Projects drifting"
+        PROJECT_SPOTLIGHT = "arribada_project_spotlight", "Project spotlight"
 
     workspace = models.ForeignKey(
         "db.Workspace",

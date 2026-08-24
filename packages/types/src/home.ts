@@ -19,7 +19,8 @@ export type THomeWidgetKeys =
   | "arribada_github_inbox"
   | "arribada_conflicts"
   | "arribada_approvals"
-  | "arribada_drift";
+  | "arribada_drift"
+  | "arribada_project_spotlight";
 
 export type THomeWidgetProps = {
   workspaceSlug: string;

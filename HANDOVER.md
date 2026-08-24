@@ -15,8 +15,8 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **frontend `aa1df053d8`** (image tag
-`v1.3.1-arribada.108`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
+Production `plane.arribada.org` serves **frontend `ad4ad3782c`** (image tag
+`v1.3.1-arribada.110`) and **backend `31608607b1`** (image `arribada/plane-backend:31608607b1`,
 served digest `41c2e1c34113`), deployed 2026-08-19. Frontend since `.105`:
 `.106` (stickies hide-all + translucency; my-tasks "+"), `.107` (two-column drag-drop Home
 layout), `.108` `aa1df053d8` (a **configurable per-project widget** — tasks / budget / spend,
@@ -52,7 +52,9 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `aa1df053d8` | **serving now** | Frontend `.108`: a **configurable per-project widget** (pick a project → Tasks counts / Budget / Spend-over-time), reusing existing endpoints (project-stats + Finance getBudget), permission-safe. Frontend-only widget in the Home layout; project+view persist per browser. First slice of the #3 "managed widgets" enhancement. |
+| `ad4ad3782c` | **serving now** | Frontend `.110`: fix free-drag stickies snapping back on drop — `placedBoxes` was a `useMemo` on the mobx observable (mutated in place → stale Map); build it in render so the observer tracks position changes. PATCH already saved (200); only the screen reverted. Fixes floating overlay + docked board. |
+| `15283d9041` | yes             | Frontend `.109`: work-item header shows the **project name** next to the ID; floating stickies hide the docked preview while floating. |
+| `aa1df053d8` | yes             | Frontend `.108`: a **configurable per-project widget** (pick a project → Tasks counts / Budget / Spend-over-time), reusing existing endpoints (project-stats + Finance getBudget), permission-safe. Frontend-only widget in the Home layout; project+view persist per browser. First slice of the #3 "managed widgets" enhancement. |
 | `748bfa345f` | yes             | Frontend `.107`: customisable two-column drag-and-drop Home layout (Customise/Reset, saved). |
 | `24434dd7ef` | yes             | Frontend `.106`: stickies hide-all (eye) + translucent floating notes; my-tasks "+" opens the full create modal (any project from Home). |
 | `53aa7b643e` | yes             | Frontend `.105`: Home stickies can float over the whole page (v1) via a Move toggle (`StickiesFree` `overlay` mode). Fold = v2. |

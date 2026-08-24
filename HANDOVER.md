@@ -15,8 +15,8 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-Production `plane.arribada.org` serves **frontend `94c2adc5ee`** (image tag
-`v1.3.1-arribada.116`) and **backend `90488f172c`** (image `arribada/plane-backend:31608607b1`,
+Production `plane.arribada.org` serves **frontend `07c661d553`** (image tag
+`v1.3.1-arribada.118`) and **backend `90488f172c`** (image `arribada/plane-backend:31608607b1`,
 served digest `41c2e1c34113`), deployed 2026-08-19. Frontend since `.105`:
 `.106` (stickies hide-all + translucency; my-tasks "+"), `.107` (two-column drag-drop Home
 layout), `.108` `aa1df053d8` (a **configurable per-project widget** — tasks / budget / spend,
@@ -52,7 +52,8 @@ nothing is committed ahead of what production serves.
 
 | Commit       | Deployed?       | What                                                                                                                             |
 | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `94c2adc5ee` | **serving now** | Frontend `.116`: project **lifecycle status** UI — create form gains optional Status + Start/Target dates (written to schedule); projects view gains a Status filter + a badge on non-active cards. Backend `.115` (`90488f172c`) adds `lifecycle_status` on ProjectSchedule (migration 0044). |
+| `07c661d553` | **serving now** | Frontend `.118`: free dashboard fills full width (drops the 800px centre cap in free mode); create-project form completed — optional Budget (amount+currency) + Team (members + role) alongside status/dates. (.117 full-width folded in.) |
+| `94c2adc5ee` | yes             | Frontend `.116`: project **lifecycle status** UI — create form gains optional Status + Start/Target dates (written to schedule); projects view gains a Status filter + a badge on non-active cards. Backend `.115` (`90488f172c`) adds `lifecycle_status` on ProjectSchedule (migration 0044). |
 | `90488f172c` | **serving now** | **Backend `.115`**: `lifecycle_status` (active/on_hold/completed/cancelled) on ProjectSchedule, writable via /schedule/, read on ProjectListSerializer. Migration 0044. Also seeds `arribada_project_spotlight` widget key (backend `.111` was folded up to here). |
 | `1db0363e85` | yes             | Frontend `.114`: free-canvas dashboard — a straight<->free toggle next to Manage widgets (keeps placements), drag/resize each widget; Project Spotlight now in Manage; **Add project widget** button spawns independent per-project cards (own project + Tasks/Budget/Spend + remove). (.112/.113 folded in; backend `.111` seeds the arribada_project_spotlight preference.) |
 | `ad4ad3782c` | yes             | Frontend `.110`: fix free-drag stickies snapping back on drop — `placedBoxes` was a `useMemo` on the mobx observable (mutated in place → stale Map); build it in render so the observer tracks position changes. PATCH already saved (200); only the screen reverted. Fixes floating overlay + docked board. |

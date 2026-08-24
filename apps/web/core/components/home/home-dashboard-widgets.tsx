@@ -31,6 +31,8 @@ import {
 // ARRIBADA: the customisable two-column layout + the configurable per-project widget.
 import { HomeWidgetsLayout, type THomeWidgetItem } from "@/plane-web/components/home/home-widgets-layout";
 import { ProjectSpotlightWidget } from "@/plane-web/components/home/project-spotlight-widget";
+// ARRIBADA: the roster of independent per-project widgets a person has added.
+import { projectWidgets } from "@/plane-web/components/home/project-widgets";
 // local imports
 import { StickiesWidget } from "../stickies/widget";
 import { HomeLoader, NoProjectsEmptyState, RecentActivityWidget } from "./widgets";
@@ -138,6 +140,13 @@ export const DashboardWidgets = observer(function DashboardWidgets() {
         const WidgetComponent = HOME_WIDGETS_LIST[key].component!;
         return { key, node: <WidgetComponent workspaceSlug={workspaceSlug.toString()} /> };
       }),
+    // ARRIBADA: each independent project widget the person added, pinned to its own project and
+    // removable on the spot. They live only here (not in Manage) because they are instances, not
+    // a fixed registry entry — add as many as you like from the dashboard header.
+    ...projectWidgets.ids.map((id) => ({
+      key: `arribada_project_widget:${id}`,
+      node: <ProjectSpotlightWidget instanceId={id} onRemove={() => projectWidgets.remove(id)} />,
+    })),
   ];
 
   return (

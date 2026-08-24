@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { AlignJustify, LayoutGrid, Shapes } from "lucide-react";
+import { AlignJustify, FolderPlus, LayoutGrid, Shapes } from "lucide-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { Button } from "@plane/propel/button";
@@ -15,8 +15,9 @@ import { Breadcrumbs, Header } from "@plane/ui";
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 // hooks
 import { useHome } from "@/hooks/store/use-home";
-// ARRIBADA: the straight ⇄ free dashboard switch, sitting next to Manage widgets.
+// ARRIBADA: the straight ⇄ free dashboard switch + "add another project widget", next to Manage.
 import { homeLayout } from "@/plane-web/components/home/home-layout";
+import { projectWidgets } from "@/plane-web/components/home/project-widgets";
 
 export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHeader() {
   // plane hooks
@@ -54,6 +55,19 @@ export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHead
             <div className="hidden sm:hidden md:block">
               {homeLayout.enabled ? "Straight dashboard" : "Free dashboard"}
             </div>
+          </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => {
+              projectWidgets.add();
+              if (!homeLayout.enabled) homeLayout.setEnabled(true);
+            }}
+            className="my-auto mb-0"
+            prependIcon={<FolderPlus />}
+            title="Add a widget pinned to one project (tasks / budget / spend) — add as many as you like"
+          >
+            <div className="hidden sm:hidden md:block">Add project widget</div>
           </Button>
           <Button
             variant="secondary"

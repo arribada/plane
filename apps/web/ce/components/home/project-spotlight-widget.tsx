@@ -15,23 +15,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { BarChart3, CheckCircle2, Coins, ListChecks } from "lucide-react";
+import { BarChart3, CheckCircle2, Coins, ListChecks, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import type { TProjectAnalyticsCount } from "@plane/types";
 import { useProject } from "@/hooks/store/use-project";
 import { ProjectService } from "@/services/project";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectBudget } from "@/plane-web/types/arribada";
+import { projectWidgetConfigKey } from "./project-widgets";
 
 const projectService = new ProjectService();
 const arribadaService = new ArribadaService();
 
 type TView = "tasks" | "budget" | "spend";
+/** The singleton widget's key; an added instance overrides it with its own (see project-widgets). */
 const KEY = "arribada-project-spotlight";
 
-const readPref = (): { projectId: string | null; view: TView } => {
+const readPref = (storageKey: string): { projectId: string | null; view: TView } => {
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (raw) {
       const p = JSON.parse(raw);
       return { projectId: p.projectId ?? null, view: (["tasks", "budget", "spend"] as const).includes(p.view) ? p.view : "tasks" };
@@ -42,15 +44,23 @@ const readPref = (): { projectId: string | null; view: TView } => {
   return { projectId: null, view: "tasks" };
 };
 
+/** The widget can be the single registry one (no id) or one of many added instances (own id +
+ *  a remove button). Everything else — data, views, persistence — is identical. */
+type TProjectSpotlightProps = { instanceId?: string; onRemove?: () => void };
+
 const money = (n: number | null | undefined, ccy: string) =>
   n == null ? "—" : `${Math.round(n).toLocaleString()} ${ccy}`;
 
-export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget() {
+export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
+  instanceId,
+  onRemove,
+}: TProjectSpotlightProps) {
   const { workspaceSlug } = useParams();
   const { joinedProjectIds, getProjectById } = useProject();
 
-  const [projectId, setProjectId] = useState<string | null>(() => readPref().projectId);
-  const [view, setView] = useState<TView>(() => readPref().view);
+  const storageKey = instanceId ? projectWidgetConfigKey(instanceId) : KEY;
+  const [projectId, setProjectId] = useState<string | null>(() => readPref(storageKey).projectId);
+  const [view, setView] = useState<TView>(() => readPref(storageKey).view);
   const [counts, setCounts] = useState<TProjectAnalyticsCount | null>(null);
   const [budget, setBudget] = useState<TProjectBudget | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,14 +76,14 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget()
     if (!projectId && projects.length > 0) setProjectId(projects[0].id);
   }, [projectId, projects]);
 
-  // Persist the choice.
+  // Persist the choice (per instance when added, or the shared key for the registry one).
   useEffect(() => {
     try {
-      window.localStorage.setItem(KEY, JSON.stringify({ projectId, view }));
+      window.localStorage.setItem(storageKey, JSON.stringify({ projectId, view }));
     } catch {
       /* ignore */
     }
-  }, [projectId, view]);
+  }, [storageKey, projectId, view]);
 
   const load = useCallback(async () => {
     if (!workspaceSlug || !projectId) return;
@@ -131,22 +141,35 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget()
             ))}
           </select>
         </div>
-        <div className="flex items-center rounded-md border border-subtle p-0.5">
-          {TABS.map((tab) => (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-md border border-subtle p-0.5">
+            {TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setView(tab.key)}
+                title={tab.label}
+                className={cn(
+                  "flex items-center gap-1 rounded px-2 py-1 text-11 font-medium",
+                  view === tab.key ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
+                )}
+              >
+                <tab.icon className="size-3.5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {onRemove && (
             <button
-              key={tab.key}
               type="button"
-              onClick={() => setView(tab.key)}
-              title={tab.label}
-              className={cn(
-                "flex items-center gap-1 rounded px-2 py-1 text-11 font-medium",
-                view === tab.key ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
-              )}
+              onClick={onRemove}
+              title="Remove this project widget"
+              aria-label="Remove this project widget"
+              className="rounded p-1 text-tertiary hover:bg-danger-primary/10 hover:text-danger-primary"
             >
-              <tab.icon className="size-3.5" />
-              {tab.label}
+              <X className="size-3.5" />
             </button>
-          ))}
+          )}
         </div>
       </div>
 

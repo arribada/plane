@@ -16,6 +16,7 @@ import { useUserProfile, useUser } from "@/hooks/store/user";
 import { HomePeekOverviewsRoot } from "@/plane-web/components/home";
 import { TourRoot } from "@/plane-web/components/onboarding/tour/root";
 // local imports
+import { HomeStickiesFloatingOverlay } from "@/plane-web/components/home/stickies-floating-overlay";
 import { DashboardWidgets } from "./home-dashboard-widgets";
 import { UserGreetingsView } from "./user-greetings";
 
@@ -54,7 +55,10 @@ export const WorkspaceHomeView = observer(function WorkspaceHomeView() {
       )}
       <>
         <HomePeekOverviewsRoot />
-        <ContentWrapper className="mx-auto scrollbar-hide gap-6 bg-surface-1 px-page-x">
+        <ContentWrapper className="relative mx-auto scrollbar-hide gap-6 bg-surface-1 px-page-x">
+          {/* ARRIBADA: the floating stickies layer — absolute inside this scroll container so
+              notes scroll with the page; renders only when the user turns floating on. */}
+          <HomeStickiesFloatingOverlay />
           <div className="mx-auto w-full max-w-[800px]">
             {currentUser && <UserGreetingsView user={currentUser} />}
             <DashboardWidgets />

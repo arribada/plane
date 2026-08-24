@@ -61,10 +61,14 @@ type TGesture = {
 type Props = {
   workspaceSlug: string;
   stickyIds: string[];
+  /** ARRIBADA: when true the board is a transparent full-page overlay — the canvas lets
+   *  clicks fall through to whatever is under it, and only the notes themselves are
+   *  interactive. Default false keeps the contained board (the All-stickies modal) unchanged. */
+  overlay?: boolean;
 };
 
 export const StickiesFree = observer(function StickiesFree(props: Props) {
-  const { workspaceSlug, stickyIds } = props;
+  const { workspaceSlug, stickyIds, overlay = false } = props;
   // store hooks
   const { stickies, updateStickyLayout } = useSticky();
   // state
@@ -308,7 +312,13 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
   return (
     // No overflow rule here on purpose: the page already scrolls, and clipping
     // at this box would make a note dragged past the right edge unreachable.
-    <div ref={canvasRef} className="stickies-free-canvas relative w-full" style={{ height: canvasHeight }}>
+    <div
+      ref={canvasRef}
+      // ARRIBADA: in overlay mode the empty canvas must not eat clicks meant for the widgets
+      // underneath — only the notes (below) opt back into pointer events.
+      className={cn("stickies-free-canvas relative w-full", overlay && "pointer-events-none")}
+      style={{ height: canvasHeight }}
+    >
       {stickyIds.map((stickyId) => {
         const box = getBox(stickyId);
         const isActive = draft?.stickyId === stickyId;
@@ -317,7 +327,12 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
             key={stickyId}
             data-sticky-id={stickyId}
             data-lifted={isActive ? "true" : undefined}
-            className={cn("absolute top-0 left-0", landedId === stickyId && "sticky-landed")}
+            className={cn(
+              "absolute top-0 left-0",
+              // ARRIBADA: the note itself is interactive even when the canvas is click-through.
+              overlay && "pointer-events-auto",
+              landedId === stickyId && "sticky-landed"
+            )}
             style={{
               // No transition on this. It is rewritten every pointer frame.
               translate: `${box.x}px ${box.y}px`,

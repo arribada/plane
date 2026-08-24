@@ -5,13 +5,17 @@
  */
 
 import { observer } from "mobx-react";
+import { Move } from "lucide-react";
 import { useParams } from "next/navigation";
 
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { PlusIcon } from "@plane/propel/icons";
+import { cn } from "@plane/utils";
 // hooks
 import { useSticky } from "@/hooks/use-stickies";
+// ARRIBADA: the "float over the whole page" toggle for the Home stickies.
+import { stickiesFloating } from "@/plane-web/components/home/stickies-floating";
 // local imports
 import { StickiesTruncated } from "./layout/stickies-truncated";
 import { StickySearch } from "./modal/search";
@@ -33,7 +37,21 @@ export const StickiesWidget = observer(function StickiesWidget() {
       <div className="mb-4 flex items-center justify-between">
         <div className="text-14 font-semibold text-tertiary">{t("stickies.title")}</div>
         {/* actions */}
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {/* ARRIBADA: toggle the floating-over-the-page layer. Icon-only; highlighted when on. */}
+          <button
+            type="button"
+            onClick={() => stickiesFloating.toggle()}
+            title={stickiesFloating.on ? "Stop floating stickies over the page" : "Float stickies over the page"}
+            aria-label="Toggle floating stickies"
+            aria-pressed={stickiesFloating.on}
+            className={cn(
+              "my-auto rounded p-1",
+              stickiesFloating.on ? "bg-accent-primary/10 text-accent-primary" : "text-tertiary hover:text-primary"
+            )}
+          >
+            <Move className="size-4" />
+          </button>
           <StickySearch />
           <button
             onClick={() => {

@@ -22,14 +22,25 @@ import { useProject } from "@/hooks/store/use-project";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web types
 import type { TProject } from "@/plane-web/types/projects";
-// ARRIBADA: optional dates + lifecycle status set at creation, written to the schedule after
-// the project exists (they are schedule fields, not project fields).
+// ARRIBADA: optional dates + status + budget + team set at creation, applied after the project
+// exists (schedule fields go to /schedule/, members to the project members endpoint).
+import { EUserPermissions } from "@plane/constants";
+import { MemberDropdown } from "@/components/dropdowns/member/dropdown";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { PROJECT_LIFECYCLE_STATUSES, type TProjectLifecycleStatus } from "@/plane-web/types/arribada";
+import { ProjectMemberService } from "@/services/project/project-member.service";
 import { ProjectAttributes } from "./attributes";
 import { getProjectFormValues } from "./utils";
 
 const arribadaService = new ArribadaService();
+const projectMemberService = new ProjectMemberService();
+
+const BUDGET_CURRENCIES = ["EUR", "USD", "GBP"];
+const TEAM_ROLES: { value: EUserPermissions; label: string }[] = [
+  { value: EUserPermissions.ADMIN, label: "Admin" },
+  { value: EUserPermissions.MEMBER, label: "Member" },
+  { value: EUserPermissions.GUEST, label: "Guest" },
+];
 
 export type TCreateProjectFormProps = {
   setToFavorite?: boolean;
@@ -52,6 +63,10 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
   const [lifecycleStatus, setLifecycleStatus] = useState<TProjectLifecycleStatus>("active");
   const [startDate, setStartDate] = useState("");
   const [targetDate, setTargetDate] = useState("");
+  const [budgetAmount, setBudgetAmount] = useState("");
+  const [budgetCurrency, setBudgetCurrency] = useState("EUR");
+  const [teamMemberIds, setTeamMemberIds] = useState<string[]>([]);
+  const [teamRole, setTeamRole] = useState<EUserPermissions>(EUserPermissions.MEMBER);
   // form info
   const methods = useForm<TProject>({
     defaultValues: { ...getProjectFormValues(), ...data },
@@ -118,14 +133,22 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
           message: t("project_created_successfully"),
         });
 
-        // ARRIBADA: persist the optional dates + status onto the new project's schedule. Best
-        // effort — the project is already made, so a schedule that would not save must not fail it.
-        if (startDate || targetDate || lifecycleStatus !== "active") {
+        // ARRIBADA: apply the optional extras onto the new project. All best effort — the project
+        // is already made, so an extra that will not save must not fail the creation.
+        if (startDate || targetDate || lifecycleStatus !== "active" || budgetAmount) {
           await arribadaService
             .updateSchedule(workspaceSlug.toString(), res.id, {
               lifecycle_status: lifecycleStatus,
               ...(startDate ? { start_date: startDate } : {}),
               ...(targetDate ? { target_date: targetDate } : {}),
+              ...(budgetAmount ? { budget_amount: Number(budgetAmount), budget_currency: budgetCurrency } : {}),
+            })
+            .catch(() => {});
+        }
+        if (teamMemberIds.length > 0) {
+          await projectMemberService
+            .bulkAddMembersToProject(workspaceSlug.toString(), res.id, {
+              members: teamMemberIds.map((member_id) => ({ member_id, role: teamRole })),
             })
             .catch(() => {});
         }
@@ -243,6 +266,57 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
                 />
               </label>
+            </div>
+
+            {/* budget */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="w-16 text-13 font-medium text-secondary">Budget</span>
+              <input
+                type="number"
+                min={0}
+                value={budgetAmount}
+                onChange={(e) => setBudgetAmount(e.target.value)}
+                placeholder="Amount"
+                className="w-32 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+              />
+              <select
+                value={budgetCurrency}
+                onChange={(e) => setBudgetCurrency(e.target.value)}
+                className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+              >
+                {BUDGET_CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* team members + their role */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="w-16 text-13 font-medium text-secondary">Team</span>
+              <div className="h-7">
+                <MemberDropdown
+                  value={teamMemberIds}
+                  onChange={(ids) => setTeamMemberIds((ids ?? []) as string[])}
+                  placeholder="Add members"
+                  multiple
+                  buttonVariant="border-with-text"
+                />
+              </div>
+              {teamMemberIds.length > 0 && (
+                <select
+                  value={teamRole}
+                  onChange={(e) => setTeamRole(Number(e.target.value) as EUserPermissions)}
+                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                >
+                  {TEAM_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
         </div>

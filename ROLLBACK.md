@@ -44,7 +44,8 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.103`| `79f576735eb5` | `dab8d3f293`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), calendar duration bars + collapsible portfolio controls; CI artifact loaded 2026-08-19; OCI revision label present |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.104`| `1e5230bfc1ad` | `2dda93197b`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`), Home my-tasks refresh (peek-close + button); CI artifact loaded 2026-08-19; **frontend roll-back target is `.103`** |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.103`| `79f576735eb5` | `dab8d3f293`  | previous frontend serve (**the roll-back target for `.104`**); calendar duration bars + collapsible portfolio controls; OCI revision label present |
 | `arribada/plane-backend:31608607b1`                  | `41c2e1c34113` | `31608607b1`         | **currently served backend** (= `makeplane/plane-backend:v1.3.1`), MyWorkEndpoint start_date+state; built on the droplet 2026-08-19; OCI revision label present. **The `.90` image below is its rollback target.** |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.102`| `991cb8292461` | `3480aaf0d5`         | previous frontend serve; **the frontend roll-back target for the `.103` deploy**; drag-to-un-nest + in-dropdown create |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.101`| `b79573b3469b` | `cb28c2ed9f`                | previous serve; **the frontend roll-back target for the `.102` deploy**; milestone + auto-select + drag-to-nest |

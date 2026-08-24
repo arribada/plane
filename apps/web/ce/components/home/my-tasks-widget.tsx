@@ -19,6 +19,7 @@ import {
   ChevronRight,
   LayoutGrid,
   List,
+  Plus,
   RefreshCw,
 } from "lucide-react";
 import { cn, renderFormattedDateWithoutYear } from "@plane/utils";
@@ -26,6 +27,9 @@ import { useAppRouter } from "@/hooks/use-app-router";
 // ARRIBADA: open the work item in the Home peek overview instead of navigating away.
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useUser } from "@/hooks/store/user";
+// ARRIBADA: the full create modal, opened by the "+" so a task can be added on any project
+// straight from Home.
+import { CreateUpdateIssueModal } from "@/components/issues/issue-modal/modal";
 import { IssueService } from "@/services/issue/issue.service";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TMyWorkItem } from "@/plane-web/types/arribada";
@@ -152,6 +156,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   // ARRIBADA: a manual + automatic refresh, because editing a task from the peek (e.g. its
   // status) does not flow back into this list on its own.
   const [refreshing, setRefreshing] = useState(false);
+  // ARRIBADA: the full create modal, opened by the "+".
+  const [createOpen, setCreateOpen] = useState(false);
   const [view, setView] = useState<"list" | "calendar">("list");
   // Which buckets the reader has asked to see in full. "+3 more" used to be a
   // plain <li> with no handler, sitting under six rows that are all buttons —
@@ -254,12 +260,31 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
 
   return (
     <div className="rounded-xl border border-subtle bg-surface-1">
+      {/* ARRIBADA: the full create modal — no project preset, so a task can be added to any
+          project from Home; on save the list refreshes so a self-assigned one appears. */}
+      <CreateUpdateIssueModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={async () => {
+          await load("refresh");
+        }}
+      />
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
           <span className="bg-neutral-500/10 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* ARRIBADA: open the full create modal to add a task on any project from Home. */}
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            title="New work item"
+            aria-label="New work item"
+            className="rounded p-1 text-secondary hover:text-primary"
+          >
+            <Plus className="size-3.5" />
+          </button>
           {/* ARRIBADA: icon-only refresh — the list also refreshes itself when the peek closes,
               but this is the manual pull for anything edited elsewhere. */}
           <button

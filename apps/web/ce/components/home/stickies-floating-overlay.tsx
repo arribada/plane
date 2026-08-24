@@ -16,14 +16,14 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { useSticky } from "@/hooks/use-stickies";
 import { StickiesFree } from "@/components/stickies/layout/stickies-free";
-import { stickiesFloating } from "./stickies-floating";
+import { stickiesFloating, stickiesHidden } from "./stickies-floating";
 
 export const HomeStickiesFloatingOverlay = observer(function HomeStickiesFloatingOverlay() {
   const { workspaceSlug } = useParams();
   const { getWorkspaceStickyIds } = useSticky();
   const workspaceStickies = workspaceSlug ? getWorkspaceStickyIds(workspaceSlug.toString()) : [];
 
-  if (!stickiesFloating.on || !workspaceSlug || workspaceStickies.length === 0) return null;
+  if (!stickiesFloating.on || stickiesHidden.on || !workspaceSlug || workspaceStickies.length === 0) return null;
 
   return (
     // Click-through layer: the canvas and every empty part of it let events reach the widgets

@@ -329,8 +329,11 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
             data-lifted={isActive ? "true" : undefined}
             className={cn(
               "absolute top-0 left-0",
-              // ARRIBADA: the note itself is interactive even when the canvas is click-through.
-              overlay && "pointer-events-auto",
+              // ARRIBADA: the note itself is interactive even when the canvas is click-through,
+              // and floats a little translucent until hovered/focused/being dragged so it does
+              // not fully hide the widget under it.
+              overlay && "pointer-events-auto opacity-80 transition-opacity hover:opacity-100 focus-within:opacity-100",
+              overlay && isActive && "opacity-100",
               landedId === stickyId && "sticky-landed"
             )}
             style={{

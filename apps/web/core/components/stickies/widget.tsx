@@ -5,7 +5,7 @@
  */
 
 import { observer } from "mobx-react";
-import { Move } from "lucide-react";
+import { Eye, EyeOff, Move } from "lucide-react";
 import { useParams } from "next/navigation";
 
 // plane imports
@@ -14,8 +14,8 @@ import { PlusIcon } from "@plane/propel/icons";
 import { cn } from "@plane/utils";
 // hooks
 import { useSticky } from "@/hooks/use-stickies";
-// ARRIBADA: the "float over the whole page" toggle for the Home stickies.
-import { stickiesFloating } from "@/plane-web/components/home/stickies-floating";
+// ARRIBADA: the "float over the whole page" + "hide all" toggles for the Home stickies.
+import { stickiesFloating, stickiesHidden } from "@/plane-web/components/home/stickies-floating";
 // local imports
 import { StickiesTruncated } from "./layout/stickies-truncated";
 import { StickySearch } from "./modal/search";
@@ -38,6 +38,17 @@ export const StickiesWidget = observer(function StickiesWidget() {
         <div className="text-14 font-semibold text-tertiary">{t("stickies.title")}</div>
         {/* actions */}
         <div className="flex items-center gap-2">
+          {/* ARRIBADA: hide/show every sticky (the preview here AND the floating overlay). */}
+          <button
+            type="button"
+            onClick={() => stickiesHidden.toggle()}
+            title={stickiesHidden.on ? "Show all stickies" : "Hide all stickies"}
+            aria-label="Toggle all stickies"
+            aria-pressed={stickiesHidden.on}
+            className="my-auto rounded p-1 text-tertiary hover:text-primary"
+          >
+            {stickiesHidden.on ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
           {/* ARRIBADA: toggle the floating-over-the-page layer. Icon-only; highlighted when on. */}
           <button
             type="button"
@@ -73,9 +84,12 @@ export const StickiesWidget = observer(function StickiesWidget() {
           </button>
         </div>
       </div>
-      <div className="-mx-2">
-        <StickiesTruncated />
-      </div>
+      {/* ARRIBADA: hidden hides the preview here; the floating overlay honours the same flag. */}
+      {!stickiesHidden.on && (
+        <div className="-mx-2">
+          <StickiesTruncated />
+        </div>
+      )}
     </div>
   );
 });

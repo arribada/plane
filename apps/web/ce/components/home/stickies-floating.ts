@@ -12,16 +12,26 @@
 import { action, observable } from "mobx";
 
 const KEY = "arribada-stickies-floating";
+const HIDDEN_KEY = "arribada-stickies-hidden";
 
-const readInitial = (): boolean => {
+const readFlag = (key: string): boolean => {
   try {
-    return typeof window !== "undefined" && window.localStorage.getItem(KEY) === "1";
+    return typeof window !== "undefined" && window.localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 };
 
-const _floating = observable.box<boolean>(readInitial());
+const writeFlag = (key: string, value: boolean) => {
+  try {
+    window.localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // A browser that refuses storage just forgets the choice on reload; the toggle still works.
+  }
+};
+
+const _floating = observable.box<boolean>(readFlag(KEY));
+const _hidden = observable.box<boolean>(readFlag(HIDDEN_KEY));
 
 export const stickiesFloating = {
   get on(): boolean {
@@ -30,10 +40,18 @@ export const stickiesFloating = {
   toggle: action(() => {
     const next = !_floating.get();
     _floating.set(next);
-    try {
-      window.localStorage.setItem(KEY, next ? "1" : "0");
-    } catch {
-      // A browser that refuses storage just forgets the choice on reload; the toggle still works.
-    }
+    writeFlag(KEY, next);
+  }),
+};
+
+/** Whether every sticky is hidden from the Home (the widget preview AND the floating overlay). */
+export const stickiesHidden = {
+  get on(): boolean {
+    return _hidden.get();
+  },
+  toggle: action(() => {
+    const next = !_hidden.get();
+    _hidden.set(next);
+    writeFlag(HIDDEN_KEY, next);
   }),
 };

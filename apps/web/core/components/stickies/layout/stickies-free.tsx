@@ -19,7 +19,7 @@
  * prefers-reduced-motion guard, and animates things nothing else writes.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { GripVertical } from "lucide-react";
 import { cn } from "@plane/utils";
@@ -100,51 +100,48 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
   // Stored coordinates, per note. A note counts as placed only when it has both
   // an x and a y; width and height fall back so that a row half-written by an
   // older client still renders something sane rather than a zero-sized note.
-  const placedBoxes = useMemo(() => {
-    const boxes = new Map<string, TStickyBox>();
-    stickyIds.forEach((id) => {
-      const sticky = stickies[id];
-      if (!sticky || sticky.position_x == null || sticky.position_y == null) return;
-      boxes.set(
-        id,
-        clampStickyBox({
-          x: sticky.position_x,
-          y: sticky.position_y,
-          width: sticky.width ?? STICKY_DEFAULT_WIDTH,
-          height: sticky.height ?? STICKY_DEFAULT_HEIGHT,
-        })
-      );
-    });
-    return boxes;
-  }, [stickyIds, stickies]);
+  // Rebuilt every render, deliberately not memoised. `stickies` is a mobx
+  // observable mutated in place: its reference does not change when a note's
+  // position_x does, so a useMemo keyed on it hands back a stale Map — and the
+  // note just dropped reads its old coordinates and snaps back to where the
+  // drag began, even though the write has already landed on the server. Reading
+  // the coordinates here, in render, is also what lets the observer track them,
+  // so the optimistic write repaints the board at the new spot in the same tick.
+  const placedBoxes = new Map<string, TStickyBox>();
+  stickyIds.forEach((id) => {
+    const sticky = stickies[id];
+    if (!sticky || sticky.position_x == null || sticky.position_y == null) return;
+    placedBoxes.set(
+      id,
+      clampStickyBox({
+        x: sticky.position_x,
+        y: sticky.position_y,
+        width: sticky.width ?? STICKY_DEFAULT_WIDTH,
+        height: sticky.height ?? STICKY_DEFAULT_HEIGHT,
+      })
+    );
+  });
 
-  const fallbackBoxes = useMemo(
-    () =>
-      getFallbackBoxes(
-        stickyIds.filter((id) => !placedBoxes.has(id)),
-        Array.from(placedBoxes.values()),
-        canvasWidth
-      ),
-    [stickyIds, placedBoxes, canvasWidth]
+  const fallbackBoxes = getFallbackBoxes(
+    stickyIds.filter((id) => !placedBoxes.has(id)),
+    Array.from(placedBoxes.values()),
+    canvasWidth
   );
 
-  const getBox = useCallback(
-    (stickyId: string): TStickyBox => {
-      if (draft?.stickyId === stickyId) return draft.box;
-      return (
-        placedBoxes.get(stickyId) ??
-        fallbackBoxes.get(stickyId) ?? {
-          x: 0,
-          y: 0,
-          width: STICKY_DEFAULT_WIDTH,
-          height: STICKY_DEFAULT_HEIGHT,
-        }
-      );
-    },
-    [draft, placedBoxes, fallbackBoxes]
-  );
+  const getBox = (stickyId: string): TStickyBox => {
+    if (draft?.stickyId === stickyId) return draft.box;
+    return (
+      placedBoxes.get(stickyId) ??
+      fallbackBoxes.get(stickyId) ?? {
+        x: 0,
+        y: 0,
+        width: STICKY_DEFAULT_WIDTH,
+        height: STICKY_DEFAULT_HEIGHT,
+      }
+    );
+  };
 
-  const canvasHeight = useMemo(() => getCanvasHeight(stickyIds.map((id) => getBox(id))), [stickyIds, getBox]);
+  const canvasHeight = getCanvasHeight(stickyIds.map((id) => getBox(id)));
 
   const commit = useCallback(
     (stickyId: string, box: TStickyBox) => {

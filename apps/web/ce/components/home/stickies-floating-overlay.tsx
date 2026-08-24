@@ -14,16 +14,27 @@
  */
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
+import useSWR from "swr";
 import { useSticky } from "@/hooks/use-stickies";
 import { StickiesFree } from "@/components/stickies/layout/stickies-free";
 import { stickiesFloating, stickiesHidden } from "./stickies-floating";
 
 export const HomeStickiesFloatingOverlay = observer(function HomeStickiesFloatingOverlay() {
   const { workspaceSlug } = useParams();
-  const { getWorkspaceStickyIds } = useSticky();
-  const workspaceStickies = workspaceSlug ? getWorkspaceStickyIds(workspaceSlug.toString()) : [];
+  const { getWorkspaceStickyIds, fetchWorkspaceStickies } = useSticky();
+  const slug = workspaceSlug?.toString();
 
-  if (!stickiesFloating.on || stickiesHidden.on || !workspaceSlug || workspaceStickies.length === 0) return null;
+  // The docked preview normally fetches the stickies, but it is hidden while floating — so on a
+  // fresh Home load with floating already on, nothing had fetched them and the overlay stayed
+  // empty until you toggled it off and on. Fetch them here too, so floating shows on first paint.
+  useSWR(
+    slug && stickiesFloating.on ? `FLOATING_STICKIES_${slug}` : null,
+    slug && stickiesFloating.on ? () => fetchWorkspaceStickies(slug) : null
+  );
+
+  const workspaceStickies = slug ? getWorkspaceStickyIds(slug) : [];
+
+  if (!stickiesFloating.on || stickiesHidden.on || !slug || workspaceStickies.length === 0) return null;
 
   return (
     // Click-through layer: the canvas and every empty part of it let events reach the widgets

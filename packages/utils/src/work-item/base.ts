@@ -281,7 +281,9 @@ export const getComputedDisplayFilters = (
     order_by: filters?.order_by || "sort_order",
     group_by: filters?.group_by || null,
     sub_group_by: filters?.sub_group_by || null,
-    sub_issue: filters?.sub_issue || false,
+    // ARRIBADA: sub-work items off by default in the LIST (they clutter it — expand a parent),
+    // on elsewhere (the timeline draws each as its own bar).
+    sub_issue: filters?.sub_issue ?? (filters?.layout !== EIssueLayoutTypes.LIST),
     show_empty_groups: filters?.show_empty_groups || false,
   };
 };

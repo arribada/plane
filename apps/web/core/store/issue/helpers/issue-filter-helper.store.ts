@@ -100,7 +100,9 @@ export class IssueFilterHelperStore implements IIssueFilterHelperStore {
         ? EIssueGroupByToServerOptions[displayFilters.sub_group_by]
         : undefined,
       order_by: displayFilters?.order_by || undefined,
-      sub_issue: displayFilters?.sub_issue ?? true,
+      // ARRIBADA: sub-work items default to hidden in the LIST (they only clutter it — expand a
+      // parent to see them) but shown on the timeline, where a sub-item is a bar of its own.
+      sub_issue: displayFilters?.sub_issue ?? (displayFilters?.layout !== EIssueLayoutTypes.LIST),
     };
 
     const issueFiltersParams: Partial<Record<TIssueParams, boolean | string>> = {};

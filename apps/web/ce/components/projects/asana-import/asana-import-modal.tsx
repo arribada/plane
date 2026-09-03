@@ -16,11 +16,12 @@ import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { Loader2, Upload, X, CheckCircle2, AlertTriangle, ChevronDown } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import type { IModule, ICycle } from "@plane/types";
+import type { IModule, ICycle, IIssueLabel } from "@plane/types";
 import { cn } from "@plane/utils";
 import { ModuleService } from "@/services/module.service";
 import { CycleService } from "@/services/cycle.service";
 import { IssueService } from "@/services/issue/issue.service";
+import { IssueLabelService } from "@/services/issue/issue_label.service";
 import { WorkspaceService } from "@/services/workspace.service";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { rowsFromCsv, type TAsanaRow } from "./asana-csv";
@@ -28,6 +29,7 @@ import { rowsFromCsv, type TAsanaRow } from "./asana-csv";
 const moduleService = new ModuleService();
 const cycleService = new CycleService();
 const issueService = new IssueService();
+const issueLabelService = new IssueLabelService();
 const workspaceService = new WorkspaceService();
 const arribadaService = new ArribadaService();
 
@@ -39,7 +41,7 @@ type Props = {
   onImported?: () => void | Promise<void>;
 };
 
-type TSectionType = "module" | "sprint" | "milestone" | "tasks";
+type TSectionType = "module" | "sprint" | "label" | "milestone" | "tasks";
 /** What a section becomes. `targetId` set = use that existing module/sprint; unset = create one
  *  named `newName`. Ignored for milestone/tasks. */
 type TSectionChoice = { type: TSectionType; targetId?: string; newName: string };
@@ -63,6 +65,8 @@ const buildDescription = (row: TAsanaRow): string => {
 const guessType = (section: string, sectionRows: TAsanaRow[]): TSectionType => {
   const name = section.toLowerCase();
   if (/sprint|cycle|iteration|semaine|week/.test(name)) return "sprint";
+  // Requirements / specs / stories are a KIND of item, best carried as a label you can filter by.
+  if (/requirement|exigence|\bspec\b|user stor|acceptance/.test(name)) return "label";
   if (/date|milestone|jalon|deliverable|livrable|gate|deadline|key/.test(name)) return "milestone";
   // A section where every task has a due date and none has notes reads like a list of dates.
   if (sectionRows.length > 0 && sectionRows.every((r) => r.dueDate) && sectionRows.every((r) => !r.notes.trim()))
@@ -73,6 +77,7 @@ const guessType = (section: string, sectionRows: TAsanaRow[]): TSectionType => {
 const TYPE_LABEL: Record<TSectionType, string> = {
   module: "Module",
   sprint: "Sprint",
+  label: "Label",
   milestone: "Milestones",
   tasks: "Tasks only",
 };
@@ -84,6 +89,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
   const [rows, setRows] = useState<TAsanaRow[]>([]);
   const [modules, setModules] = useState<IModule[]>([]);
   const [cycles, setCycles] = useState<ICycle[]>([]);
+  const [labels, setLabels] = useState<IIssueLabel[]>([]);
   const [emailToUserId, setEmailToUserId] = useState<Record<string, string>>({});
   const [choices, setChoices] = useState<Record<string, TSectionChoice>>({});
   const [error, setError] = useState<string | null>(null);
@@ -128,16 +134,20 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
     // Fetch what we can map onto, then guess a type + target per section.
     let mods: IModule[] = [];
     let cyc: ICycle[] = [];
+    let labs: IIssueLabel[] = [];
     try {
-      const [m, c, members] = await Promise.all([
+      const [m, c, l, members] = await Promise.all([
         moduleService.getModules(workspaceSlug, projectId).catch(() => [] as IModule[]),
         cycleService.getCyclesWithParams(workspaceSlug, projectId).catch(() => [] as ICycle[]),
+        issueLabelService.getProjectLabels(workspaceSlug, projectId).catch(() => [] as IIssueLabel[]),
         workspaceService.fetchWorkspaceMembers(workspaceSlug).catch(() => []),
       ]);
       mods = m;
       cyc = c;
+      labs = l;
       setModules(m);
       setCycles(c);
+      setLabels(l);
       const map: Record<string, string> = {};
       for (const member of members) {
         const email = (member.member?.email || member.email || "").toLowerCase();
@@ -154,6 +164,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
       let targetId: string | undefined;
       if (type === "module") targetId = mods.find((m) => m.name.trim().toLowerCase() === section.trim().toLowerCase())?.id;
       if (type === "sprint") targetId = cyc.find((c) => c.name.trim().toLowerCase() === section.trim().toLowerCase())?.id;
+      if (type === "label") targetId = labs.find((l) => l.name.trim().toLowerCase() === section.trim().toLowerCase())?.id;
       seeded[section] = { type, targetId, newName: section };
     }
     setChoices(seeded);
@@ -198,6 +209,16 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
           }
         }
         target[section] = { type: "sprint", id };
+      } else if (choice.type === "label") {
+        let id = choice.targetId;
+        if (!id) {
+          try {
+            id = (await issueLabelService.createIssueLabel(workspaceSlug, projectId, { name: (choice.newName || section).slice(0, 255) })).id;
+          } catch {
+            /* leave unlabelled */
+          }
+        }
+        target[section] = { type: "label", id };
       } else {
         target[section] = { type: choice.type };
       }
@@ -212,6 +233,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
         const assigneeId = row.assigneeEmail ? emailToUserId[row.assigneeEmail] : undefined;
         const t = row.section ? target[row.section] : undefined;
         const moduleId = t?.type === "module" ? t.id : undefined;
+        const labelId = t?.type === "label" ? t.id : undefined;
         const issue = await issueService.createIssue(workspaceSlug, projectId, {
           name: row.name.slice(0, 255),
           description_html: buildDescription(row),
@@ -219,6 +241,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
           ...(row.dueDate ? { target_date: row.dueDate } : {}),
           ...(assigneeId ? { assignee_ids: [assigneeId] } : {}),
           ...(moduleId ? { module_ids: [moduleId] } : {}),
+          ...(labelId ? { label_ids: [labelId] } : {}),
         });
         idByName[row.name] = issue.id;
         if (t?.type === "sprint" && t.id) (cycleIssues[t.id] ??= []).push(issue.id);
@@ -317,7 +340,9 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
                   const choice = choices[section] ?? { type: "module" as TSectionType, newName: section };
                   const sectionRows = rows.filter((r) => r.section === section);
                   const isExpanded = expanded.has(section);
-                  const entities = choice.type === "sprint" ? cycles : modules;
+                  const entities = (
+                    choice.type === "sprint" ? cycles : choice.type === "label" ? labels : modules
+                  ) as { id: string; name: string }[];
                   return (
                     <div key={section} className="rounded-md border border-subtle p-2.5">
                       <button
@@ -357,13 +382,13 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
                           onChange={(e) => setChoice(section, { type: e.target.value as TSectionType, targetId: undefined })}
                           className="rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
                         >
-                          {(["module", "sprint", "milestone", "tasks"] as TSectionType[]).map((t) => (
+                          {(["module", "sprint", "label", "milestone", "tasks"] as TSectionType[]).map((t) => (
                             <option key={t} value={t}>
                               {TYPE_LABEL[t]}
                             </option>
                           ))}
                         </select>
-                        {(choice.type === "module" || choice.type === "sprint") && (
+                        {(choice.type === "module" || choice.type === "sprint" || choice.type === "label") && (
                           <>
                             <select
                               value={choice.targetId ?? "new"}

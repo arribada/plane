@@ -8,7 +8,7 @@ import React, { useRef, useState } from "react";
 import { observer } from "mobx-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArchiveRestoreIcon, Settings, UserPlus } from "lucide-react";
+import { ArchiveRestoreIcon, FileDown, Settings, UserPlus } from "lucide-react";
 // plane imports
 import { EUserPermissions, EUserPermissionsLevel, IS_FAVORITE_MENU_OPEN } from "@plane/constants";
 import { useLocalStorage } from "@plane/hooks";
@@ -30,6 +30,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web
 import { PROJECT_LIFECYCLE_STATUSES } from "@/plane-web/types/arribada";
+import { AsanaImportModal } from "@/plane-web/components/projects/asana-import/asana-import-modal";
 // local imports
 import { CoverImage } from "@/components/common/cover-image";
 import { DeleteProjectModal } from "./delete-project-modal";
@@ -46,6 +47,7 @@ export const ProjectCard = observer(function ProjectCard(props: Props) {
   const [deleteProjectModalOpen, setDeleteProjectModal] = useState(false);
   const [joinProjectModalOpen, setJoinProjectModal] = useState(false);
   const [restoreProject, setRestoreProject] = useState(false);
+  const [asanaImportOpen, setAsanaImportOpen] = useState(false);
   // refs
   const projectCardRef = useRef(null);
   // router
@@ -139,6 +141,13 @@ export const ProjectCard = observer(function ProjectCard(props: Props) {
       shouldRender: !isArchived && (hasAdminRole || hasMemberRole),
     },
     {
+      key: "import-asana",
+      action: () => setAsanaImportOpen(true),
+      title: "Import from Asana",
+      icon: FileDown,
+      shouldRender: !isArchived && (hasAdminRole || hasMemberRole),
+    },
+    {
       key: "join",
       action: () => setJoinProjectModal(true),
       title: "Join",
@@ -177,6 +186,13 @@ export const ProjectCard = observer(function ProjectCard(props: Props) {
 
   return (
     <>
+      {/* ARRIBADA: bring an Asana export into this existing project. */}
+      <AsanaImportModal
+        isOpen={asanaImportOpen}
+        onClose={() => setAsanaImportOpen(false)}
+        workspaceSlug={workspaceSlug?.toString() ?? ""}
+        projectId={project.id}
+      />
       {/* Delete Project Modal */}
       <DeleteProjectModal
         project={project}

@@ -13,6 +13,9 @@ import { getAssetIdFromUrl, checkURLValidity } from "@plane/utils";
 import useKeypress from "@/hooks/use-keypress";
 // plane web components
 import { CreateProjectForm } from "@/plane-web/components/projects/create/root";
+// ARRIBADA: optional Asana CSV import, offered once the project exists.
+import { AsanaImportModal } from "@/plane-web/components/projects/asana-import/asana-import-modal";
+import { FileDown } from "lucide-react";
 // plane web types
 import type { TProject } from "@/plane-web/types/projects";
 // services
@@ -39,6 +42,7 @@ export function CreateProjectModal(props: Props) {
   // states
   const [currentStep, setCurrentStep] = useState<EProjectCreationSteps>(EProjectCreationSteps.CREATE_PROJECT);
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
+  const [asanaOpen, setAsanaOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -79,7 +83,28 @@ export function CreateProjectModal(props: Props) {
         />
       )}
       {currentStep === EProjectCreationSteps.FEATURE_SELECTION && (
-        <ProjectFeatureUpdate projectId={createdProjectId} workspaceSlug={workspaceSlug} onClose={onClose} />
+        <>
+          {/* ARRIBADA: bring an Asana project across as work items, right after the project exists. */}
+          <div className="flex justify-end px-6 pt-4">
+            <button
+              type="button"
+              onClick={() => setAsanaOpen(true)}
+              className="flex items-center gap-1.5 rounded-md border border-subtle px-3 py-1.5 text-13 font-medium text-secondary hover:bg-layer-2 hover:text-primary"
+            >
+              <FileDown className="size-4" />
+              Import tasks from Asana (CSV)
+            </button>
+          </div>
+          <ProjectFeatureUpdate projectId={createdProjectId} workspaceSlug={workspaceSlug} onClose={onClose} />
+          {createdProjectId && (
+            <AsanaImportModal
+              isOpen={asanaOpen}
+              onClose={() => setAsanaOpen(false)}
+              workspaceSlug={workspaceSlug}
+              projectId={createdProjectId}
+            />
+          )}
+        </>
       )}
     </ModalCore>
   );

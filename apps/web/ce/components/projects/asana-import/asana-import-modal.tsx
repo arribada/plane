@@ -12,7 +12,7 @@
  */
 import { useMemo, useState } from "react";
 import { observer } from "mobx-react";
-import { Loader2, Upload, X, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, Upload, X, CheckCircle2, AlertTriangle, ChevronDown } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { IModule } from "@plane/types";
 import { cn } from "@plane/utils";
@@ -65,6 +65,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [result, setResult] = useState<{ created: number; failed: number } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const sections = useMemo(() => Array.from(new Set(rows.map((r) => r.section).filter(Boolean))), [rows]);
   const matchedAssignees = useMemo(
@@ -263,9 +264,45 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
                 {sections.length === 0 && <p className="text-12 text-tertiary">No sections in this export.</p>}
                 {sections.map((section) => {
                   const choice = choices[section] ?? { action: "new", newName: section };
+                  const sectionRows = rows.filter((r) => r.section === section);
+                  const isExpanded = expanded.has(section);
                   return (
                     <div key={section} className="rounded-md border border-subtle p-2.5">
-                      <div className="mb-1.5 text-13 font-medium text-primary">{section}</div>
+                      {/* The section header doubles as a preview toggle: see the tasks inside before
+                          deciding what the section should become. */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpanded((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(section)) next.delete(section);
+                            else next.add(section);
+                            return next;
+                          })
+                        }
+                        className="mb-1.5 flex w-full items-center justify-between gap-2 text-left"
+                      >
+                        <span className="text-13 font-medium text-primary">{section}</span>
+                        <span className="flex shrink-0 items-center gap-1 text-11 text-tertiary">
+                          {sectionRows.length} task{sectionRows.length === 1 ? "" : "s"}
+                          <ChevronDown className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")} />
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <ul className="mb-2 max-h-40 space-y-1 overflow-y-auto rounded bg-layer-2 p-2">
+                          {sectionRows.map((r, i) => (
+                            <li key={`${section}-${i}`} className="flex items-center justify-between gap-2 text-11">
+                              <span className="truncate text-secondary">{r.name}</span>
+                              <span className="flex shrink-0 items-center gap-2 text-tertiary">
+                                {r.dueDate && <span className="tabular-nums">{r.dueDate}</span>}
+                                {r.assigneeEmail && (
+                                  <span className="max-w-[130px] truncate">{r.assigneeEmail}</span>
+                                )}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 text-12">
                         <select
                           value={choice.action === "existing" ? choice.moduleId ?? "" : choice.action}

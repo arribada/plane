@@ -652,6 +652,8 @@ export class ArribadaService extends APIService {
       tracks: string[];
       task_keys?: string[];
       start_date?: string | null;
+      // ARRIBADA: an optional deadline; when set the plan is fitted to the start→target window.
+      target_date?: string | null;
       capacity?: Record<string, number>;
       duration_overrides?: Record<string, number>;
       // {task key: discipline the lead moved it to}, replacing the catalogue's.

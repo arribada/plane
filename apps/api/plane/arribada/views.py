@@ -4904,6 +4904,31 @@ class ProjectSetupPlanEndpoint(BaseAPIView):
         )
         end = max((v["target"] for v in placed.values()), default=start)
 
+        # ARRIBADA: fit the plan into an optional deadline. When a target date is given and the
+        # computed plan overruns it, scale every task's days to the window and reschedule, so the
+        # proposed durations reflect the working days actually available between start and end —
+        # never below one day. Pinned tasks keep their fixed dates (schedule honours them), so
+        # scaling their days is a no-op. Absent a target, nothing changes.
+        from .scheduling import weekdays_between as _weekdays_between
+
+        target = _parse_date(request.data.get("target_date"))
+        if target and target >= start:
+            available = _weekdays_between(start, target)
+            planned = _weekdays_between(start, end)
+            if available >= 1 and planned > available:
+                factor = available / planned
+                for _t in tasks:
+                    _t["days"] = max(1, round((_positive(_t.get("days"), 365) or 1) * factor))
+                placed, warnings = schedule(
+                    tasks,
+                    start,
+                    capacity,
+                    people,
+                    pinned_dates,
+                    _holidays_for(slug, DEFAULT_COUNTRY, start, horizon),
+                )
+                end = max((v["target"] for v in placed.values()), default=start)
+
         # How much each task can slip. Derived from the dates that were just placed,
         # so it can never disagree with them — which a separate critical-path
         # endpoint computed from the database eventually would.

@@ -102,6 +102,21 @@ const addDays = (date: string, days: number): string => {
 /** ISO dates sort as text, so the earlier one is just the smaller string. */
 const minDate = (a: string, b: string): string => (a <= b ? a : b);
 
+/** Mon–Fri days in the inclusive range — the working-day budget the plan has to fit into. */
+const weekdaysBetween = (start: string, end: string): number => {
+  if (!start || !end || end < start) return 0;
+  let count = 0;
+  let ms = Date.parse(`${start}T00:00:00Z`);
+  const endMs = Date.parse(`${end}T00:00:00Z`);
+  if (Number.isNaN(ms) || Number.isNaN(endMs)) return 0;
+  while (ms <= endMs) {
+    const day = new Date(ms).getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+    ms += 86_400_000;
+  }
+  return count;
+};
+
 function WizardProgress({ current, total }: { current: number; total: number }) {
   return (
     <div className="flex flex-col justify-center">
@@ -144,6 +159,9 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const [fieldDays, setFieldDays] = useState("10");
   const [productionDays, setProductionDays] = useState("20");
   const [startDate, setStartDate] = useState(today());
+  // ARRIBADA: an optional delivery deadline set up front, so the plan is fitted to the window
+  // between start and end rather than only computed forward from the start.
+  const [endDate, setEndDate] = useState("");
   // 2 — team
   const [team, setTeam] = useState<TTeamMember[] | null>(null);
   const [capacity, setCapacity] = useState<Record<string, number>>({});
@@ -242,6 +260,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       .getSchedule(slug, projectId)
       .then((s) => {
         if (s?.start_date) setStartDate(s.start_date);
+        if (s?.target_date) setEndDate(s.target_date);
         return undefined;
       })
       .catch(() => {});
@@ -489,6 +508,8 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         tracks,
         task_keys: [...taskKeys],
         start_date: startDate || null,
+        // ARRIBADA: the optional deadline — the backend fits the plan into the window when set.
+        target_date: endDate || null,
         capacity,
         duration_overrides: durations,
         role_overrides: roleOverrides,
@@ -518,7 +539,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
       // one. Overwriting it on every rebuild wiped the date they had just typed —
       // including the deadline a warning had told them to work toward, which is
       // the one moment they are most likely to press Rebuild.
-      if (!reflow && !endTouched.current) setEndOverride(result.end_date);
+      if (!reflow && !endTouched.current) setEndOverride(endDate || result.end_date);
     } catch (e) {
       setError(errorMessage(e, "Could not build a plan."));
     } finally {
@@ -1028,17 +1049,39 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
                 })}
             </div>
 
-            <div>
-              <label className={label} htmlFor={`${uid}-start`}>
-                Start date
-              </label>
-              <input
-                id={`${uid}-start`}
-                type="date"
-                className={cn(field, "w-44")}
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <label className={label} htmlFor={`${uid}-start`}>
+                  Start date
+                </label>
+                <input
+                  id={`${uid}-start`}
+                  type="date"
+                  className={cn(field, "w-44")}
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              {/* ARRIBADA: an optional deadline. When set, the plan is fitted to the window —
+                  the durations are scaled to land the last task on or before it. */}
+              <div>
+                <label className={label} htmlFor={`${uid}-end`}>
+                  End date <span className="normal-case text-tertiary">(optional)</span>
+                </label>
+                <input
+                  id={`${uid}-end`}
+                  type="date"
+                  className={cn(field, "w-44")}
+                  value={endDate}
+                  min={startDate || undefined}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+              {endDate && endDate >= startDate && (
+                <p className="pb-1.5 text-12 text-secondary">
+                  {weekdaysBetween(startDate, endDate)} working days — the tasks are proposed to fit this window.
+                </p>
+              )}
             </div>
           </div>
         );

@@ -845,9 +845,30 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     }
   };
 
+  // ARRIBADA: when a deadline is set, propose each task's duration so the ticked tasks' days sum
+  // to the working-day budget — the days DEPEND on the window, in proportion to the catalogue's
+  // own estimate. Run on the way into "Which tasks?" (not on every keystroke), so an edit made
+  // there survives; changing the end date and stepping forward again re-proposes.
+  const proposeDurations = () => {
+    if (agile || !endDate || endDate < startDate || !catalogue) return;
+    const available = weekdaysBetween(startDate, endDate);
+    if (available < 1) return;
+    const all = catalogue.tracks.flatMap((t) => t.tasks);
+    const catDays = (key: string) => all.find((t) => t.key === key)?.days ?? 1;
+    const selected = [...taskKeys];
+    const total = selected.reduce((sum, key) => sum + catDays(key), 0);
+    if (total <= 0) return;
+    const factor = available / total;
+    const proposed: Record<string, number> = {};
+    for (const key of selected) proposed[key] = Math.max(1, Math.min(365, Math.round(catDays(key) * factor)));
+    setDurations(proposed);
+  };
+
   const next = async () => {
     if (busy) return;
     setError(null);
+    // Stepping into "Which tasks?" with a deadline set fits the proposed durations to the window.
+    if (steps[Math.min(index + 1, steps.length - 1)]?.key === "tasks") proposeDurations();
     // Arriving at the sprint step seeds it with the ceremonies this team runs —
     // once. Re-seeding on every visit would resurrect rows somebody deleted on
     // purpose, which is why it only fires on an untouched list.
@@ -1282,6 +1303,12 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
               {taskKeys.size} task(s) selected. Untick anything this project does not go through; a dependency on a task
               you drop is dropped with it, so the work behind it simply moves earlier.
             </p>
+            {endDate && endDate >= startDate && (
+              <p className="rounded bg-accent-primary/5 px-2.5 py-1.5 text-12 text-secondary">
+                Durations proposed to fit your {weekdaysBetween(startDate, endDate)} working-day window — edit any of
+                them; the plan reschedules around your changes.
+              </p>
+            )}
             <SetupTaskPicker
               tracks={pickedTracks}
               selected={taskKeys}

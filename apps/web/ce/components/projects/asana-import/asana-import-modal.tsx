@@ -226,6 +226,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
 
     // Pass 1: create every work item.
     const idByName: Record<string, string> = {};
+    const moduleIssues: Record<string, string[]> = {};
     const cycleIssues: Record<string, string[]> = {};
     const milestoneIssueIds: string[] = [];
     for (const row of rows) {
@@ -244,6 +245,8 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
           ...(labelId ? { label_ids: [labelId] } : {}),
         });
         idByName[row.name] = issue.id;
+        // module_ids on create does NOT make the ModuleIssue link, so collect and add them below.
+        if (t?.type === "module" && t.id) (moduleIssues[t.id] ??= []).push(issue.id);
         if (t?.type === "sprint" && t.id) (cycleIssues[t.id] ??= []).push(issue.id);
         if (t?.type === "milestone") milestoneIssueIds.push(issue.id);
         created += 1;
@@ -253,7 +256,10 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
       setProgress((p) => ({ ...p, done: p.done + 1 }));
     }
 
-    // Group into sprints, and mark the milestone sections' items as deliverables.
+    // Group into modules and sprints, and mark the milestone sections' items as deliverables.
+    for (const [moduleId, issues] of Object.entries(moduleIssues)) {
+      if (issues.length) await moduleService.addIssuesToModule(workspaceSlug, projectId, moduleId, { issues }).catch(() => {});
+    }
     for (const [cycleId, issues] of Object.entries(cycleIssues)) {
       if (issues.length) await issueService.addIssueToCycle(workspaceSlug, projectId, cycleId, { issues }).catch(() => {});
     }

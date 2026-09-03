@@ -18,6 +18,8 @@ import { useProject } from "@/hooks/store/use-project";
 // local imports
 import { ArchiveRestoreProjectModal } from "../archive-restore-modal";
 import { DeleteProjectModal } from "../delete-project-modal";
+// ARRIBADA: bring an Asana CSV export into this project.
+import { AsanaImportModal } from "@/plane-web/components/projects/asana-import/asana-import-modal";
 
 type Props = {
   projectId: string;
@@ -30,6 +32,7 @@ export const GeneralProjectSettingsControlSection = observer(function GeneralPro
   // states
   const [selectProject, setSelectedProject] = useState<string | null>(null);
   const [archiveProject, setArchiveProject] = useState<boolean>(false);
+  const [asanaOpen, setAsanaOpen] = useState<boolean>(false);
   // params
   const { workspaceSlug } = useParams();
   // store hooks
@@ -55,6 +58,27 @@ export const GeneralProjectSettingsControlSection = observer(function GeneralPro
         isOpen={Boolean(selectProject)}
         onClose={() => setSelectedProject(null)}
       />
+      {workspaceSlug && (
+        <AsanaImportModal
+          isOpen={asanaOpen}
+          onClose={() => setAsanaOpen(false)}
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+        />
+      )}
+      {/* ARRIBADA: a discoverable, visible entry point for the Asana CSV import. */}
+      <div className="mb-4 rounded-lg border border-subtle bg-layer-2">
+        <SettingsBoxedControlItem
+          className="border-0"
+          title="Import from Asana"
+          description="Upload an Asana project CSV export to create work items here — names, notes, dates, assignees (by email), the parent/sub-task tree and blocked-by links are carried across."
+          control={
+            <Button variant="secondary" onClick={() => setAsanaOpen(true)}>
+              Import CSV
+            </Button>
+          }
+        />
+      </div>
       <div className="rounded-lg border border-subtle bg-layer-2">
         {/* Project Selector */}
         <SettingsBoxedControlItem

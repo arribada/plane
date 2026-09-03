@@ -235,10 +235,13 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
         const t = row.section ? target[row.section] : undefined;
         const moduleId = t?.type === "module" ? t.id : undefined;
         const labelId = t?.type === "label" ? t.id : undefined;
+        // A milestone with only a due date (Asana Key Dates have no start) must carry start ==
+        // target, or the timeline draws its two bar handles instead of a clean diamond.
+        const startForRow = row.startDate || (t?.type === "milestone" && row.dueDate ? row.dueDate : "");
         const issue = await issueService.createIssue(workspaceSlug, projectId, {
           name: row.name.slice(0, 255),
           description_html: buildDescription(row),
-          ...(row.startDate ? { start_date: row.startDate } : {}),
+          ...(startForRow ? { start_date: startForRow } : {}),
           ...(row.dueDate ? { target_date: row.dueDate } : {}),
           ...(assigneeId ? { assignee_ids: [assigneeId] } : {}),
           ...(moduleId ? { module_ids: [moduleId] } : {}),

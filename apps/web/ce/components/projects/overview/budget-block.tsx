@@ -948,7 +948,10 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       // the second click would leave somebody pressing it harder.
                       disabled={!!deciding}
                       className="flex w-full md:w-auto items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:opacity-50"
-                      aria-label="Approve purchase"
+                      // Keep the item in the accessible name ("Approve 10 Linkit boards"),
+                      // not a bare "Approve purchase": it tells a screen-reader user WHICH
+                      // purchase, and it is the name the approve test asserts on.
+                      aria-label={`Approve ${r.label}`}
                     >
                       <Check className="size-3" />
                       {deciding === r.id ? "Saving…" : "Approve"}
@@ -957,7 +960,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       type="button"
                       onClick={() => void decide(r.id, "rejected")}
                       disabled={!!deciding}
-                      aria-label="Reject purchase"
+                      aria-label={`Reject ${r.label}`}
                       // Same box as Approve: the two sit 8px apart and one of them
                       // was a 20px target, which is how a thumb aiming at Reject
                       // approves a purchase instead.

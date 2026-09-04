@@ -7,6 +7,7 @@
 import React from "react";
 import { isEmpty } from "lodash-es";
 import { observer } from "mobx-react";
+import { EIssueLayoutTypes } from "@plane/types";
 import type {
   IIssueDisplayFilterOptions,
   IIssueDisplayProperties,
@@ -129,7 +130,9 @@ export const DisplayFiltersSelection = observer(function DisplayFiltersSelection
           <FilterExtraOptions
             selectedExtraOptions={{
               show_empty_groups: displayFilters?.show_empty_groups ?? true,
-              sub_issue: displayFilters?.sub_issue ?? true,
+              // ARRIBADA: the toggle's shown state must match the effective default (hidden in the
+              // LIST, shown elsewhere), or it reads CHECKED while the list already hides sub-items.
+              sub_issue: displayFilters?.sub_issue ?? displayFilters?.layout !== EIssueLayoutTypes.LIST,
             }}
             handleUpdate={(key, val) =>
               handleDisplayFiltersUpdate({

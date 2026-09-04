@@ -184,14 +184,27 @@ export class StickyStore implements IStickyStore {
     this.showAddNewSticky = false;
     this.creatingSticky = true;
     const workspaceStickies = this.workspaceStickies[workspaceSlug] || [];
-    const response = await this.stickyService.createSticky(workspaceSlug, sticky);
-    runInAction(() => {
-      this.stickies[response.id] = response;
-      this.workspaceStickies[workspaceSlug] = [response.id, ...workspaceStickies];
-      this.activeStickyId = response.id;
-      this.recentStickyId = response.id;
-      this.creatingSticky = false;
-    });
+    try {
+      const response = await this.stickyService.createSticky(workspaceSlug, sticky);
+      runInAction(() => {
+        this.stickies[response.id] = response;
+        this.workspaceStickies[workspaceSlug] = [response.id, ...workspaceStickies];
+        this.activeStickyId = response.id;
+        this.recentStickyId = response.id;
+      });
+    } catch (error) {
+      // ARRIBADA: a failed create used to leave `creatingSticky` true and
+      // `showAddNewSticky` false forever, so the Add button stayed disabled with
+      // no way back. Re-open the affordance and rethrow so the caller can toast.
+      runInAction(() => {
+        this.showAddNewSticky = true;
+      });
+      throw new Error("Failed to create sticky", { cause: error });
+    } finally {
+      runInAction(() => {
+        this.creatingSticky = false;
+      });
+    }
   };
 
   updateSticky = async (workspaceSlug: string, id: string, updates: Partial<TSticky>) => {

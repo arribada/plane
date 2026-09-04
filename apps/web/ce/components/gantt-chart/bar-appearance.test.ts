@@ -103,21 +103,23 @@ describe("overdue", () => {
 });
 
 describe("milestones", () => {
-  it("takes the project's own marks when the project has any", () => {
-    expect(barLook(issue(), FILL, "started", TODAY, true).milestone).toBe(true);
-    // A three-day item somebody marked IS a deliverable; the same-day guess would
-    // have said no.
-    expect(
-      barLook(issue({ start_date: "2026-09-01", target_date: "2026-09-04" }), FILL, "started", TODAY, false).milestone
-    ).toBe(false);
-  });
-
-  it("falls back to the same-day guess only where nobody has marked anything", () => {
+  // A milestone (the bar steps aside for a diamond) is a same-day item — start === target — and
+  // only that, so the bar-transparency and the overlay's diamond agree. Multi-day items keep a bar,
+  // even when marked a deliverable, so a marked multi-day item never renders as a blank row.
+  it("is true for a same-day item", () => {
     const sameDay = { start_date: "2026-09-01", target_date: "2026-09-01" };
     expect(barLook(issue(sameDay), FILL, "started", TODAY).milestone).toBe(true);
+  });
+
+  it("is false for a multi-day item", () => {
     expect(
       barLook(issue({ start_date: "2026-09-01", target_date: "2026-09-04" }), FILL, "started", TODAY).milestone
     ).toBe(false);
+  });
+
+  it("is false when either date is missing", () => {
+    expect(barLook(issue({ start_date: "2026-09-01" }), FILL, "started", TODAY).milestone).toBe(false);
+    expect(barLook(issue(), FILL, "started", TODAY).milestone).toBe(false);
   });
 });
 

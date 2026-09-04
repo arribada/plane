@@ -19,6 +19,7 @@ import ProjectCreateButtons from "@/components/project/create/project-create-but
 // hooks
 import { getCoverImageType, uploadCoverImage } from "@/helpers/cover-image.helper";
 import { useProject } from "@/hooks/store/use-project";
+import { useUser } from "@/hooks/store/user";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 // plane web types
 import type { TProject } from "@/plane-web/types/projects";
@@ -57,6 +58,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
   // store
   const { t } = useTranslation();
   const { addProjectToFavorites, createProject, updateProject } = useProject();
+  const { data: currentUser } = useUser();
   // states
   const [shouldAutoSyncIdentifier, setShouldAutoSyncIdentifier] = useState(true);
   // ARRIBADA: optional schedule fields, all off by default so a plain create is unchanged.
@@ -89,6 +91,10 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
   const onSubmit = async (formData: Partial<TProject>) => {
     // Upper case identifier
     formData.identifier = formData.identifier?.toUpperCase();
+    // ARRIBADA: the creator becomes the lead unless they pick one — otherwise a workspace member
+    // who creates a project cannot set its budget (the money endpoint is lead-gated), and the
+    // amount they typed is dropped in silence.
+    if (!formData.project_lead && currentUser?.id) formData.project_lead = currentUser.id;
     const coverImage = formData.cover_image_url;
     let uploadedAssetUrl: string | null = null;
 
@@ -133,8 +139,10 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
           message: t("project_created_successfully"),
         });
 
-        // ARRIBADA: apply the optional extras onto the new project. All best effort — the project
-        // is already made, so an extra that will not save must not fail the creation.
+        // ARRIBADA: apply the optional extras onto the new project. The project is already made,
+        // so an extra that will not save must not fail the creation — but it must not be lost in
+        // silence either, so a failure is surfaced as a warning that names what did not save.
+        const failedExtras: string[] = [];
         if (startDate || targetDate || lifecycleStatus !== "active" || budgetAmount) {
           await arribadaService
             .updateSchedule(workspaceSlug.toString(), res.id, {
@@ -143,14 +151,21 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
               ...(targetDate ? { target_date: targetDate } : {}),
               ...(budgetAmount ? { budget_amount: Number(budgetAmount), budget_currency: budgetCurrency } : {}),
             })
-            .catch(() => {});
+            .catch(() => failedExtras.push(budgetAmount ? "budget/dates" : "dates/status"));
         }
         if (teamMemberIds.length > 0) {
           await projectMemberService
             .bulkAddMembersToProject(workspaceSlug.toString(), res.id, {
               members: teamMemberIds.map((member_id) => ({ member_id, role: teamRole })),
             })
-            .catch(() => {});
+            .catch(() => failedExtras.push("team members"));
+        }
+        if (failedExtras.length > 0) {
+          setToast({
+            type: TOAST_TYPE.WARNING,
+            title: "Project created — some details need permission",
+            message: `Couldn't save: ${failedExtras.join(", ")}. Set them from the project's settings.`,
+          });
         }
 
         if (setToFavorite) {

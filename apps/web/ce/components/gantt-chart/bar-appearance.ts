@@ -74,13 +74,7 @@ export const barLook = (
   issue: TIssue | undefined | null,
   background: string,
   stateGroup: string | undefined | null,
-  today: Date = new Date(),
-  /**
-   * Whether this item has been MARKED a deliverable. Undefined means nobody has
-   * said, and only then does the same-day guess below apply — so a project
-   * nobody has marked up keeps drawing exactly what it drew before.
-   */
-  marked?: boolean
+  today: Date = new Date()
 ): TBarLook => {
   const done = stateGroup === "completed";
   const cancelled = stateGroup === "cancelled";
@@ -100,10 +94,11 @@ export const barLook = (
     overdue: !done && !cancelled && end !== null && end < now.getTime(),
     done,
     cancelled,
-    // A marked deliverable, or — where nobody has marked anything — the old
-    // same-day guess. The guess is wrong in both directions, which is why the
-    // mark exists: a one-day bench test is not a gate, and "PDR delivered" is one
-    // even though the review takes two days. It stays only as a fallback.
-    milestone: marked ?? (start !== null && end !== null && Math.round((end - start) / DAY) === 0),
+    // The bar steps aside for a diamond ONLY when a diamond is actually drawn — and the overlay
+    // (GanttAdditionalLayers) draws one for a zero-duration item, start === target. Basing this on
+    // "marked" instead let a MARKED multi-day deliverable hide its bar with no diamond behind it,
+    // so the row rendered blank. Same-day is the honest predicate: no invisible items, and the
+    // bar-transparency and the diamond now agree.
+    milestone: start !== null && end !== null && Math.round((end - start) / DAY) === 0,
   };
 };

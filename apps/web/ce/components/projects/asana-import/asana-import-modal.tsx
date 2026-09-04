@@ -22,6 +22,7 @@ import { ModuleService } from "@/services/module.service";
 import { CycleService } from "@/services/cycle.service";
 import { IssueService } from "@/services/issue/issue.service";
 import { IssueLabelService } from "@/services/issue/issue_label.service";
+import { ProjectMemberService } from "@/services/project/project-member.service";
 import { WorkspaceService } from "@/services/workspace.service";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import { rowsFromCsv, type TAsanaRow } from "./asana-csv";
@@ -30,6 +31,7 @@ const moduleService = new ModuleService();
 const cycleService = new CycleService();
 const issueService = new IssueService();
 const issueLabelService = new IssueLabelService();
+const projectMemberService = new ProjectMemberService();
 const workspaceService = new WorkspaceService();
 const arribadaService = new ArribadaService();
 
@@ -136,11 +138,12 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
     let cyc: ICycle[] = [];
     let labs: IIssueLabel[] = [];
     try {
-      const [m, c, l, members] = await Promise.all([
+      const [m, c, l, members, projectMembers] = await Promise.all([
         moduleService.getModules(workspaceSlug, projectId).catch(() => [] as IModule[]),
         cycleService.getCyclesWithParams(workspaceSlug, projectId).catch(() => [] as ICycle[]),
         issueLabelService.getProjectLabels(workspaceSlug, projectId).catch(() => [] as IIssueLabel[]),
         workspaceService.fetchWorkspaceMembers(workspaceSlug).catch(() => []),
+        projectMemberService.fetchProjectMembers(workspaceSlug, projectId).catch(() => []),
       ]);
       mods = m;
       cyc = c;
@@ -148,10 +151,15 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
       setModules(m);
       setCycles(c);
       setLabels(l);
+      // Only PROJECT members with an assignable role (>= MEMBER) can be assigned server-side, so
+      // match emails against THEM — a workspace member who is not on the project would import
+      // unassigned and the counter would lie.
+      const assignable = new Set(projectMembers.filter((pm) => Number(pm.role) >= 15).map((pm) => pm.member));
       const map: Record<string, string> = {};
       for (const member of members) {
         const email = (member.member?.email || member.email || "").toLowerCase();
-        if (email && member.member?.id) map[email] = member.member.id;
+        const id = member.member?.id;
+        if (email && id && assignable.has(id)) map[email] = id;
       }
       setEmailToUserId(map);
     } catch {

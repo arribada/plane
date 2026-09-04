@@ -26,7 +26,6 @@ import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { IssueIdentifier } from "@/plane-web/components/issues/issue-details/issue-identifier";
 import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-stats";
 // local imports
-import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
 import { useGanttColorScale } from "@/plane-web/components/gantt-chart/color-scale";
 import { CANCELLED_GLYPH, cancelledFill, completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
@@ -77,11 +76,10 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
    */
   const colorOverride = colors?.colorForIssue?.(issueId) ?? null;
   const fill = colorOverride || stateDetails?.color || "#3b82f6";
-  // undefined when this project has no marks at all, which is what makes barLook
-  // fall back to the same-day guess rather than declaring nothing a milestone.
-  const milestones = useProjectMilestones(workspaceSlug?.toString(), issueDetails?.project_id ?? undefined);
-  const marked = Object.keys(milestones).length > 0 ? !!milestones[issueId] : undefined;
-  const look = barLook(issueDetails, fill, stateDetails?.group, undefined, marked);
+  // The bar is a diamond only for a same-day item — the overlay draws the diamond for exactly
+  // those, so a marked multi-day deliverable keeps a visible bar rather than hiding behind a
+  // diamond that never gets drawn.
+  const look = barLook(issueDetails, fill, stateDetails?.group);
   // Inside the bar, not in the overlay. The overlay sits at zIndex 4 and the bars
   // above it: the fill was only ever visible through the 50% veil that used to
   // cover every bar, and removing that veil made it invisible outright.
@@ -105,8 +103,7 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
    * This chart and the portfolio draw it identically, on purpose.
    */
   // Named for what it governs rather than for the store key: `showCompleted` now
-  // decides both treatments. (`marked` is already taken two lines up, and means
-  // something else entirely — whether this item is a marked deliverable.)
+  // decides both the done and the cancelled treatments.
   const markClosed = colors?.showCompleted ?? false;
   const showDone = !!look.done && markClosed;
   const showCancelled = !!look.cancelled && markClosed;

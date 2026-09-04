@@ -8,7 +8,8 @@ import json
 
 # Django imports
 from django.core.serializers.json import DjangoJSONEncoder
-from django.db.models import Exists, F, OuterRef, Prefetch, Q, Subquery, Count
+from django.db.models import Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Count, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 # Third Party imports
@@ -34,6 +35,7 @@ from plane.db.models import (
     ProjectMember,
     ProjectNetwork,
     ProjectUserProperty,
+    IssueSequence,
     State,
     DEFAULT_STATES,
     Workspace,
@@ -59,7 +61,12 @@ class ProjectViewSet(BaseViewSet):
             super()
             .get_queryset()
             .filter(workspace__slug=self.kwargs.get("slug"))
-            .select_related("workspace", "workspace__owner", "default_assignee", "project_lead")
+            # ARRIBADA: arribada_schedule is a reverse OneToOne read by
+            # ProjectListSerializer.get_lifecycle_status; without it every project
+            # in the list fires its own query for the status badge (an N+1).
+            .select_related(
+                "workspace", "workspace__owner", "default_assignee", "project_lead", "arribada_schedule"
+            )
             .annotate(
                 is_favorite=Exists(
                     UserFavorite.objects.filter(
@@ -85,6 +92,22 @@ class ProjectViewSet(BaseViewSet):
                 ).values("anchor")
             )
             .annotate(sort_order=Subquery(sort_order))
+            # ARRIBADA: precompute the max IssueSequence per project so
+            # ProjectListSerializer.get_next_work_item_sequence reads an annotation
+            # instead of firing one aggregate query per project (an N+1). Coalesce to
+            # 0 so a project with no sequences yields next=1, matching the fallback.
+            .annotate(
+                next_work_item_sequence_anno=Coalesce(
+                    Subquery(
+                        IssueSequence.objects.filter(project_id=OuterRef("pk"))
+                        .order_by()
+                        .values("project_id")
+                        .annotate(m=Max("sequence"))
+                        .values("m")[:1]
+                    ),
+                    Value(0),
+                )
+            )
             .prefetch_related(
                 Prefetch(
                     "project_projectmember",
@@ -147,7 +170,10 @@ class ProjectViewSet(BaseViewSet):
 
         projects = (
             Project.objects.filter(workspace__slug=self.kwargs.get("slug"))
-            .select_related("workspace", "workspace__owner", "default_assignee", "project_lead")
+            # ARRIBADA: see the note above — avoids the lifecycle_status N+1.
+            .select_related(
+                "workspace", "workspace__owner", "default_assignee", "project_lead", "arribada_schedule"
+            )
             .annotate(
                 member_role=ProjectMember.objects.filter(
                     project_id=OuterRef("pk"),

@@ -939,7 +939,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     target 4px from Reject, and approving writes a line into the
                     project's expenses. */}
                 {canApprove ? (
-                  <span className="flex flex-shrink-0 items-center gap-2">
+                  <span className="flex flex-col md:flex-row w-full md:w-auto flex-shrink-0 items-stretch md:items-center gap-3">
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "approved")}
@@ -947,8 +947,8 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       // flight, and it SAYS so: a button that silently swallowed
                       // the second click would leave somebody pressing it harder.
                       disabled={!!deciding}
-                      className="flex items-center gap-1 rounded bg-success-primary px-3 py-1.5 text-11 text-white disabled:opacity-50"
-                      aria-label={`Approve ${r.label} — this writes the line into the project's expenses`}
+                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:opacity-50"
+                      aria-label="Approve purchase"
                     >
                       <Check className="size-3" />
                       {deciding === r.id ? "Saving…" : "Approve"}
@@ -957,11 +957,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       type="button"
                       onClick={() => void decide(r.id, "rejected")}
                       disabled={!!deciding}
-                      aria-label={`Reject ${r.label}`}
+                      aria-label="Reject purchase"
                       // Same box as Approve: the two sit 8px apart and one of them
                       // was a 20px target, which is how a thumb aiming at Reject
                       // approves a purchase instead.
-                      className="flex items-center gap-1 rounded border border-subtle px-3 py-1.5 text-11 text-secondary hover:bg-layer-1 disabled:opacity-50"
+                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded border border-subtle px-4 py-2 text-12 text-secondary hover:bg-layer-1 disabled:opacity-50"
                     >
                       <X className="size-3" />
                       Reject
@@ -1009,6 +1009,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 checked={!!budget?.schedule_from_deliveries}
                 onChange={(e) => void setDeliveryScheduling(e.target.checked)}
                 className="mt-0.5"
+                title="When on, work items linked to a purchase won't start before its expected delivery date."
               />
               <span>
                 Let the schedule wait for deliveries
@@ -1140,6 +1141,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             value={trackDraft.expected_on}
                             onChange={(e) => setTrackDraft((d) => ({ ...d, expected_on: e.target.value }))}
                             className={input}
+                            title="Date the supplier promised delivery — constrains task start dates when delivery scheduling is on."
                           />
                         </label>
                         <label className="flex flex-col gap-0.5 text-10 text-tertiary">

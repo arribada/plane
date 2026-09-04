@@ -78,7 +78,9 @@ export const GithubTasksPicker = observer(function GithubTasksPicker(props: Prop
         if (!ignore) setProjectRepos(new Set((docs?.github_repo_urls ?? []).map(normaliseRepo)));
         return undefined;
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.warn("[GithubTasksPicker] failed to load project repos:", e);
+      });
     service
       .listGithubInbox(workspaceSlug)
       .then((rows) => {

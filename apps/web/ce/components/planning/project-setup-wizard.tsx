@@ -477,8 +477,11 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
   const recountUndated = () =>
     service
       .getProjectItems(slug, projectId, true)
+      // A failed recount leaves the "N without dates" count stale — or blank on the
+      // first run — which silently misreports the work. Surface it like the team
+      // refresh does rather than swallowing it.
       .then((r) => setUndatedCount(r?.length ?? 0))
-      .catch(() => {});
+      .catch(() => setError("Couldn't refresh the count of undated work items — reopen this step to see it."));
 
   // The roster is edited in place on this step, so the capacity defaults and the
   // unstaffed warnings have to follow the edit rather than wait for a reopen.
@@ -585,17 +588,30 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         set_project_window: false,
       });
       setCreated(result);
+    } catch (e) {
+      setError(errorMessage(e, "Could not create the work items."));
+      return false;
+    }
+    // The items exist now, so a failure past this point is not a create failure.
+    // Reporting "could not create" here would be false and send the lead back to
+    // re-run a create that already succeeded — name the schedule step instead.
+    try {
       await service.updateSchedule(slug, projectId, {
         start_date: plan.start_date,
         target_date: endOverride || plan.end_date,
       });
       await recountUndated();
-      onCompleted?.();
-      return true;
     } catch (e) {
-      setError(errorMessage(e, "Could not create the work items."));
+      setError(
+        errorMessage(
+          e,
+          "Work items created, but their dates/schedule couldn't be saved — set them from the project timeline."
+        )
+      );
       return false;
     }
+    onCompleted?.();
+    return true;
   };
 
   const createPlan = async () => {
@@ -612,12 +628,23 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
         set_project_window: false,
       });
       setCreated(result);
-      await service.updateSchedule(slug, projectId, {
-        start_date: plan.start_date,
-        target_date: endOverride || plan.end_date,
-      });
-      await recountUndated();
-      onCompleted?.();
+      // The items exist now, so a failure past this point is not a create failure —
+      // saying "could not create" would be false and hide that the create worked.
+      try {
+        await service.updateSchedule(slug, projectId, {
+          start_date: plan.start_date,
+          target_date: endOverride || plan.end_date,
+        });
+        await recountUndated();
+        onCompleted?.();
+      } catch (e) {
+        setError(
+          errorMessage(
+            e,
+            "Work items created, but their dates/schedule couldn't be saved — set them from the project timeline."
+          )
+        );
+      }
     } catch (e) {
       setError(errorMessage(e, "Could not create the work items."));
     } finally {
@@ -687,7 +714,17 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
     if (driveUrl.trim() !== (linksBase.google_drive_url ?? "")) payload.google_drive_url = driveUrl.trim();
     if (chat !== (linksBase.chat_url ?? "")) payload.chat_url = chat;
     if (repos.join("\n") !== (linksBase.github_repo_urls ?? []).join("\n")) payload.github_repo_urls = repos;
-    if (Object.keys(payload).length > 0) await service.setWikiDoc(slug, projectId, payload);
+    if (Object.keys(payload).length > 0) {
+      // A write that fails otherwise bubbles to the generic outer catch, which names
+      // the wrong step. Surface it specifically, the same way the read failure above
+      // does, so the lead knows the links — not the rest of the setup — didn't save.
+      try {
+        await service.setWikiDoc(slug, projectId, payload);
+      } catch (e) {
+        setError(errorMessage(e, "Could not save project links."));
+        return false;
+      }
+    }
     return true;
   };
 

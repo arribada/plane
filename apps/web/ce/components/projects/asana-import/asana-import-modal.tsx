@@ -347,12 +347,19 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
 
           {step === "map" && (
             <div className="space-y-4">
-              <p className="text-13 text-secondary">
+              <p
+                className="text-13 text-secondary"
+                title="Guessed from the section name: dates/deliverables/gates → Milestones; sprint/cycle → Sprint; requirement/spec → Label; otherwise → Module. Override with the dropdown."
+              >
                 <span className="font-medium text-primary">{rows.length}</span> tasks found. Each section is set to
                 a guessed type — change it if the guess is wrong, then import.
               </p>
               <div className="space-y-2">
-                {sections.length === 0 && <p className="text-12 text-tertiary">No sections in this export.</p>}
+                {sections.length === 0 && (
+                  <p className="text-12 text-tertiary">
+                    No sections found — tasks will be imported as ungrouped items.
+                  </p>
+                )}
                 {sections.map((section) => {
                   const choice = choices[section] ?? { type: "module" as TSectionType, newName: section };
                   const sectionRows = rows.filter((r) => r.section === section);

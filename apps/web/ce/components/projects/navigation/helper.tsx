@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { LayoutDashboard, Wallet } from "lucide-react";
+import { LayoutDashboard, LayoutGrid, Wallet } from "lucide-react";
 // plane imports
 import { EUserPermissions, EProjectFeatureKey } from "@plane/constants";
 import { CycleIcon, IntakeIcon, ModuleIcon, PageIcon, ViewsIcon, WorkItemsIcon } from "@plane/propel/icons";
@@ -53,6 +53,18 @@ export const getProjectFeatureNavigation = (
     access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
     shouldRender: true,
     sortOrder: 1,
+  },
+  {
+    // ARRIBADA: a read-only view of the project's work grouped and coloured by
+    // discipline — the list counterpart to the gantt's colour-by-discipline.
+    i18n_key: "sidebar.disciplines",
+    key: "disciplines",
+    name: "Disciplines",
+    href: `/${workspaceSlug}/projects/${projectId}/disciplines`,
+    icon: LayoutGrid,
+    access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+    shouldRender: true,
+    sortOrder: 2,
   },
   {
     i18n_key: "sidebar.cycles",

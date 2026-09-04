@@ -88,6 +88,38 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
       });
   };
 
+  // The click (no-drag) outcome, shared by pointer and keyboard. Returns true
+  // when the interaction is fully resolved (link completed or source toggled
+  // off) so the pointer path can stop before it arms drag tracking. Keyboard
+  // users get the exact same two-step link as a click, without touching the
+  // drag gesture below.
+  const toggleLink = (): boolean => {
+    // A source armed via an earlier click + a press on a different bar completes
+    // the two-click link immediately; a press on the armed source cancels it.
+    if (source && source !== blockId) {
+      link(blockId, source);
+      store.setLinkingSource(null);
+      return true;
+    }
+    if (source === blockId) {
+      store.setLinkingSource(null);
+      return true;
+    }
+    // Arm this bar. For a pointer this then begins drag tracking; for a
+    // keyboard this is the whole action (the second key press links).
+    store.setLinkingSource(blockId);
+    return false;
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    // Space would otherwise scroll the chart; both keys must not bubble to the
+    // bar's own handlers.
+    e.preventDefault();
+    e.stopPropagation();
+    toggleLink();
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     // Only the primary button links. Right and middle now pan the chart
     // (`use-timeline-pan.ts`), and this handler used to arm a dependency on ANY
@@ -98,20 +130,11 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
     e.stopPropagation();
     e.preventDefault();
 
-    // A source armed via an earlier click + a press on a different bar completes
-    // the two-click link immediately; a press on the armed source cancels it.
-    if (source && source !== blockId) {
-      link(blockId, source);
-      store.setLinkingSource(null);
-      return;
-    }
-    if (source === blockId) {
-      store.setLinkingSource(null);
-      return;
-    }
+    // Resolve the click-equivalent outcome first. If it completed the two-click
+    // link or cancelled the armed source, there is no drag to track.
+    if (toggleLink()) return;
 
-    // Arm this bar and start tracking a possible drag.
-    store.setLinkingSource(blockId);
+    // This bar is now armed — start tracking a possible drag.
     const el = e.currentTarget as HTMLElement;
     const rect = el.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
@@ -179,6 +202,8 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
     <button
       type="button"
       onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      aria-label="Link this work item to another"
       title={
         !source
           ? "Drag to another item to link, or click to start a dependency"
@@ -191,11 +216,17 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
       // to grab — the bar could not be dragged at all at the coarser scales.
       className={cn(
         "shadow absolute top-1/2 z-20 size-3 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-2 border-white transition-opacity hover:opacity-100",
+        // The 12px dot is far below a tappable target. The ::after overlay grows
+        // the hit area to ~44px without taking any layout, so the bar-edge
+        // offsets below stay visually identical and pointer capture is unaffected
+        // (the press still lands on this same button). Same pattern the subtask
+        // and milestone toggles use.
+        "after:absolute after:-inset-4 after:content-['']",
         narrow ? (side === "right" ? "-right-3" : "-left-3") : side === "right" ? "-right-1.5" : "-left-1.5",
         {
           "bg-blue-500 ring-blue-300 opacity-100 ring-2": isSource,
           "bg-success-primary opacity-100": isCandidate,
-          "bg-neutral-400 opacity-50": !source,
+          "bg-neutral-400 opacity-75": !source,
         }
       )}
     />

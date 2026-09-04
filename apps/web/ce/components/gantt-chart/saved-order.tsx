@@ -157,6 +157,16 @@ export const SavedOrderMenu = observer(function SavedOrderMenu({ visibleIssueIds
           type="button"
           onClick={() => void save()}
           disabled={busy || visibleIssueIds.length === 0}
+          title={
+            visibleIssueIds.length === 0
+              ? "No items are currently visible to save"
+              : "Save this arrangement for later"
+          }
+          aria-label={
+            visibleIssueIds.length === 0
+              ? "No items are currently visible to save"
+              : "Save this arrangement for later"
+          }
           className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-12 text-primary hover:bg-layer-2 disabled:opacity-50"
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}

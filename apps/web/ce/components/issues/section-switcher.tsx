@@ -52,6 +52,14 @@ const SECTIONS: Section[] = [
   },
   { key: "issues", label: "Work items", path: "issues", icon: <ListTodo className={ICON} />, enabled: () => true },
   {
+    // ARRIBADA: work items grouped/coloured by discipline. Always on, like Finance.
+    key: "disciplines",
+    label: "Disciplines",
+    path: "disciplines",
+    icon: <LayoutGrid className={ICON} />,
+    enabled: () => true,
+  },
+  {
     key: "cycles",
     label: "Sprints",
     path: "cycles",

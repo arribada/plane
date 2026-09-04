@@ -8,7 +8,7 @@ import React, { useCallback, useMemo } from "react";
 import { observer } from "mobx-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { LayoutDashboard, Wallet } from "lucide-react";
+import { LayoutDashboard, LayoutGrid, Wallet } from "lucide-react";
 import { EUserPermissionsLevel, EUserPermissions } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { CycleIcon, IntakeIcon, ModuleIcon, PageIcon, ViewsIcon, WorkItemsIcon } from "@plane/propel/icons";
@@ -108,6 +108,19 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
         access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
         shouldRender: true,
         sortOrder: 1,
+      },
+      {
+        // ARRIBADA: work items grouped and coloured by discipline (the list
+        // counterpart to the gantt's colour-by-discipline). 1.5 sits it right
+        // after Work items without a tie forcing order to fall to array position.
+        i18n_key: "sidebar.disciplines",
+        key: "disciplines",
+        name: "Disciplines",
+        href: `/${navWorkspaceSlug}/projects/${navProjectId}/disciplines`,
+        icon: LayoutGrid,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+        shouldRender: true,
+        sortOrder: 1.5,
       },
       {
         i18n_key: "sidebar.cycles",

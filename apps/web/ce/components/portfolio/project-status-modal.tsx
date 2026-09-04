@@ -16,9 +16,9 @@ import type { TProjectStatus, TProjectStatusUpdate } from "@/plane-web/types/arr
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 export const STATUS_META: Record<TProjectStatus, { label: string; color: string; dot: string }> = {
-  on_track: { label: "On track", color: "#10b981", dot: "bg-success-primary" },
-  at_risk: { label: "At risk", color: "#f59e0b", dot: "bg-warning-primary" },
-  off_track: { label: "Off track", color: "#ef4444", dot: "bg-danger-primary" },
+  on_track: { label: "On track", color: "#059669", dot: "bg-success-primary" },
+  at_risk: { label: "At risk", color: "#d97706", dot: "bg-warning-primary" },
+  off_track: { label: "Off track", color: "#dc2626", dot: "bg-danger-primary" },
 };
 
 type Props = {

@@ -241,18 +241,21 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
           {/* ARRIBADA: optional lifecycle status + planned dates. All optional — leave them and a
               plain create is unchanged; they are written to the project's schedule after it exists. */}
           <div className="space-y-3 border-t border-subtle pt-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="w-16 text-13 font-medium text-secondary">Status</span>
+            <p className="text-12 text-tertiary">{t("optional")} — you can set these now or later.</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <span className="w-full text-13 font-medium text-secondary sm:w-16">Status</span>
               {PROJECT_LIFECYCLE_STATUSES.map((s) => (
                 <button
                   key={s.key}
                   type="button"
                   onClick={() => setLifecycleStatus(s.key)}
+                  aria-label={`Set status to ${s.label}`}
+                  aria-pressed={lifecycleStatus === s.key}
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-12",
                     lifecycleStatus === s.key
                       ? "border-accent-primary text-primary"
-                      : "border-subtle text-tertiary hover:text-primary"
+                      : "border-subtle text-secondary hover:text-primary"
                   )}
                 >
                   <span className="size-2 rounded-full" style={{ backgroundColor: s.color }} />
@@ -260,11 +263,12 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center">
               <label className="flex items-center gap-2 text-13 text-secondary">
-                <span className="w-16 font-medium">Start</span>
+                <span className="w-full font-medium sm:w-16">{t("start_date")}</span>
                 <input
                   type="date"
+                  aria-label="Start date"
                   value={startDate}
                   max={targetDate || undefined}
                   onChange={(e) => setStartDate(e.target.value)}
@@ -275,6 +279,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 <span className="font-medium">Target</span>
                 <input
                   type="date"
+                  aria-label="Target date"
                   value={targetDate}
                   min={startDate || undefined}
                   onChange={(e) => setTargetDate(e.target.value)}
@@ -284,11 +289,12 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
             </div>
 
             {/* budget */}
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="w-16 text-13 font-medium text-secondary">Budget</span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <span className="w-full text-13 font-medium text-secondary sm:w-16">Budget</span>
               <input
                 type="number"
                 min={0}
+                aria-label="Budget amount"
                 value={budgetAmount}
                 onChange={(e) => setBudgetAmount(e.target.value)}
                 placeholder="Amount"
@@ -296,6 +302,8 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
               />
               <select
                 value={budgetCurrency}
+                aria-label="Budget currency"
+                title="Budget currency — the project lead can change it later in the budget view"
                 onChange={(e) => setBudgetCurrency(e.target.value)}
                 className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
               >
@@ -308,30 +316,34 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
             </div>
 
             {/* team members + their role */}
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="w-16 text-13 font-medium text-secondary">Team</span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <span className="w-full text-13 font-medium text-secondary sm:w-16">Team</span>
               <div className="h-7">
                 <MemberDropdown
                   value={teamMemberIds}
                   onChange={(ids) => setTeamMemberIds((ids ?? []) as string[])}
-                  placeholder="Add members"
+                  placeholder={t("add_members")}
                   multiple
                   buttonVariant="border-with-text"
                 />
               </div>
-              {teamMemberIds.length > 0 && (
-                <select
-                  value={teamRole}
-                  onChange={(e) => setTeamRole(Number(e.target.value) as EUserPermissions)}
-                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
-                >
-                  {TEAM_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <select
+                value={teamRole}
+                onChange={(e) => setTeamRole(Number(e.target.value) as EUserPermissions)}
+                disabled={teamMemberIds.length === 0}
+                aria-label={teamMemberIds.length === 0 ? "Member role — select members first" : "Member role"}
+                title={teamMemberIds.length === 0 ? "Select members first" : undefined}
+                className={cn(
+                  "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary",
+                  teamMemberIds.length === 0 && "opacity-50"
+                )}
+              >
+                {TEAM_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </div>

@@ -174,6 +174,15 @@ export const coreRoutes: RouteConfigEntry[] = [
             ),
           ]),
 
+          // Project Disciplines (Arribada) — work items grouped and coloured by
+          // discipline. Nested in the project layout for the same reasons as Finance.
+          layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/disciplines/layout.tsx", [
+            route(
+              ":workspaceSlug/projects/:projectId/disciplines",
+              "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/disciplines/page.tsx"
+            ),
+          ]),
+
           // Project Issues List
           layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/issues/(list)/layout.tsx", [
             route(

@@ -2259,7 +2259,12 @@ class WorkloadEndpoint(BaseAPIView):
         members = WorkspaceMember.objects.filter(workspace__slug=slug, is_active=True).values_list(
             "member_id", flat=True
         )
-        users = {u.id: u for u in User.objects.filter(id__in=list(members))}
+        # select_related('avatar_asset') avoids an N+1: user.avatar_url below
+        # lazy-loads avatar_asset per user otherwise.
+        users = {
+            u.id: u
+            for u in User.objects.filter(id__in=list(members)).select_related("avatar_asset")
+        }
         payload = []
         for uid, user in users.items():
             a = agg.get(str(uid), {})
@@ -7273,7 +7278,11 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                 # rather than a second one created — an idempotent approve is worth
                 # more than an error message about a button somebody pressed again.
                 if row.expense_id:
-                    expense = ProjectExpense.objects.filter(id=row.expense_id).first()
+                    # Scope by project_id so the expense lookup can't reach across
+                    # projects, consistent with the rest of this file.
+                    expense = ProjectExpense.objects.filter(
+                        id=row.expense_id, project_id=project_id
+                    ).first()
                 else:
                     expense = None
                 if not expense:
@@ -7330,7 +7339,9 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                 # arrived, which is how a reject used to skip the delete and then null
                 # the only pointer to a line the project was still paying for.
                 if row.expense_id:
-                    ProjectExpense.objects.filter(id=row.expense_id).delete()
+                    # Scope the delete by project_id so it can't remove another
+                    # project's expense line, consistent with the rest of this file.
+                    ProjectExpense.objects.filter(id=row.expense_id, project_id=project_id).delete()
                     row.expense = None
 
             row.status = decision
@@ -7429,7 +7440,9 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                 return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
             # Deleting an approved request must not leave its money behind.
             if locked.expense_id:
-                ProjectExpense.objects.filter(id=locked.expense_id).delete()
+                # Scope the delete by project_id so it can't remove another
+                # project's expense line, consistent with the rest of this file.
+                ProjectExpense.objects.filter(id=locked.expense_id, project_id=project_id).delete()
             locked.delete()
         return Response({"deleted": True}, status=status.HTTP_200_OK)
 
@@ -7830,7 +7843,11 @@ class WorkloadTimelineEndpoint(BaseAPIView):
         # membership has since been deactivated. Dropping them would make their work
         # vanish from the board while it is still on the project.
         known_ids = active_member_ids | set(by_user.keys())
-        users = {str(u.id): u for u in User.objects.filter(id__in=list(known_ids))}
+        # select_related('avatar_asset') avoids an N+1 on avatar_url lazy-loading.
+        users = {
+            str(u.id): u
+            for u in User.objects.filter(id__in=list(known_ids)).select_related("avatar_asset")
+        }
         roster = _merged_roster(visible)
 
         # One holiday set per COUNTRY, over the window this timeline draws.

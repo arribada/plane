@@ -388,13 +388,20 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
                         </span>
                       </button>
                       {isExpanded && (
-                        <ul className="mb-2 max-h-40 space-y-1 overflow-y-auto rounded bg-layer-2 p-2">
+                        <ul className="mb-2 w-full max-h-40 space-y-1 overflow-y-auto rounded bg-layer-2 p-2">
                           {sectionRows.map((r, i) => (
-                            <li key={`${section}-${i}`} className="flex items-center justify-between gap-2 text-11">
+                            <li
+                              key={`${section}-${i}`}
+                              className="flex w-full flex-col gap-2 text-11 sm:flex-row sm:items-center sm:justify-between"
+                            >
                               <span className="truncate text-secondary">{r.name}</span>
                               <span className="flex shrink-0 items-center gap-2 text-tertiary">
                                 {r.dueDate && <span className="tabular-nums">{r.dueDate}</span>}
-                                {r.assigneeEmail && <span className="max-w-[130px] truncate">{r.assigneeEmail}</span>}
+                                {r.assigneeEmail && (
+                                  <span className="max-w-[100px] truncate sm:max-w-[150px]" title={r.assigneeEmail}>
+                                    {r.assigneeEmail}
+                                  </span>
+                                )}
                               </span>
                             </li>
                           ))}
@@ -434,7 +441,7 @@ export const AsanaImportModal = observer(function AsanaImportModal(props: Props)
                                 type="text"
                                 value={choice.newName}
                                 onChange={(e) => setChoice(section, { newName: e.target.value })}
-                                className="w-36 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                                className="w-full sm:w-36 rounded border border-subtle bg-layer-2 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
                               />
                             )}
                           </>

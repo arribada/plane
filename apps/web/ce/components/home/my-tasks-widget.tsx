@@ -97,7 +97,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
             className="fixed inset-0 z-20 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <span className="shadow-lg absolute top-full right-0 z-30 mt-1 flex w-36 flex-col rounded-md border border-subtle bg-layer-1 p-1">
+          <span className="shadow-lg absolute top-full right-0 z-30 mt-1 flex w-36 max-w-[calc(100vw-1rem)] flex-col rounded-md border border-subtle bg-layer-1 p-1">
             {presets.map((p) => (
               <button
                 key={p.value}
@@ -272,7 +272,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
           await load("refresh");
         }}
       />
-      <div className="flex items-center justify-between px-4 py-3">
+      <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
           <span className="bg-neutral-500/10 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
@@ -372,7 +372,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
                       >
                         <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
-                        <span className="text-sm truncate text-primary">{it.name}</span>
+                        <span title={it.name} className="text-sm truncate text-primary">{it.name}</span>
                       </button>
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <DueDateSetter item={it} onSet={(v) => setDue(it, v)} />

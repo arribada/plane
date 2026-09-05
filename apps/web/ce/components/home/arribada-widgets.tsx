@@ -181,6 +181,7 @@ export const DeliverablesWidget = observer(function DeliverablesWidget() {
           <li key={row.issue_id} className="flex items-baseline gap-2 text-12">
             <a
               href={`/${workspaceSlug}/projects/${row.project_id}/issues/${row.issue_id}`}
+              title={row.label}
               className="min-w-0 flex-1 truncate text-primary hover:underline"
             >
               {row.label}
@@ -235,7 +236,7 @@ export const ConflictsWidget = observer(function ConflictsWidget() {
     >
       {rows.map((person) => (
         <li key={person.user_id} className="flex items-baseline gap-2 text-12">
-          <a href={`/${workspaceSlug}/workload`} className="min-w-0 flex-1 truncate text-primary hover:underline">
+          <a href={`/${workspaceSlug}/workload`} title={person.name} className="min-w-0 flex-1 truncate text-primary hover:underline">
             {person.name}
           </a>
           <span className="flex-shrink-0 text-11 font-medium text-danger-primary">
@@ -283,6 +284,7 @@ export const MyApprovalsWidget = observer(function MyApprovalsWidget() {
         <li key={row.id} className="flex items-baseline gap-2 text-12">
           <a
             href={`/${workspaceSlug}/projects/${row.project_id}/overview`}
+            title={row.label}
             className="min-w-0 flex-1 truncate text-primary hover:underline"
           >
             {row.label}
@@ -338,6 +340,7 @@ export const DriftWidget = observer(function DriftWidget() {
         <li key={row.id} className="flex items-baseline gap-2 text-12">
           <a
             href={`/${workspaceSlug}/projects/${row.id}/overview`}
+            title={row.name}
             className="min-w-0 flex-1 truncate text-primary hover:underline"
           >
             {row.name}

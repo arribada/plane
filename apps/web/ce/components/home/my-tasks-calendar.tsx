@@ -209,7 +209,7 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
                   const inMonth = d.getMonth() === month.getMonth();
                   const isToday = iso === todayISO;
                   return (
-                    <div key={iso} className={cn("min-h-[76px] bg-layer-1 px-1 pt-1", !inMonth && "opacity-40")}>
+                    <div key={iso} className={cn("min-h-[52px] sm:min-h-[64px] md:min-h-[76px] bg-layer-1 px-1 pt-1", !inMonth && "opacity-40")}>
                       <div className={cn("text-right text-[11px]", isToday ? "text-accent-primary" : "text-secondary/70")}>
                         {isToday ? (
                           <span className="inline-flex size-4 items-center justify-center rounded-full bg-accent-primary text-[10px] text-white">

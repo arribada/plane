@@ -26,6 +26,7 @@
  */
 import { renderFormattedDate } from "@plane/utils";
 import { cn } from "@plane/utils";
+import { isDarkSurface } from "@/plane-web/components/gantt-chart/palette";
 
 export type TSpendRhythm = {
   /** `amount` is labour + expense; the two travel beside it so the chart can
@@ -79,8 +80,14 @@ type Props = {
 };
 
 /** One hue per category, assigned in fixed order and never cycled — a filter that
- *  drops a category must not repaint the survivors. */
-const FILL = ["#2b6cb0", "#2f855a", "#b7791f", "#805ad5", "#c05621", "#4a5568"];
+ *  drops a category must not repaint the survivors.
+ *
+ *  Two columns, same six hues: the light set is tuned for a white card, and the
+ *  dark set lifts each one brighter and a touch more saturated so the segments
+ *  stay legible against the dark bg-layer-1 rather than sinking into it. The
+ *  component picks the column from the live theme. */
+const FILL_LIGHT = ["#2b6cb0", "#2f855a", "#b7791f", "#805ad5", "#c05621", "#4a5568"];
+const FILL_DARK = ["#3d84d6", "#3aa06f", "#d19a33", "#9a72e0", "#e0703a", "#7b8698"];
 
 const LABEL: Record<string, string> = {
   hardware: "Hardware",
@@ -107,6 +114,9 @@ const sprintDates = (start: string | null, end: string | null) => {
 };
 
 export function SpendAnalysis({ rhythm, byCategory, byCategoryConverted, byRole, byCycle, money, currency }: Props) {
+  // Same six hues, picked for the live surface: the dark set stays legible on
+  // bg-layer-1 where the light set would sink into it.
+  const FILL = isDarkSurface() ? FILL_DARK : FILL_LIGHT;
   const months = rhythm?.months ?? [];
   const spentByCategory = byCategory.filter((row) => row.actual > 0);
   const total = spentByCategory.reduce((sum, row) => sum + row.actual, 0);

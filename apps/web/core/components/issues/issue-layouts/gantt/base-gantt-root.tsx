@@ -38,6 +38,7 @@ import { shownBaseline } from "@/plane-web/components/gantt-chart/baseline-shown
 import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/violation-banner";
 import { CriticalPathBanner } from "@/plane-web/components/gantt-chart/critical-path-banner";
 import { chainSpan, criticalColor } from "@/plane-web/components/gantt-chart/critical-path";
+import { unsetColor } from "@/plane-web/components/gantt-chart/palette";
 import { describeFilters } from "@/plane-web/components/gantt-chart/export";
 import type { TExportEdge, TExportMeta, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
@@ -314,7 +315,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         key: "done",
         label: "Finished",
         kind: "hatch",
-        color: "#64748b",
+        color: unsetColor(colorContext.dark),
         title: "Hatched, with a tick — the item is in a done state.",
       });
       // Its own entry, because it is now its own picture. While the two shared a
@@ -324,7 +325,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         key: "cancelled",
         label: "Cancelled",
         kind: "hollow",
-        color: "#64748b",
+        color: unsetColor(colorContext.dark),
         title:
           "Outlined and struck through, with a ✕ — the item was abandoned. It keeps its span and loses its fill, so it no longer reads as work in the plan.",
       });
@@ -348,12 +349,12 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
         key: "float",
         label: "Room to move",
         kind: "dashed",
-        color: "#94a3b8",
+        color: unsetColor(colorContext.dark),
         title:
           "Dimmed, with a dashed tail and a day count: how far this could slip before it moves anything else. Nothing here is on the critical path.",
       });
     if (Object.keys(milestones).length > 0)
-      marks.push({ key: "milestone", label: "Deliverable", kind: "diamond", color: "#64748b" });
+      marks.push({ key: "milestone", label: "Deliverable", kind: "diamond", color: unsetColor(colorContext.dark) });
     return marks;
     // `showCompleted` and `focusCriticalPath` are MobX observables read above.
     // Reading one inside a memo is not enough on its own: the observer re-renders

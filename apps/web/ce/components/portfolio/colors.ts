@@ -6,6 +6,11 @@
 import { fromEpochDay, toEpochDay, todayIso } from "../gantt-chart/working-days";
 
 // Priority palette (mirrors Plane's issue priority colors).
+//
+// The light column is the shipped one and stays exactly as it was; the dark
+// column re-steps the muted/danger tones so they read on a dark surface —
+// urgent's danger red brightens (#dc2626 → #ef4444, the same pair the critical
+// path uses) and the "none" grey uses the palette's unset dark grey.
 export const PRIORITY_COLOR: Record<string, string> = {
   urgent: "#dc2626",
   high: "#f97316",
@@ -13,6 +18,18 @@ export const PRIORITY_COLOR: Record<string, string> = {
   low: "#3f76ff",
   none: "#94a3b8",
 };
+
+const PRIORITY_COLOR_DARK: Record<string, string> = {
+  urgent: "#ef4444",
+  high: "#f97316",
+  medium: "#f59e0b",
+  low: "#3f76ff",
+  none: "#94a3b8",
+};
+
+/** The priority palette for the current surface. Defaults to light so existing
+ *  call sites and tests keep compiling and painting exactly as before. */
+export const priorityColor = (dark = false): Record<string, string> => (dark ? PRIORITY_COLOR_DARK : PRIORITY_COLOR);
 
 // Deterministic, well-spread hue from an id — same project always gets the same
 // color, no palette to maintain and no extra data to fetch.
@@ -31,10 +48,18 @@ export const projectColor = (id: string): string => {
 // team — and a dot has no shape to fall back on. It also survives a screenshot
 // pasted into a funder update, where the tooltip does not, and it is readable on
 // a phone, where hovering is not a thing.
-export const projectHealth = (p: {
-  target_date: string | null;
-  derived_target_date: string | null;
-}): { color: string; label: string; glyph: string } | null => {
+export const projectHealth = (
+  p: {
+    target_date: string | null;
+    derived_target_date: string | null;
+  },
+  dark = false
+): { color: string; label: string; glyph: string } | null => {
+  // Only the danger red is muddy on a dark surface; amber and green already
+  // clear it. Brightened to the same pair the critical-path ring uses. `dark`
+  // defaults to false so today's light output — and any old call site — is
+  // untouched.
+  const danger = dark ? "#ef4444" : "#dc2626";
   const planned = p.target_date;
   const derived = p.derived_target_date;
   if (!planned && !derived) return null; // nothing to judge
@@ -46,8 +71,8 @@ export const projectHealth = (p: {
   // genuinely a day late still read "On track" all evening.
   const today = todayIso();
   const end = derived ?? planned!;
-  if (planned && derived && derived > planned) return { color: "#dc2626", label: "Drifting past the plan", glyph: "!" };
-  if (end < today) return { color: "#dc2626", label: "Past due", glyph: "!" };
+  if (planned && derived && derived > planned) return { color: danger, label: "Drifting past the plan", glyph: "!" };
+  if (end < today) return { color: danger, label: "Past due", glyph: "!" };
   // A week out, counted on the calendar rather than by adding 7×24 hours to an
   // instant — the week containing a clock change is 167 or 169 hours long.
   const soon = fromEpochDay(toEpochDay(today)! + 7);

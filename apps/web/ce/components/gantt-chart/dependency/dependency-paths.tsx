@@ -17,13 +17,16 @@ import { useProjectRelations } from "@/plane-web/components/gantt-chart/use-proj
 import { useProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import type { TIssueRelationEdge } from "@/plane-web/types/arribada";
 import { useGanttColorScale } from "../color-scale";
-import { isDarkSurface } from "../palette";
+import { isDarkSurface, unsetColor } from "../palette";
 import { criticalColor, linkEmphasis } from "../critical-path";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import { edgeOf } from "../edges";
 import { routeDependency, routeParentBracket } from "./routing";
 
-const PARENT_COLOR = "#94a3b8"; // muted slate — hierarchy links, distinct from the coloured dependency arrows
+// Muted slate — hierarchy links, distinct from the coloured dependency arrows.
+// Theme-aware so the bracket reads on both surfaces: the same neutral the palette
+// hands to an unset series.
+const parentColor = (dark: boolean): string => unsetColor(dark);
 
 // How loud the arrows are when nothing is being pointed at. The bars are the
 // subject of this chart; the arrows explain them. A dense plan drew ~40 of them at
@@ -53,11 +56,14 @@ const CRITICAL_BUMP = 0.5;
 // planner writes every generated dependency as one — so a normal plan came out as a
 // wall of red over its own bars. Red now means one thing only: the critical path,
 // where a day lost is a day lost on the whole project.
-const COLOR: Record<string, string> = {
-  finish_before: "#3f76ff",
-  start_before: "#eab308",
-  blocked_by: "#64748b",
-};
+// Per-theme so the arrows carry on the dark surface. Light output is unchanged;
+// the dark column lifts finish/start brighter and hands blocked_by the palette's
+// own unset neutral so it reads as the muted "everything uses this" relation.
+const colorMap = (dark: boolean): Record<string, string> => ({
+  finish_before: dark ? "#5a8eff" : "#3f76ff",
+  start_before: dark ? "#fbbf24" : "#eab308",
+  blocked_by: unsetColor(dark),
+});
 
 /**
  * `edges.ts` decides which end is the predecessor; this only keeps the shape the
@@ -97,6 +103,8 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
   const active = store.activeBlockId;
   const { dimDependencies } = store;
   const dark = colors?.dark ?? isDarkSurface();
+  const COLOR = colorMap(dark);
+  const PARENT_COLOR = parentColor(dark);
   const CRITICAL_COLOR = criticalColor(dark);
   // While the chain is the chart's subject, the links ALONG it are the picture —
   // they are what turns twenty ringed bars into one path. Everything else steps
@@ -157,7 +165,7 @@ export const TimelineDependencyPaths = observer(function TimelineDependencyPaths
       return {
         key: `${from}-${to}-${rel.relation_type}`,
         d: arrow.d,
-        color: COLOR[rel.relation_type] ?? "#94a3b8",
+        color: COLOR[rel.relation_type] ?? PARENT_COLOR,
         from,
         to,
         isCritical: critical.has(from) && critical.has(to),

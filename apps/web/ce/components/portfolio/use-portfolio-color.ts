@@ -20,6 +20,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import {
   buildColorScale,
   isDarkSurface,
+  unsetColor,
   type TColorSample,
   type TColorScale,
 } from "@/plane-web/components/gantt-chart/palette";
@@ -104,7 +105,7 @@ export const usePortfolioColorScale = (
     () => ({
       // A null scale (colour by project) still publishes a context: the bars need
       // `showCompleted` whether or not there is a series encoding in force.
-      scale: scale ?? { entries: [], colorOf: () => "#94a3b8", seriesOf: () => undefined },
+      scale: scale ?? { entries: [], colorOf: () => unsetColor(dark), seriesOf: () => undefined },
       dimension: colorBy,
       dimensionLabel: portfolioDimensionLabel(colorBy),
       showCompleted,

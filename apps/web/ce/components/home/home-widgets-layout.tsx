@@ -45,10 +45,10 @@ type TGesture = {
   startBox: THomeBox;
 };
 
-const clampBox = (box: THomeBox): THomeBox => ({
+const clampBox = (box: THomeBox, minWidth: number = MIN_WIDTH): THomeBox => ({
   x: Math.max(0, box.x),
   y: Math.max(0, box.y),
-  width: Math.max(MIN_WIDTH, box.width),
+  width: Math.max(minWidth, box.width),
   height: Math.max(MIN_HEIGHT, box.height),
 });
 
@@ -57,10 +57,10 @@ const clampBox = (box: THomeBox): THomeBox => ({
  *  fine enough that they can still be different sizes. */
 const GRID = 20;
 const snap = (v: number) => Math.round(v / GRID) * GRID;
-const snapBox = (box: THomeBox): THomeBox => ({
+const snapBox = (box: THomeBox, minWidth: number = MIN_WIDTH): THomeBox => ({
   x: Math.max(0, snap(box.x)),
   y: Math.max(0, snap(box.y)),
-  width: Math.max(MIN_WIDTH, snap(box.width)),
+  width: Math.max(minWidth, snap(box.width)),
   height: Math.max(MIN_HEIGHT, snap(box.height)),
 });
 const boxesOverlap = (a: THomeBox, b: THomeBox): boolean =>
@@ -122,15 +122,22 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
     );
   }
 
+  // On a phone-width canvas the desktop MIN_WIDTH/DEFAULT_WIDTH (280/380) overflow, so a widget
+  // sits wider than the screen and cannot be reached. Below 640px the effective min/default drop
+  // to values that fit; desktop keeps the constants unchanged.
+  const narrow = canvasWidth > 0 && canvasWidth < 640;
+  const minWidth = narrow ? 200 : MIN_WIDTH;
+  const defaultWidth = narrow ? 280 : DEFAULT_WIDTH;
+
   // Every widget gets a box: its saved one, or the next free grid slot for one never placed.
   // Rebuilt every render so a just-saved placement is read straight back from the observable.
-  const step = DEFAULT_WIDTH + GAP;
+  const step = defaultWidth + GAP;
   const perRow = Math.max(1, Math.floor((canvasWidth || 800) / step));
   const layoutBoxes = new Map<string, THomeBox>();
   items.forEach((item, index) => {
     const stored = boxes[item.key];
     if (stored) {
-      layoutBoxes.set(item.key, clampBox(stored));
+      layoutBoxes.set(item.key, clampBox(stored, minWidth));
       return;
     }
     // A not-yet-placed widget sits in a grid slot keyed on its STABLE index in the list — never
@@ -140,13 +147,13 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
     layoutBoxes.set(item.key, {
       x: (index % perRow) * step,
       y: Math.floor(index / perRow) * (DEFAULT_HEIGHT + GAP),
-      width: DEFAULT_WIDTH,
+      width: defaultWidth,
       height: DEFAULT_HEIGHT,
     });
   });
 
   const boxOf = (key: string): THomeBox =>
-    draft?.key === key ? draft.box : (layoutBoxes.get(key) ?? { x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+    draft?.key === key ? draft.box : (layoutBoxes.get(key) ?? { x: 0, y: 0, width: defaultWidth, height: DEFAULT_HEIGHT });
 
   const canvasHeight =
     items.reduce((tallest, item) => {
@@ -173,7 +180,7 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
       gesture.mode === "move"
         ? { ...gesture.startBox, x: gesture.startBox.x + deltaX, y: gesture.startBox.y + deltaY }
         : { ...gesture.startBox, width: gesture.startBox.width + deltaX, height: gesture.startBox.height + deltaY };
-    setDraft({ key: gesture.key, box: clampBox(box) });
+    setDraft({ key: gesture.key, box: clampBox(box, minWidth) });
   };
 
   const endGesture = (event: React.PointerEvent<HTMLElement>) => {
@@ -198,10 +205,10 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
         const b = layoutBoxes.get(item.key);
         if (b) current[item.key] = b;
       });
-      current[gesture.key] = snapBox(box);
+      current[gesture.key] = snapBox(box, minWidth);
       homeLayout.setBoxes(resolveOverlaps(current, gesture.key));
     } else {
-      homeLayout.setBox(gesture.key, clampBox(box));
+      homeLayout.setBox(gesture.key, clampBox(box, minWidth));
     }
   };
 
@@ -237,7 +244,7 @@ export const HomeWidgetsLayout = observer(function HomeWidgetsLayout({ items }: 
                   type="button"
                   aria-label={`Move the ${item.key} widget`}
                   className={cn(
-                    "flex h-5 flex-shrink-0 cursor-grab touch-none items-center justify-center rounded-t-lg opacity-40 group-hover/wcard:opacity-100 focus-visible:opacity-100",
+                    "flex h-5 pointer-coarse:h-8 flex-shrink-0 cursor-grab touch-none items-center justify-center rounded-t-lg opacity-40 group-hover/wcard:opacity-100 focus-visible:opacity-100",
                     isActive && "cursor-grabbing opacity-100"
                   )}
                   onPointerDown={(event) => beginGesture(event, item.key, "move")}

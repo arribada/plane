@@ -1115,7 +1115,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     )}
                     {canTrack && tracking === r.id && (
                       <div className="flex w-full flex-wrap items-end gap-2 rounded border border-subtle bg-layer-1 p-2">
-                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
                           Order reference
                           <input
                             type="text"
@@ -1125,7 +1125,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             className={input}
                           />
                         </label>
-                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
                           Ordered on
                           <input
                             type="date"
@@ -1137,7 +1137,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                         {/* The one date the planner reads. Says so here rather than
                             in a help panel nobody opens — it is the difference
                             between a note and a thing that moves somebody's dates. */}
-                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
                           Expected
                           <input
                             type="date"
@@ -1147,7 +1147,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             title="Date the supplier promised delivery — constrains task start dates when delivery scheduling is on."
                           />
                         </label>
-                        <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
                           Arrived
                           <input
                             type="date"
@@ -1403,7 +1403,7 @@ function CopyablePart({ value }: { value: string }) {
       title={copied ? "Copied" : `Copy the part number — ${value}`}
       aria-label={`Copy the part number ${value}`}
       className={cn(
-        "font-mono flex max-w-[14rem] flex-shrink-0 items-center gap-1 rounded border border-subtle px-1.5 py-0.5 text-10 hover:bg-layer-2",
+        "font-mono flex max-w-[8rem] flex-shrink-0 items-center gap-1 rounded border border-subtle px-1.5 py-0.5 text-10 hover:bg-layer-2 sm:max-w-[14rem]",
         copied ? "text-success-primary" : "text-secondary"
       )}
     >

@@ -11,6 +11,7 @@ import { observer } from "mobx-react";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@plane/utils";
 import { projectColor, readableTextColor } from "@/plane-web/components/portfolio/colors";
+import { isDarkSurface, unsetColor } from "@/plane-web/components/gantt-chart/palette";
 import type { TWorkloadTimelineItem, TWorkloadTimelinePerson } from "@/plane-web/services/arribada.service";
 import { clamp, dayOffset, formatRange, packLanes } from "./scale";
 
@@ -32,7 +33,10 @@ const MIN_ROW_HEIGHT = 38;
 // was just doing a third of its job.
 const CONFLICT_FILL = "color-mix(in srgb, var(--border-color-danger-strong) 16%, transparent)";
 const CONFLICT_EDGE = "color-mix(in srgb, var(--border-color-danger-strong) 55%, transparent)";
-const LEAVE_FILL = "rgba(120,135,160,0.28)";
+// Token-based so the leave hatch follows the theme rather than being one fixed
+// slate in both. The old rgba(120,135,160,0.28) was tuned for the light canvas
+// and washed out against the dark bg-layer-1.
+const LEAVE_FILL = "color-mix(in srgb, var(--border-color-subtle) 28%, transparent)";
 
 type Props = {
   person: TWorkloadTimelinePerson;
@@ -51,7 +55,9 @@ const Initial = ({ person }: { person: TWorkloadTimelinePerson }) => (
   <span
     className="flex size-6 flex-shrink-0 items-center justify-center overflow-hidden rounded-full text-11 leading-none font-semibold text-white"
     style={
-      person.avatar ? undefined : { backgroundColor: person.is_unassigned ? "#64748b" : projectColor(person.user_id) }
+      person.avatar
+        ? undefined
+        : { backgroundColor: person.is_unassigned ? unsetColor(isDarkSurface()) : projectColor(person.user_id) }
     }
     aria-hidden
   >

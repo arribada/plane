@@ -357,7 +357,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
                 toolbar is one wrapper away from the gantt's, and a panel is not a
                 toolbar control. `break-words` is for the project names below,
                 which are somebody else's text. See gantt-chart/group-by.tsx. */}
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 max-h-80 w-[min(256px,calc(100vw-1rem))] overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
               <div className="flex items-center justify-between px-2 py-1 text-11 text-secondary">
                 <button
                   type="button"
@@ -424,7 +424,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "filter" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-52 rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-[min(208px,calc(100vw-1rem))] rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
               <div className="px-1.5 py-1 text-11 font-medium tracking-wide text-secondary uppercase">Priority</div>
               {PRIORITIES.map((p) => (
                 <button
@@ -490,7 +490,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
         {openMenu === "display" && (
           <>
             <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-56 rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
+            <div className="shadow-lg absolute top-full left-0 z-30 mt-1 w-[min(224px,calc(100vw-1rem))] rounded-md border border-subtle bg-layer-1 p-1.5 break-words whitespace-normal">
               <div className="mb-0.5 px-1.5 text-11 font-medium tracking-wide text-secondary uppercase">Colour by</div>
               {/* A radio list rather than the old pill row: seven axes will not
                   sit side by side in a 224px menu, and the list is the shape the
@@ -679,7 +679,7 @@ export const PortfolioToolbar = observer(function PortfolioToolbar() {
           {openMenu === "undated" && (
             <>
               <button type="button" aria-label="Close menu" className="fixed inset-0 z-20" onClick={close} />
-              <div className="shadow-lg absolute top-full right-0 z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
+              <div className="shadow-lg absolute top-full right-0 z-30 mt-1 max-h-80 w-[min(256px,calc(100vw-1rem))] overflow-y-auto rounded-md border border-subtle bg-layer-1 p-1 break-words whitespace-normal">
                 <div className="px-2 py-1 text-11 font-medium tracking-wide text-secondary uppercase">
                   Projects with undated items
                 </div>

@@ -17,7 +17,8 @@ import { AiPlanModal } from "@/plane-web/components/planning/ai-plan-modal";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioItem } from "@/plane-web/types/arribada";
-import { PRIORITY_COLOR } from "./colors";
+import { priorityColor } from "./colors";
+import { isDarkSurface } from "@/plane-web/components/gantt-chart/palette";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
 // Local YYYY-MM-DD: toISOString would shift the day in negative-offset zones.
@@ -77,6 +78,8 @@ type Draft = { start: string; target: string };
 export const UndatedItemsModal = observer(function UndatedItemsModal(props: Props) {
   const { projectId, projectName, onClose, onChanged } = props;
   const { workspaceSlug } = useParams();
+  // Theme resolved once per render; the priority dots pick their column from it.
+  const dark = isDarkSurface();
   const portfolio = usePortfolio();
   const service = useMemo(() => new ArribadaService(), []);
   const [items, setItems] = useState<TPortfolioItem[]>([]);
@@ -309,7 +312,7 @@ export const UndatedItemsModal = observer(function UndatedItemsModal(props: Prop
                       <span
                         className="size-2 flex-shrink-0 rounded-full"
                         title={`Priority: ${item.priority}`}
-                        style={{ backgroundColor: PRIORITY_COLOR[item.priority] }}
+                        style={{ backgroundColor: priorityColor(dark)[item.priority] }}
                       />
                       <span className="min-w-0 flex-grow truncate text-13 text-primary">{item.name}</span>
                       <span className="flex-shrink-0 text-11 tracking-wide text-secondary/70 uppercase">

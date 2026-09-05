@@ -22,6 +22,8 @@ import { usePlatformOS } from "@/hooks/use-platform-os";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { GanttColorScaleProvider } from "@/plane-web/components/gantt-chart/color-scale";
 import { GanttLegend, type TLegendMark } from "@/plane-web/components/gantt-chart/legend";
+import { isDarkSurface, unsetColor } from "@/plane-web/components/gantt-chart/palette";
+import { criticalColor } from "@/plane-web/components/gantt-chart/critical-path";
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import type { TPortfolioColorBy } from "@/plane-web/types/arribada";
 import type { TPortfolioDateUpdate, TPortfolioDragContext } from "./drag-target";
@@ -49,6 +51,10 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   // always-visible bar shows/hides them; collapsed by default on a phone, open on desktop.
   const { isMobile } = usePlatformOS();
   const [controlsOpen, setControlsOpen] = useState(() => !isMobile);
+  // The dark/light surface, resolved once at the render top. The legend marks
+  // below read it for their muted greys and the critical-path red; light output
+  // is unchanged.
+  const dark = isDarkSurface();
 
   useEffect(() => {
     initGantt();
@@ -255,7 +261,7 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
         key: "done",
         label: "Finished",
         kind: "hatch",
-        color: "#64748b",
+        color: unsetColor(dark),
         title: "Hatched, with a tick. Every item in a project is done, or the work item's state is a done state.",
       });
       // Work items only: a project has no state of its own to be cancelled in,
@@ -265,7 +271,7 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
         key: "cancelled",
         label: "Cancelled",
         kind: "hollow",
-        color: "#64748b",
+        color: unsetColor(dark),
         title:
           "Outlined and struck through, with a ✕ — the work item was abandoned. It keeps its span and loses its fill, so it no longer reads as work in the plan.",
       });
@@ -284,11 +290,11 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
       key: "derived",
       label: "Dates inferred from the work",
       kind: "dashed",
-      color: "#94a3b8",
+      color: unsetColor(dark),
       title: "Nobody entered a plan for this project; the bar is the span of its work items.",
     });
     if (portfolio.showCriticalPath)
-      marks.push({ key: "critical", label: "Critical path", kind: "ring", color: "#dc2626" });
+      marks.push({ key: "critical", label: "Critical path", kind: "ring", color: criticalColor(dark) });
     return marks;
     // showCompleted is read here, so it must be a dependency: without it the
     // legend kept claiming a hatch that the bars had stopped drawing.
@@ -297,7 +303,7 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
     // rather than named directly in this closure and the rule cannot see that.
     // The disable is what stops the next --fix run doing it again.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolio.colorBy, portfolio.showCriticalPath, ganttDisplay.showCompleted]);
+  }, [portfolio.colorBy, portfolio.showCriticalPath, ganttDisplay.showCompleted, dark]);
 
   return (
     <GanttColorScaleProvider value={colorContext}>

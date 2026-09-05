@@ -40,7 +40,7 @@ export const HomeStickiesFloatingOverlay = observer(function HomeStickiesFloatin
     // Click-through layer: the canvas and every empty part of it let events reach the widgets
     // below; StickiesFree's notes opt back in via `overlay`. z-10 sits above the widgets and
     // below the peek/tour/modals (z-20+), so opening a task never lands behind a note.
-    <div className="pointer-events-none absolute top-0 left-0 z-10 w-full px-page-x">
+    <div className="pointer-events-none absolute top-0 left-0 z-10 w-full px-2 sm:px-4 md:px-[1.35rem]">
       <StickiesFree overlay workspaceSlug={workspaceSlug.toString()} stickyIds={workspaceStickies} />
     </div>
   );

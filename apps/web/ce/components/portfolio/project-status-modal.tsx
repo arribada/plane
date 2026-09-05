@@ -12,14 +12,25 @@ import { useParams } from "next/navigation";
 import { Loader2, X } from "lucide-react";
 import { cn, renderFormattedDate } from "@plane/utils";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
+import { isDarkSurface } from "@/plane-web/components/gantt-chart/palette";
 import type { TProjectStatus, TProjectStatusUpdate } from "@/plane-web/types/arribada";
 import { useModalShell } from "@/plane-web/components/common/use-modal-shell";
 
-export const STATUS_META: Record<TProjectStatus, { label: string; color: string; dot: string }> = {
-  on_track: { label: "On track", color: "#059669", dot: "bg-success-primary" },
-  at_risk: { label: "At risk", color: "#d97706", dot: "bg-warning-primary" },
-  off_track: { label: "Off track", color: "#dc2626", dot: "bg-danger-primary" },
+// The selected-status swatch is painted with `color`/`colorDark` as a solid
+// background under white text, so each needs enough contrast against white on
+// its own surface. The light column was recently darkened for that reason and
+// is kept exactly; the dark column is a touch brighter so it reads on the dark
+// panel without the label washing out.
+export const STATUS_META: Record<TProjectStatus, { label: string; color: string; colorDark: string; dot: string }> = {
+  on_track: { label: "On track", color: "#059669", colorDark: "#10b981", dot: "bg-success-primary" },
+  at_risk: { label: "At risk", color: "#d97706", colorDark: "#f59e0b", dot: "bg-warning-primary" },
+  off_track: { label: "Off track", color: "#dc2626", colorDark: "#ef4444", dot: "bg-danger-primary" },
 };
+
+/** The selected-swatch background for a status on the current surface. Defaults
+ *  to light, so nothing that reads `STATUS_META[...].color` directly changes. */
+export const statusColor = (status: TProjectStatus, dark: boolean): string =>
+  dark ? STATUS_META[status].colorDark : STATUS_META[status].color;
 
 type Props = {
   projectId: string | null;
@@ -31,6 +42,8 @@ type Props = {
 export const ProjectStatusModal = observer(function ProjectStatusModal(props: Props) {
   const { projectId, projectName, onClose, onPosted } = props;
   const { workspaceSlug } = useParams();
+  // Theme resolved once per render; the selected-status swatch picks its column from it.
+  const dark = isDarkSurface();
   const service = useMemo(() => new ArribadaService(), []);
   const [history, setHistory] = useState<TProjectStatusUpdate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -103,7 +116,7 @@ export const ProjectStatusModal = observer(function ProjectStatusModal(props: Pr
                   "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-12 font-medium",
                   status === s ? "border-transparent text-white" : "border-subtle text-secondary hover:bg-layer-2"
                 )}
-                style={status === s ? { backgroundColor: STATUS_META[s].color } : undefined}
+                style={status === s ? { backgroundColor: statusColor(s, dark) } : undefined}
               >
                 <span className={cn("size-2 rounded-full", status === s ? "bg-white" : STATUS_META[s].dot)} />
                 {STATUS_META[s].label}

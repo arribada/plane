@@ -49,6 +49,7 @@
  * chain of eight would leave nothing at all. See INDENT_CAP_LEVELS.
  */
 import type { TPortfolioItem, TPortfolioProject } from "@/plane-web/types/arribada";
+import { priorityColor } from "./colors";
 
 /** Bands over the project rows. */
 export type TPortfolioGroupBy = "project" | "folder" | "status";
@@ -106,13 +107,8 @@ const UNSET_LABEL: Record<TPortfolioSubgroupBy, string> = {
 };
 
 const PRIORITY_ORDER = ["urgent", "high", "medium", "low", "none"];
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "#dc2626",
-  high: "#f97316",
-  medium: "#f59e0b",
-  low: "#3f76ff",
-  none: "#94a3b8",
-};
+// Was a duplicate of colors.ts's PRIORITY_COLOR. Imported from there now, so the
+// two cannot drift and the theme-aware variant is shared.
 
 export type TPortfolioSubgroup = { key: string; label: string; color?: string; itemIds: string[] };
 
@@ -132,7 +128,8 @@ export type TSubgroupResolver = {
 const bandOf = (
   item: TPortfolioItem,
   subgroupBy: TPortfolioSubgroupBy,
-  resolve: TSubgroupResolver
+  resolve: TSubgroupResolver,
+  dark = false
 ): { key: string; label: string; color?: string } => {
   if (subgroupBy === "cycle") {
     return item.cycle ? { key: item.cycle.id, label: item.cycle.name } : { key: UNSET, label: UNSET_LABEL.cycle };
@@ -162,7 +159,7 @@ const bandOf = (
   return {
     key: priority,
     label: priority.charAt(0).toUpperCase() + priority.slice(1),
-    color: PRIORITY_COLOR[priority],
+    color: priorityColor(dark)[priority],
   };
 };
 
@@ -176,7 +173,8 @@ export const buildSubgroups = (
   itemIds: string[],
   getItem: (id: string) => TPortfolioItem | undefined,
   subgroupBy: TPortfolioSubgroupBy,
-  resolve: TSubgroupResolver
+  resolve: TSubgroupResolver,
+  dark = false
 ): TPortfolioSubgroup[] => {
   if (subgroupBy === "none" || itemIds.length === 0) return [];
 
@@ -186,7 +184,7 @@ export const buildSubgroups = (
     // An item the store has not resolved still needs a row, or it would vanish
     // the moment subgrouping was switched on.
     const { key, label, color } = item
-      ? bandOf(item, subgroupBy, resolve)
+      ? bandOf(item, subgroupBy, resolve, dark)
       : { key: UNSET, label: UNSET_LABEL[subgroupBy], color: undefined };
     const existing = byKey.get(key);
     if (existing) existing.itemIds.push(id);

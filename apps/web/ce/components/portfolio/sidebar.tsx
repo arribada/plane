@@ -27,6 +27,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectStatusUpdate } from "@/plane-web/types/arribada";
+import { isDarkSurface } from "@/plane-web/components/gantt-chart/palette";
 import { baselineDrift, projectColor, projectHealth } from "./colors";
 import { INDENT_CAP_LEVELS } from "./grouping";
 import { ProjectStatusModal, STATUS_META } from "./project-status-modal";
@@ -57,6 +58,8 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const portfolio = usePortfolio();
+  // Theme resolved once per render; the health pastille picks its danger red from it.
+  const dark = isDarkSurface();
   const { setPeekIssue } = useIssueDetail();
   const isProject = portfolio.isProjectRow(blockId);
   const folder = portfolio.getFolderRow(blockId);
@@ -169,7 +172,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
           <span className="size-2.5 flex-shrink-0 rounded-sm" style={{ backgroundColor: projectColor(blockId) }} />
           {project &&
             (() => {
-              const h = projectHealth(project);
+              const h = projectHealth(project, dark);
               return h ? (
                 <Tooltip tooltipContent={h.label}>
                   <span

@@ -71,7 +71,7 @@ export const DependencyViolationBanner = observer(function DependencyViolationBa
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-warning-strong/40 bg-warning-subtle/40 px-4 py-1.5 text-12">
+    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 border-b border-warning-strong/40 bg-warning-subtle/40 px-2 sm:px-4 py-1.5 text-12">
       <AlertTriangle className="size-3.5 flex-shrink-0 text-warning-primary" />
       <span className="text-primary">
         {violations.length} {violations.length === 1 ? "work item starts" : "work items start"} before what they depend

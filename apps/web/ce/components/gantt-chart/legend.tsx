@@ -112,7 +112,7 @@ export const GanttLegend: FC<Props> = ({ scale, dimensionLabel, marks = [], clas
     <div
       className={
         className ??
-        "flex flex-shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-subtle px-4 py-1.5 text-11 text-secondary"
+        "flex flex-shrink-0 flex-wrap items-center gap-x-2 sm:gap-x-3 gap-y-1 border-b border-subtle px-2 sm:px-4 py-1.5 text-11 text-secondary"
       }
     >
       {showSeries && dimensionLabel && (

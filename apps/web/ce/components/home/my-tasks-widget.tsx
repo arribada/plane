@@ -39,10 +39,10 @@ import { MyTasksCalendar } from "./my-tasks-calendar";
 
 const PRIORITY_DOT: Record<TMyWorkItem["priority"], string> = {
   urgent: "bg-danger-primary",
-  high: "bg-orange-500",
+  high: "bg-warning-primary",
   medium: "bg-yellow-500",
   low: "bg-blue-400",
-  none: "bg-neutral-300",
+  none: "bg-layer-3",
 };
 
 // Local YYYY-MM-DD for a Date (avoids the UTC shift toISOString would introduce).
@@ -82,7 +82,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
         onClick={() => setOpen((v) => !v)}
         title={item.target_date ? `Due ${item.target_date}` : "Set due date"}
         className={cn(
-          "hover:bg-neutral-500/10 flex items-center gap-1 rounded px-1 py-0.5 text-[11px]",
+          "hover:bg-layer-1 flex items-center gap-1 rounded px-1 py-0.5 text-11",
           item.target_date ? "text-secondary" : "text-tertiary opacity-0 group-hover:opacity-100"
         )}
       >
@@ -106,13 +106,13 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
                   onSet(p.value);
                   setOpen(false);
                 }}
-                className="hover:bg-neutral-500/10 flex justify-between rounded px-2 py-1 text-left text-12"
+                className="hover:bg-layer-1 flex justify-between rounded px-2 py-1 text-left text-12"
               >
                 <span>{p.label}</span>
                 <span className="text-tertiary">{renderFormattedDateWithoutYear(p.value)}</span>
               </button>
             ))}
-            <label className="hover:bg-neutral-500/10 mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12">
+            <label className="hover:bg-layer-1 mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12">
               Pick…
               <input
                 type="date"
@@ -275,7 +275,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
-          <span className="bg-neutral-500/10 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
+          <span className="bg-layer-2 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
         </div>
         <div className="flex items-center gap-2">
           {/* ARRIBADA: open the full create modal to add a task on any project from Home. */}
@@ -284,7 +284,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             onClick={() => setCreateOpen(true)}
             title="New work item"
             aria-label="New work item"
-            className="rounded p-1 text-secondary hover:text-primary"
+            className="rounded p-1 pointer-coarse:p-2 text-secondary hover:text-primary"
           >
             <Plus className="size-3.5" />
           </button>
@@ -296,7 +296,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             title="Refresh"
             aria-label="Refresh my tasks"
             disabled={refreshing}
-            className="rounded p-1 text-secondary hover:text-primary disabled:opacity-50"
+            className="rounded p-1 pointer-coarse:p-2 text-secondary hover:text-primary disabled:opacity-50"
           >
             <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
           </button>
@@ -307,8 +307,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                 onClick={() => setView("list")}
                 title="List"
                 className={cn(
-                  "rounded p-1",
-                  view === "list" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
+                  "rounded p-1 pointer-coarse:p-2",
+                  view === "list" ? "bg-layer-2 text-primary" : "text-secondary hover:text-primary"
                 )}
               >
                 <List className="size-3.5" />
@@ -318,8 +318,8 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                 onClick={() => setView("calendar")}
                 title="Calendar"
                 className={cn(
-                  "rounded p-1",
-                  view === "calendar" ? "bg-neutral-500/15 text-primary" : "text-secondary hover:text-primary"
+                  "rounded p-1 pointer-coarse:p-2",
+                  view === "calendar" ? "bg-layer-2 text-primary" : "text-secondary hover:text-primary"
                 )}
               >
                 <LayoutGrid className="size-3.5" />
@@ -361,7 +361,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                   {(expandedBuckets.has(b.label) ? b.items : b.items.slice(0, 6)).map((it) => (
                     <li
                       key={it.id}
-                      className="group hover:bg-neutral-500/5 flex w-full items-center gap-2 rounded-md px-1.5 py-1"
+                      className="group hover:bg-layer-transparent-hover flex w-full items-center gap-2 rounded-md px-1.5 py-1"
                     >
                       {/* The row opens the item, the due-date control does not — so the
                           clickable part is a real button and the control is its sibling,
@@ -393,7 +393,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                               })
                             );
                           }}
-                          className="text-[11px] tracking-wide text-secondary/70 uppercase hover:text-accent-primary hover:underline"
+                          className="text-11 tracking-wide text-secondary/70 uppercase hover:text-accent-primary hover:underline"
                         >
                           {it.project_identifier}-{it.sequence_id}
                         </button>
@@ -412,7 +412,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                             return next;
                           })
                         }
-                        className="text-[11px] text-secondary/70 underline-offset-2 hover:text-primary hover:underline"
+                        className="text-11 text-secondary/70 underline-offset-2 hover:text-primary hover:underline"
                       >
                         {expandedBuckets.has(b.label) ? "Show fewer" : `+${b.items.length - 6} more`}
                       </button>

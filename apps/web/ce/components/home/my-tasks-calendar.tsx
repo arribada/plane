@@ -167,18 +167,18 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
           <button
             type="button"
             onClick={() => shift(-1)}
-            className="hover:bg-neutral-500/10 rounded p-1 text-secondary"
+            className="hover:bg-layer-1 rounded p-1 text-secondary"
           >
             <ChevronLeft className="size-4" />
           </button>
           <button
             type="button"
             onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
-            className="hover:bg-neutral-500/10 rounded px-1.5 py-0.5 text-11 text-secondary"
+            className="hover:bg-layer-1 rounded px-1.5 py-0.5 text-11 text-secondary"
           >
             Today
           </button>
-          <button type="button" onClick={() => shift(1)} className="hover:bg-neutral-500/10 rounded p-1 text-secondary">
+          <button type="button" onClick={() => shift(1)} className="hover:bg-layer-1 rounded p-1 text-secondary">
             <ChevronRight className="size-4" />
           </button>
         </div>
@@ -189,7 +189,7 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
           {WEEKDAYS.map((w) => (
             <div
               key={w}
-              className="bg-layer-1 px-1 py-1 text-center text-[10px] font-medium tracking-wide text-secondary/70 uppercase"
+              className="bg-layer-1 px-1 py-1 text-center text-10 font-medium tracking-wide text-tertiary uppercase"
             >
               {w}
             </div>
@@ -210,9 +210,9 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
                   const isToday = iso === todayISO;
                   return (
                     <div key={iso} className={cn("min-h-[52px] sm:min-h-[64px] md:min-h-[76px] bg-layer-1 px-1 pt-1", !inMonth && "opacity-40")}>
-                      <div className={cn("text-right text-[11px]", isToday ? "text-accent-primary" : "text-secondary/70")}>
+                      <div className={cn("text-right text-11", isToday ? "text-accent-primary" : "text-tertiary")}>
                         {isToday ? (
-                          <span className="inline-flex size-4 items-center justify-center rounded-full bg-accent-primary text-[10px] text-white">
+                          <span className="inline-flex size-4 items-center justify-center rounded-full bg-accent-primary text-10 text-white">
                             {d.getDate()}
                           </span>
                         ) : (
@@ -240,7 +240,7 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
                         seg.item.state_name ? ` · ${seg.item.state_name}` : ""
                       }`}
                       className={cn(
-                        "pointer-events-auto flex h-4 min-w-0 items-center overflow-hidden px-1 text-[10px] font-medium text-white",
+                        "pointer-events-auto flex h-4 min-w-0 items-center overflow-hidden px-1 text-10 font-medium text-white",
                         seg.roundedStart ? "rounded-l" : "",
                         seg.roundedEnd ? "rounded-r" : ""
                       )}
@@ -263,7 +263,7 @@ export const MyTasksCalendar = ({ items, onOpenItem }: Props) => {
       </div>
 
       {undatedCount > 0 && (
-        <p className="mt-2 px-1 text-[11px] text-secondary/70">
+        <p className="mt-2 px-1 text-11 text-tertiary">
           {undatedCount} task{undatedCount > 1 ? "s" : ""} with no date (set one in list view)
         </p>
       )}

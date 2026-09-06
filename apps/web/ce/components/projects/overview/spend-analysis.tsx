@@ -254,7 +254,7 @@ export function SpendAnalysis({ rhythm, byCategory, byCategoryConverted, byRole,
 
           {/* Two series need a legend; one names itself in the line above. */}
           {sprintBothKinds && (
-            <ul className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1">
+            <ul className="mb-1.5 flex flex-wrap gap-x-2 sm:gap-x-4 gap-y-1">
               <li className="flex items-center gap-1.5 text-11 text-secondary">
                 <span className="size-2.5 flex-shrink-0 rounded-sm bg-accent-primary/45" aria-hidden />
                 Labour — estimated from the plan
@@ -380,7 +380,7 @@ export function SpendAnalysis({ rhythm, byCategory, byCategoryConverted, byRole,
 
           {/* Two series need a legend; one names itself in the line below. */}
           {bothKinds ? (
-            <ul className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1">
+            <ul className="mb-1.5 flex flex-wrap gap-x-2 sm:gap-x-4 gap-y-1">
               <li className="flex items-center gap-1.5 text-11 text-secondary">
                 <span className="size-2.5 flex-shrink-0 rounded-sm bg-accent-primary" aria-hidden />
                 Expenses — recorded
@@ -501,7 +501,7 @@ export function SpendAnalysis({ rhythm, byCategory, byCategoryConverted, byRole,
               />
             ))}
           </div>
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          <ul className="mt-2 flex flex-wrap gap-x-2 sm:gap-x-4 gap-y-1">
             {spentByCategory.map((row, index) => (
               <li key={row.category} className="flex items-center gap-1.5 text-11 text-secondary">
                 <span

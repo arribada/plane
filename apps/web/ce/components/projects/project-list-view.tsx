@@ -272,7 +272,7 @@ export const ProjectListView = observer(function ProjectListView({ projectIds }:
                                   role="img"
                                   aria-label={health.label}
                                   title={health.label}
-                                  className="flex size-3.5 flex-shrink-0 items-center justify-center rounded-full text-[9px] leading-none font-bold text-white"
+                                  className="flex size-3.5 flex-shrink-0 items-center justify-center rounded-full text-9 leading-tight font-bold text-white"
                                   style={{ backgroundColor: health.color }}
                                 >
                                   {health.glyph}

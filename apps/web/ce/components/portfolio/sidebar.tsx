@@ -176,7 +176,7 @@ const PortfolioSidebarRow = observer(function PortfolioSidebarRow({
               return h ? (
                 <Tooltip tooltipContent={h.label}>
                   <span
-                    className="flex size-3.5 flex-shrink-0 items-center justify-center rounded-full text-[9px] leading-none font-bold text-white"
+                    className="flex size-3.5 flex-shrink-0 items-center justify-center rounded-full text-9 leading-tight font-bold text-white"
                     style={{ backgroundColor: h.color }}
                     // The label was reachable only by hovering, so it did not exist on
                     // touch and did not exist for a screen reader either.

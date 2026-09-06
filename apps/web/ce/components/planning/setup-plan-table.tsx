@@ -184,9 +184,9 @@ export const SetupPlanTable = observer(function SetupPlanTable({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-right text-12 whitespace-nowrap text-secondary">
+                    <td className="px-3 py-1.5 text-right text-12 md:whitespace-nowrap text-secondary">
                       {onEditDates ? (
-                        <span className="flex items-center justify-end gap-1">
+                        <span className="flex flex-col items-start justify-start gap-1 md:flex-row md:items-center md:justify-end">
                           {/* A pinned date is a decision the scheduler works around,
                               so it is worth seeing at a glance which ones are yours. */}
                           {task.date_pinned && <Pin className="size-3 flex-shrink-0 text-accent-primary" />}
@@ -219,7 +219,7 @@ export const SetupPlanTable = observer(function SetupPlanTable({
                     {/* The number that turns a set of dates into a decision: how far
                         this can slip before anything else has to. Zero is the
                         critical path, which is the same statement said twice. */}
-                    <td className="px-2 py-1.5 text-right text-12 whitespace-nowrap">
+                    <td className="hidden md:table-cell px-2 py-1.5 text-right text-12 whitespace-nowrap">
                       {typeof task.total_float === "number" ? (
                         task.critical ? (
                           <span

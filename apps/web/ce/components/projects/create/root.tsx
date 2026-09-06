@@ -252,10 +252,10 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   aria-label={`Set status to ${s.label}`}
                   aria-pressed={lifecycleStatus === s.key}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-12",
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-12 outline-none focus-visible:ring-2 focus-visible:ring-accent-strong",
                     lifecycleStatus === s.key
                       ? "border-accent-primary text-primary"
-                      : "border-subtle text-secondary hover:text-primary"
+                      : "border-subtle text-secondary hover:bg-layer-2 hover:text-primary"
                   )}
                 >
                   <span className="size-2 rounded-full" style={{ backgroundColor: s.color }} />
@@ -272,7 +272,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   value={startDate}
                   max={targetDate || undefined}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
                 />
               </label>
               <label className="flex items-center gap-2 text-13 text-secondary">
@@ -283,7 +283,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   value={targetDate}
                   min={startDate || undefined}
                   onChange={(e) => setTargetDate(e.target.value)}
-                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
                 />
               </label>
             </div>
@@ -298,14 +298,14 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 value={budgetAmount}
                 onChange={(e) => setBudgetAmount(e.target.value)}
                 placeholder="Amount"
-                className="w-32 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                className="w-32 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
               />
               <select
                 value={budgetCurrency}
                 aria-label="Budget currency"
                 title="Budget currency — the project lead can change it later in the budget view"
                 onChange={(e) => setBudgetCurrency(e.target.value)}
-                className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+                className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
               >
                 {BUDGET_CURRENCIES.map((c) => (
                   <option key={c} value={c}>
@@ -334,7 +334,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 aria-label={teamMemberIds.length === 0 ? "Member role — select members first" : "Member role"}
                 title={teamMemberIds.length === 0 ? "Select members first" : undefined}
                 className={cn(
-                  "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary",
+                  "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong disabled:cursor-not-allowed disabled:bg-layer-2",
                   teamMemberIds.length === 0 && "opacity-50"
                 )}
               >

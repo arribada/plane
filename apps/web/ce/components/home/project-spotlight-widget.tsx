@@ -181,7 +181,7 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
           <div className="h-8 animate-pulse rounded bg-layer-2" />
         </div>
       ) : view === "tasks" ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 sm:gap-3">
           <Stat label="Work items" value={counts?.total_issues ?? 0} />
           <Stat label="Completed" value={counts?.completed_issues ?? 0} icon={CheckCircle2} />
           <Stat
@@ -195,7 +195,7 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
         </p>
       ) : view === "budget" ? (
         <div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 sm:gap-3">
             <Stat label="Allocated" value={money(display?.allocation, display?.currency ?? "")} />
             <Stat label="Spent" value={money(display?.committed, display?.currency ?? "")} />
             <Stat label="Remaining" value={money(display?.remaining, display?.currency ?? "")} />

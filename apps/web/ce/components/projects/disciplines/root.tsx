@@ -132,7 +132,7 @@ const ProjectDisciplinesRoot = observer(function ProjectDisciplinesRoot() {
     <div className="mx-auto w-full max-w-4xl space-y-5 p-4 sm:p-6">
       {/* A legend that doubles as a summary: every discipline present, with its
           share of the work, so the split is readable before scrolling. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-4 gap-y-2">
         {groups.map(({ entry, key }) => (
           <div key={key} className="flex items-center gap-1.5 text-12 text-secondary">
             <span className="size-2.5 rounded-full" style={{ backgroundColor: scale.colorOf(entry.unset ? null : key) }} />
@@ -161,7 +161,7 @@ const ProjectDisciplinesRoot = observer(function ProjectDisciplinesRoot() {
                 <li key={item.id} className="border-b border-subtle last:border-0">
                   <Link
                     to={`/${slug}/projects/${pid}/issues/${item.id}`}
-                    className="flex items-center gap-3 px-3 py-2 hover:bg-layer-2"
+                    className="flex items-center gap-3 px-3 py-3 md:py-2 min-h-[44px] md:min-h-0 hover:bg-layer-2 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-strong"
                   >
                     {project?.identifier && (
                       <span className="shrink-0 font-mono text-11 text-tertiary">

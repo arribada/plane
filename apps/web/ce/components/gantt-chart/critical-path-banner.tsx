@@ -149,7 +149,7 @@ export const CriticalPathBanner: FC<Props> = function CriticalPathBanner({
 
   return (
     <div
-      className={cn("flex flex-shrink-0 items-start gap-2 border-b px-4 py-1.5 text-12", {
+      className={cn("flex flex-shrink-0 items-start gap-2 border-b px-2 sm:px-4 py-1.5 text-12", {
         "border-subtle bg-layer-1 text-secondary": message.tone === "info" && !focused,
         // Focused, the strip is the chart's current subject rather than a note
         // beside it, and it has to look like a state you can leave.

@@ -522,7 +522,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 onClick={() => void switchDisplay(code)}
                 aria-pressed={displayCcy === code}
                 className={cn(
-                  "px-2 py-0.5 text-11",
+                  "px-2 py-0.5 text-11 outline-none focus-visible:ring-2 focus-visible:ring-accent-strong",
                   displayCcy === code ? "bg-accent-primary text-white" : "text-secondary hover:bg-layer-1"
                 )}
               >
@@ -680,7 +680,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               type="button"
               onClick={() => void saveAllocation()}
               disabled={saving}
-              className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+              className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? "Saving…" : "Save"}
             </button>
@@ -778,7 +778,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               <button
                 type="button"
                 onClick={() => setPanel(panel === "rates" ? null : "rates")}
-                className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
               >
                 <Coins className="size-3" />
                 Hourly rates
@@ -786,7 +786,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               <button
                 type="button"
                 onClick={() => setPanel(panel === "calendar" ? null : "calendar")}
-                className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
                 title="Days nobody works — they move every plan in the workspace"
               >
                 <CalendarOff className="size-3" />
@@ -798,7 +798,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 <button
                   type="button"
                   onClick={() => setPanel(panel === "currency" ? null : "currency")}
-                  className="flex items-center gap-1 rounded border border-subtle px-2 py-0.5 text-11 text-secondary hover:bg-layer-1"
+                  className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
                   title="The EUR/GBP rate every converted figure is read at"
                 >
                   <ArrowLeftRight className="size-3" />
@@ -947,7 +947,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       // flight, and it SAYS so: a button that silently swallowed
                       // the second click would leave somebody pressing it harder.
                       disabled={!!deciding}
-                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:opacity-50"
+                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                       // Keep the item in the accessible name ("Approve 10 Linkit boards"),
                       // not a bare "Approve purchase": it tells a screen-reader user WHICH
                       // purchase, and it is the name the approve test asserts on.
@@ -964,7 +964,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       // Same box as Approve: the two sit 8px apart and one of them
                       // was a 20px target, which is how a thumb aiming at Reject
                       // approves a purchase instead.
-                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded border border-subtle px-4 py-2 text-12 text-secondary hover:bg-layer-1 disabled:opacity-50"
+                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded border border-subtle px-4 py-2 text-12 text-secondary hover:bg-layer-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <X className="size-3" />
                       Reject
@@ -975,7 +975,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     type="button"
                     onClick={() => void withdraw(r.id)}
                     disabled={!!deciding}
-                    className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary disabled:opacity-50"
+                    className="flex-shrink-0 px-2 py-1 min-h-[40px] flex items-center text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Withdraw your request"
                   >
                     Withdraw
@@ -1108,14 +1108,14 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                         // on a phone, and a screen reader hearing "Track order" nine
                         // times in a list would learn nothing from any of them.
                         aria-label={`${r.ordered_on || r.received_on || r.expected_on ? "Update" : "Track"} the order for ${r.label}`}
-                        className="flex-shrink-0 text-11 text-tertiary hover:text-accent-primary"
+                        className="flex-shrink-0 text-11 text-tertiary hover:text-accent-primary focus-visible:text-accent-primary"
                       >
                         {r.ordered_on || r.received_on || r.expected_on ? "Update order" : "Track order"}
                       </button>
                     )}
                     {canTrack && tracking === r.id && (
                       <div className="flex w-full flex-wrap items-end gap-2 rounded border border-subtle bg-layer-1 p-2">
-                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
+                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
                           Order reference
                           <input
                             type="text"
@@ -1125,7 +1125,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             className={input}
                           />
                         </label>
-                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
+                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
                           Ordered on
                           <input
                             type="date"
@@ -1137,7 +1137,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                         {/* The one date the planner reads. Says so here rather than
                             in a help panel nobody opens — it is the difference
                             between a note and a thing that moves somebody's dates. */}
-                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
+                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
                           Expected
                           <input
                             type="date"
@@ -1147,7 +1147,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             title="Date the supplier promised delivery — constrains task start dates when delivery scheduling is on."
                           />
                         </label>
-                        <label className="flex w-full flex-col gap-0.5 text-10 text-tertiary sm:w-auto">
+                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
                           Arrived
                           <input
                             type="date"
@@ -1160,7 +1160,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                           type="button"
                           disabled={trackSaving}
                           onClick={() => void saveTracking(r.id)}
-                          className="rounded bg-accent-primary px-2 py-1 text-11 text-white disabled:opacity-50"
+                          className="rounded bg-accent-primary px-2 py-1 text-11 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {trackSaving ? "Saving…" : "Save"}
                         </button>
@@ -1188,7 +1188,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             return;
                           void withdraw(r.id);
                         }}
-                        className="flex-shrink-0 text-11 text-tertiary hover:text-danger-primary"
+                        className="flex-shrink-0 px-2 py-1 min-h-[40px] flex items-center text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary"
                       >
                         Remove
                       </button>
@@ -1255,7 +1255,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         ) : (
           <ul className="divide-y divide-subtle rounded-lg border border-subtle">
             {expenses.map((e) => (
-              <li key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
+              <li key={e.id} className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-3 gap-y-1 px-3 py-1.5">
                 <span
                   className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-10 text-tertiary"
                   title={CATEGORY_LABEL[e.category]}
@@ -1643,7 +1643,7 @@ function RatesPanel({
         type="button"
         onClick={() => void commit()}
         disabled={busy || !canWrite}
-        className="mt-2 rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+        className="mt-2 rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {busy ? "Saving…" : "Save rates"}
       </button>
@@ -1714,7 +1714,7 @@ function CurrencyPanel({
             await onSave({ eur_gbp_rate: value, display_currency: preferred });
             setBusy(false);
           }}
-          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy ? "Saving…" : "Save"}
         </button>
@@ -1772,7 +1772,7 @@ function CalendarPanel({
             setDate("");
             setName("");
           }}
-          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50"
+          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Add
         </button>

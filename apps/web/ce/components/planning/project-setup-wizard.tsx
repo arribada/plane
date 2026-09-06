@@ -1812,7 +1812,7 @@ export const ProjectSetupWizard = observer(function ProjectSetupWizard({ project
           onClick={busy ? undefined : onClose}
         />
         <div
-          className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1"
+          className="shadow-2xl relative z-10 flex max-h-[85vh] w-full max-w-full sm:max-w-3xl flex-col rounded-xl border border-subtle bg-layer-1"
           {...panelProps}
         >
           <div className="flex items-start justify-between gap-4 border-b border-subtle px-5 py-3">

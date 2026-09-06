@@ -68,7 +68,7 @@ export function GapModalShell(props: Props) {
       <div {...backdropProps} className="absolute inset-0 bg-black/40" />
       <div
         {...panelProps}
-        className="shadow-lg relative z-10 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-subtle bg-layer-1"
+        className="shadow-lg relative z-10 flex max-h-[80vh] w-full max-w-full sm:max-w-3xl flex-col rounded-lg border border-subtle bg-layer-1"
       >
         <header className="flex items-center gap-2 border-b border-subtle px-4 py-3">
           <h2 className="flex-1 text-14 font-medium text-primary">{title}</h2>

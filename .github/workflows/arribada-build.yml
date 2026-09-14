@@ -251,12 +251,12 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 639 is MEASURED — this exact command, in this exact image, against a
+              # 643 is MEASURED — this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
               # 2026-09-14 ON THE DROPLET alongside the MCP work, because the build
               # could not run on the author's machine (TLS interception broke `apk`):
-              # `arribada/main` collects 600 and this tree collects 639, both read off
-              # this line, so the delta agrees with the 39 tests test_mcp.py adds. That
+              # `arribada/main` collects 600 and this tree collects 643, both read off
+              # this line, so the delta agrees with the 43 tests test_mcp.py adds. That
               # agreement is a check on the measurement, not the source of it.
               #
               # Four agents raised it in parallel during one session, each adding its
@@ -272,8 +272,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 639 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 639 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 643 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 643 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

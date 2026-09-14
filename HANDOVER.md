@@ -43,7 +43,7 @@ session can continue without re-deriving anything.
 
 ## The MCP server — new, and live
 
-> **Updated the same evening: OAuth 2.1 shipped in `.142`, fixed in `.143` (`591174d297`, image `82057e4c1ec5`) — `.142`'s consent form carried no CSRF token, so pressing Authorise would have failed. `.143` is the rollback floor for this feature; do not roll back to `.142`.** There are now
+> **Updated the same evening: OAuth 2.1 shipped in `.142`, fixed in `.143` (`591174d297`, image `82057e4c1ec5`) — `.142`'s consent form carried no CSRF token, so pressing Authorise would have failed. `.143` is the rollback floor for this feature; do not roll back to `.142`. The full connector flow has since been completed in a browser against `.143`.** There are now
 > two ways in. Claude Code uses a bearer token in `~/.claude.json`; the claude.ai /
 > Claude Desktop **Connectors** UI uses OAuth, because it registers itself and expects to
 > sign a human in — it cannot use a pasted token, and trying produced "impossible to
@@ -71,13 +71,16 @@ gates are in [`ARRIBADA.md`](ARRIBADA.md); what a fresh session needs to know he
   read-only no-money token (the 3 money and 3 write tools correctly absent), `whoami`
   answers, `list_projects` returns the real 23 active projects, and `get_project_budget`
   and `create_work_item` are both refused with a message naming the missing grant.
-- **NOBODY HAS OPENED THE CONSENT SCREEN IN A BROWSER.** Everything below is proved by
-  tests against a real Postgres and by curl against production — the discovery documents,
-  the 401 pointer, registration, the sign-in redirect, the open-redirect guard, the token
-  endpoint's refusals. The one step that needs a signed-in browser is the consent screen
-  itself, and it has never been rendered outside a test. Its CSRF token is pinned by
-  `Client(enforce_csrf_checks=True)`, which is the strongest proof available without a
-  human. This is the same gap as point 4 and it is the next thing worth ten minutes.
+- **The whole flow has now run in a real browser, on `.143`.** Verified from the database
+  rather than from anybody's say-so: two clients registered from
+  `https://claude.ai/api/mcp/auth_callback` at 19:47:46 and 19:48:39 UTC, one authorization
+  code issued and consumed, and an access token minted at 19:48:49 with `scope=write` and
+  `allow_money=True`. `.143` went in at ~19:43, so the successful consent ran on the build
+  that carries the CSRF token — which is also the cleanest evidence that `.142`'s missing
+  one was a real defect and not a theoretical one.
+  **Still unexercised: the tools themselves over OAuth.** `MCPCallLog` has zero rows for a
+  token of `kind="oauth"`, so the connector has authorised and not yet called anything. The
+  bearer-token path is exercised; this one is authorised but unused.
 - **OAuth 2.1 is built** (`.142`, corrected in `.143`). Registration is open by protocol and grants nothing —
   no token exists until a signed-in human presses a button on the consent screen. The
   consent screen never asks for a password: it reads Plane's own session, so Google and

@@ -251,13 +251,14 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 644 is MEASURED — this exact command, in this exact image, against a
+              # 677 is MEASURED — this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
-              # 2026-09-14 ON THE DROPLET alongside the MCP work, because the build
-              # could not run on the author's machine (TLS interception broke `apk`):
-              # `arribada/main` collects 600 and this tree collects 644, both read off
-              # this line, so the delta agrees with the 44 tests test_mcp.py adds. That
-              # agreement is a check on the measurement, not the source of it.
+              # 2026-09-14 ON THE DROPLET, because the image will not build on the
+              # author's machine (TLS interception breaks `apk` against the Alpine
+              # repos). The MCP work took it 600 -> 644 and the OAuth work 644 -> 677;
+              # the second delta is the 33 cases test_mcp_oauth.py contributes, which
+              # is 28 functions with two of them parametrized over 4 and 3 inputs.
+              # That arithmetic agreeing is a check on the measurement, not its source.
               #
               # Four agents raised it in parallel during one session, each adding its
               # own count to whatever number it happened to find. That is how a floor
@@ -272,8 +273,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 644 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 644 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 677 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 677 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

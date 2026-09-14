@@ -43,6 +43,21 @@ session can continue without re-deriving anything.
 
 ## The MCP server — new, and live
 
+> **Updated the same evening: OAuth 2.1 shipped in `.142` (`9f65c443bc`).** There are now
+> two ways in. Claude Code uses a bearer token in `~/.claude.json`; the claude.ai /
+> Claude Desktop **Connectors** UI uses OAuth, because it registers itself and expects to
+> sign a human in — it cannot use a pasted token, and trying produced "impossible to
+> register with the login service". Endpoints, the Caddyfile mount and the security
+> ordering are in [`ARRIBADA.md`](ARRIBADA.md). Two traps from that deploy:
+>
+> - **The Caddyfile is now a MOUNT**, `/opt/arribada-platform/tools/plane-proxy/Caddyfile`
+>   over the vendored one, with `Caddyfile.orig` beside it. A Plane upgrade that changes
+>   upstream's file will be silently masked. Re-extract and re-apply the two `reverse_proxy`
+>   lines after any proxy image bump.
+> - **`plane_proxy` must be recreated with the backend** on any deploy that touches those
+>   routes. It is not in `ROLLBACK.md`'s usual service list, so it is easy to leave behind.
+
+
 `POST /api/arribada/mcp/` lets an AI agent read this instance. The design and the three
 gates are in [`ARRIBADA.md`](ARRIBADA.md); what a fresh session needs to know here:
 
@@ -56,8 +71,10 @@ gates are in [`ARRIBADA.md`](ARRIBADA.md); what a fresh session needs to know he
   read-only no-money token (the 3 money and 3 write tools correctly absent), `whoami`
   answers, `list_projects` returns the real 23 active projects, and `get_project_budget`
   and `create_work_item` are both refused with a message naming the missing grant.
-- **Not built: OAuth 2.1.** The credential is a bearer token in the user's environment.
-  Named in ARRIBADA.md; the wiki already runs an OAuth MCP server and is the shape to copy.
+- **OAuth 2.1 is built** (`.142`). Registration is open by protocol and grants nothing —
+  no token exists until a signed-in human presses a button on the consent screen. The
+  consent screen never asks for a password: it reads Plane's own session, so Google and
+  GitLab SSO keep working.
 
 Production `plane.arribada.org` serves **frontend `29c6d130ee`** (image tag
 `v1.3.1-arribada.125`) and **backend `e8db146a39`** (image `arribada/plane-backend:31608607b1`,

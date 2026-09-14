@@ -386,15 +386,66 @@ A management command rather than a settings page, because issuing one of these i
 deliberate act and a button would let any workspace admin mint an agent credential from a
 browser tab somebody left open. The shell is the second factor.
 
-### Not built: OAuth
+### OAuth 2.1 — built, for the Connectors UI
 
-The client authenticates with a bearer token, not the OAuth 2.1 flow the MCP spec describes
-for remote servers. That is a real gap and it is named here rather than left to be
-discovered: it means the credential is a long-lived string in the user's environment, and
-that revoking one person's access is a command on the droplet rather than a click. The
-mitigations are the ones above — hashed at rest, narrow, expiring, audited, revoked in one
-command with no cache in front of it. The wiki (Colanode) already runs an OAuth 2.1 MCP
-server and is the shape to copy when this is worth doing.
+There are now **two ways in**, and which one a client uses is decided by the client:
+
+- **A bearer token in a config file.** Claude Code. `manage.py mcp_token issue`, the secret
+  in an environment variable, `${PLANE_MCP_TOKEN}` in the header — the extension's settings
+  schema documents that expansion, so the secret never goes in the JSON.
+- **OAuth 2.1.** The claude.ai / Claude Desktop **Connectors** UI, which registers itself
+  and expects to sign a human in. It cannot use a pasted token, which is why the first
+  attempt produced "impossible to register with the login service" — the connector probed
+  for metadata and Plane's Caddy answered `/.well-known/oauth-authorization-server` with
+  the SPA's HTML and a 200.
+
+Endpoints, all at the domain root (`oauth_urls.py`, mounted on the root URLconf because RFC
+8414 and RFC 9728 derive these paths from the issuer):
+
+| Path | What |
+| --- | --- |
+| `/.well-known/oauth-protected-resource` (+ the RFC 9728 path-suffixed form) | which AS guards the MCP endpoint |
+| `/.well-known/oauth-authorization-server` | issuer, endpoints, S256 only |
+| `/oauth/register` | RFC 7591 dynamic registration, rate-limited |
+| `/oauth/authorize` | consent screen (GET) and the decision (POST) |
+| `/oauth/token` | `authorization_code` and `refresh_token` |
+
+**The proxy had to learn about them.** Upstream's Caddyfile routes `/api/*`, `/auth/*` and
+`/static/*` here and everything else to the frontend. The patched copy lives at
+`/opt/arribada-platform/tools/plane-proxy/Caddyfile` — mounted over the vendored one,
+with the untouched original beside it as `Caddyfile.orig`. **A Plane upgrade that changes
+the vendored file will be masked by that mount**: re-extract and re-apply the two lines.
+
+**The access token is an ordinary `MCPToken` row** with `kind="oauth"` and a client
+attached. `MCPTokenAuthentication` needed no change to accept it, and neither did the three
+gates or the audit log. That was the whole point — a second credential type would have been
+a second copy of every permission check.
+
+Two deliberate departures from the wiki's version, both because Plane is a different shape:
+
+- **No password is asked for.** Colanode's consent screen takes an email and a password
+  because it has no browser session at that point. `/oauth/authorize` is a plain Django view
+  behind the session middleware, so a signed-in user lands straight on consent and everyone
+  else goes to Plane's own sign-in with `next_path` back here. This code never sees a
+  password, and Google/GitLab SSO keeps working — which it could not if the form demanded one.
+- **Scope is the grant this fork already has.** Colanode issues one `wiki` scope; the
+  consent screen here offers read / finance / write and writes them onto the token, so an
+  OAuth token is attenuated by the same three gates as a CLI one. Read is the floor.
+
+The security is in the ORDER, and it is the one thing to preserve if this is ever edited:
+the client and its `redirect_uri` are validated **before** anything is reported by
+redirecting. Reverse that and this becomes an open redirector wearing a trusted hostname.
+Beyond it: PKCE S256 required (`plain` neither advertised nor accepted), codes single-use
+through a conditional UPDATE rather than read-then-write, refresh tokens rotated on every
+use, and the refresh prefix `arb_mcpr_` deliberately NOT starting with `arb_mcp_` so a
+refresh token sent as a bearer dies at the prefix check.
+
+Registration is open because the protocol requires it, and grants nothing: no token exists
+until a signed-in human presses a button on the consent screen.
+
+`test_mcp_oauth.py` walks the whole chain — register, authorize, consent, exchange, then
+call the MCP server with what came out — because every piece can be individually right and
+the chain still not work.
 
 ---
 

@@ -44,6 +44,7 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9` | `9f65c443bc`                | **currently served**; MCP OAuth 2.1; migration `0046`; **also changed `plane_proxy`** — see below |
 | `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9` | `8d4eb530cb`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045` |
 | `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab` | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                    |
 | `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5` | `b131d52c4e`                | the previous serve; **the roll-back target for the MCP deploy**                                   |
@@ -149,6 +150,32 @@ whenever anyone pushed. Go by image id.
 ---
 
 ## 1. Decide: code only, or code **and** database?
+
+> **2026-09-14, the OAuth deploy (`.142`).** One migration, `0046_mcp_oauth`: two
+> `CreateModel`s and four `AddField`s, every column nullable or defaulted, **no
+> `RunPython`** (checked in the §5 form, with the positive control — the same loop finds 2
+> in `0038_one_discipline_one_expense.py`). Safe to strand on a code-only rollback:
+> `.141`'s code never reads `kind`, `client_id`, `refresh_hash` or
+> `refresh_token_expires_at`, and the two new tables stay empty until somebody authorises a
+> connector. Pre-deploy dump:
+> `/opt/backups/archive/plane-db-predeploy-2026-09-14_185701.sql.gz`, `gzip -t` clean and
+> carrying the `PostgreSQL database dump complete` marker.
+>
+> **THIS DEPLOY ALSO CHANGED THE PROXY, and a rollback that forgets it leaves the routes
+> pointing at Django endpoints that no longer exist.** `plane_proxy` now mounts
+> `/opt/arribada-platform/tools/plane-proxy/Caddyfile`, which adds two lines sending
+> `/.well-known/oauth-*` and `/oauth/*` to `api:8000`. To roll back completely:
+>
+> ```bash
+> cd /opt/arribada-platform/tools
+> docker tag arribada/plane-backend:v1.3.1-arribada.141 makeplane/plane-backend:v1.3.1
+> cp plane-proxy/Caddyfile.orig plane-proxy/Caddyfile      # or drop the volume line
+> docker compose -f docker-compose.plane.yml --env-file .env.plane >   up -d --force-recreate --no-deps api worker beat-worker plane_proxy
+> ```
+>
+> Leaving the proxy lines in place while rolling the backend back is harmless — they route
+> to an `api` that answers 404 on those paths, which is what it did before any of this.
+
 
 > **2026-09-14, the MCP deploy (`.140` then `.141`).** One migration, `0045_mcp_token`,
 > **pure DDL, no `RunPython`** — two `CreateModel`s and nothing else. Both tables are new

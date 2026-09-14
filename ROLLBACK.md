@@ -44,7 +44,8 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9` | `9f65c443bc`                | **currently served**; MCP OAuth 2.1; migration `0046`; **also changed `plane_proxy`** — see below |
+| `arribada/plane-backend:v1.3.1-arribada.143`          | `82057e4c1ec5` | `591174d297`                | **currently served**; the consent screen's CSRF token. Same migration set as `.142`              |
+| `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9` | `9f65c443bc`                | MCP OAuth 2.1; migration `0046`; **the deploy that changed `plane_proxy`** — see below. Its consent form had no CSRF token, so the flow 403'd on Authorise; do not roll back TO this one |
 | `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9` | `8d4eb530cb`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045` |
 | `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab` | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                    |
 | `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5` | `b131d52c4e`                | the previous serve; **the roll-back target for the MCP deploy**                                   |

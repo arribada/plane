@@ -4,6 +4,8 @@
 
 from django.urls import path
 
+from .mcp import MCPEndpoint, MCPHealthEndpoint
+
 from .views import (
     ProjectProcurementDecisionEndpoint,
     ProjectProcurementEndpoint,
@@ -442,4 +444,14 @@ urlpatterns = [
         PublicTimelineEndpoint.as_view(),
         name="arribada-public-timeline",
     ),
+    # MCP. No workspace slug and no project id in either path, and that is the
+    # point: the token names the workspace, so nothing the caller supplies can
+    # widen what is reachable. Same reasoning as the public timeline above.
+    #
+    # `test_project_role_boundary.py` walks this list looking for
+    # `<uuid:project_id>` and correctly ignores both of these — the MCP endpoint
+    # decides on a project only after resolving one from the token's grant, and
+    # it does so by calling the routes above, which that test does cover.
+    path("mcp/", MCPEndpoint.as_view(), name="arribada-mcp"),
+    path("mcp/health/", MCPHealthEndpoint.as_view(), name="arribada-mcp-health"),
 ]

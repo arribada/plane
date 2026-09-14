@@ -17,10 +17,10 @@ Numbers, so you can tell at a glance when this file has rotted again:
 
 |                                                      |                                                          |
 | ---------------------------------------------------- | -------------------------------------------------------- |
-| `plane.arribada` migrations                          | `0001` → `0039` (own graph, see traps)                   |
-| Models in `models.py`                                | 26                                                       |
-| Endpoint classes in `views.py` / routes in `urls.py` | 72 / 72                                                  |
-| Python files in the app                              | 55 (20 source, 32 tests, 3 package markers)              |
+| `plane.arribada` migrations                          | `0001` → `0045` (own graph, see traps)                   |
+| Models                                               | 28 (26 in `models.py`, 2 in `mcp_models.py`)             |
+| Endpoint classes / routes in `urls.py`               | 74 (72 in `views.py`, 2 in `mcp.py`) / 74                |
+| Python files in the app                              | 73                                                       |
 | `arribada-*` celery beat entries                     | 5                                                        |
 | `@shared_task` functions                             | 5                                                        |
 | Web diff vs upstream                                 | 292 files, ~33k insertions (147 in `ce/`, 87 in `core/`) |
@@ -305,6 +305,94 @@ plan; provider and key per workspace (`WorkspaceAiSettings`).
 
 **Team Hub.** `hub-projects` feeds the Arribada dashboard, gated on `HUB_LINKS_SECRET`.
 `ProjectWikiDoc` is the per-project link record (wiki, Drive, chat, GitHub repos).
+
+**MCP server.** `POST /api/arribada/mcp/` — an AI agent (Claude Code, Claude Desktop) reads
+this instance through nineteen tools. See the section below; the short version is that every
+tool calls the endpoints above rather than the database, so there is one implementation of
+each number and one implementation of each permission.
+
+---
+
+## MCP server (`mcp.py`, `mcp_tools.py`, `mcp_auth.py`, `mcp_models.py`)
+
+`POST /api/arribada/mcp/` speaks the Model Context Protocol's Streamable HTTP transport
+with the streaming half declined — the spec allows a single `application/json` answer to a
+POST, every tool answers in one shot, and an SSE channel held open through the Caddy proxy
+would buy nothing. `GET` and `DELETE` answer 405 on purpose, which is what tells a client
+there is no server-initiated stream. `GET /api/arribada/mcp/health/` is unauthenticated and
+says nothing but the server name and version, so a deploy can prove the route is wired
+before anybody pastes a credential into a config.
+
+**Every tool calls an endpoint, not the database.** That is the design and it buys two
+things this fork cannot afford to lose. One implementation of every number: `get_project_budget`
+IS `ProjectBudgetEndpoint`, so an agent and the web app cannot disagree about a figure a
+funder will read. And one implementation of every permission: `allow_permission` runs on a
+synthesised request carrying the token's user, so *a route that names a project decides on
+the caller's role in that project* holds for an agent without being restated — and restating
+it is how it rots. The handful of tools with no endpoint behind them (`get_work_item`,
+`create_work_item`, `add_comment`) do their own ORM work and ask the same predicates by name.
+
+### Three gates, and only the first is ours
+
+1. **The token's grant** — scope (`read` / `write`), `allow_money`, and a project
+   allow-list. This can only SUBTRACT. A token can never do anything its owner could not.
+2. **The user's role**, asked by the endpoint itself. A GUEST holding a token with
+   `allow_money=True` is still refused the budget, because `MONEY_ROLES` is the other half
+   of the intersection. `test_mcp.py` pins exactly that.
+3. **The project's consent to be written into** — `ProjectSchedule.external_edits`, the
+   same switch the wiki sync answers to, **off by default**. No project accepts an agent's
+   writes until a lead turns it on.
+
+A tool the token can never call is not advertised in `tools/list`. That is politeness to
+the model, not a control: calling it by name anyway is refused by the grant.
+
+### What it will not do
+
+Writes never touch **the plan**. `update_work_item` refuses any field in `plan_guard.PLAN_FIELDS`
+— dates, parent, estimate, sprint and module membership — by importing that set rather than
+re-listing it, so the two cannot drift. An agent proposes a date in a comment; the lead sets
+it. Created rows are stamped `external_source='arribada-mcp'`, which migration `0043`
+already indexed and the v1 `?external_source=` filter already reads, so everything an agent
+touched can be found in one query.
+
+Like `ProjectApplyPlanEndpoint` and auto-schedule, these writes **skip the activity feed**,
+so they raise no notification. The tool result says so in its own payload rather than
+leaving it to be discovered.
+
+### Credentials
+
+`MCPToken` is deliberately not `db.APIToken`: upstream's key is stored in plaintext (and
+this fork dumps the database before every migration), carries its owner's whole authority,
+cannot be narrowed to a project or kept out of the money, and never expires. Ours stores
+SHA-256 of the secret, is narrow by default, expires (90 days, capped at 365), and writes an
+`MCPCallLog` row for every call — refusals included. The log keeps the ARGUMENTS and not the
+result: a tool result can be a whole budget, and a log that mirrors what it guards is a
+second copy of the thing to protect.
+
+The secret is printed once, by the command that mints it, and cannot be read back.
+
+```sh
+# on the droplet, in the api container
+python manage.py mcp_token issue --name "Claude Code" --email you@arribada.org
+python manage.py mcp_token issue --name "Funder report" --email you@arribada.org     --projects TAG,SEA --allow-money --days 30
+python manage.py mcp_token list
+python manage.py mcp_token revoke --prefix arb_mcp_1a2b3c4d
+python manage.py mcp_token calls --limit 20
+```
+
+A management command rather than a settings page, because issuing one of these is a rare
+deliberate act and a button would let any workspace admin mint an agent credential from a
+browser tab somebody left open. The shell is the second factor.
+
+### Not built: OAuth
+
+The client authenticates with a bearer token, not the OAuth 2.1 flow the MCP spec describes
+for remote servers. That is a real gap and it is named here rather than left to be
+discovered: it means the credential is a long-lived string in the user's environment, and
+that revoking one person's access is a command on the droplet rather than a click. The
+mitigations are the ones above — hashed at rest, narrow, expiring, audited, revoked in one
+command with no cache in front of it. The wiki (Colanode) already runs an OAuth 2.1 MCP
+server and is the shape to copy when this is worth doing.
 
 ---
 

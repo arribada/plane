@@ -1579,3 +1579,10 @@ class IssueChecklistItem(models.Model):
 
     def __str__(self):
         return f"{self.owner_id} ✓ {self.member_id}"
+
+
+# The MCP credential and its audit log. Declared in `mcp_models.py` because this
+# file is already past 1,600 lines and that subsystem is self-contained — but
+# imported HERE, by name, because Django only registers a model whose module is
+# imported, and an unregistered model has no table, no migration, and no error.
+from .mcp_models import MCPCallLog, MCPToken, mcp_default_expiry  # noqa: F401,E402

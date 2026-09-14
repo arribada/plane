@@ -33,14 +33,21 @@ from plane.db.models import Project, User, Workspace, WorkspaceMember
 from plane.app.permissions import ROLE
 
 from plane.arribada.mcp_auth import generate_secret, hash_secret, prefix_of
-from plane.arribada.models import MCPCallLog, MCPToken
+from django.db.models import Q
+
+from plane.arribada.models import (
+    MCPAuthorizationCode,
+    MCPCallLog,
+    MCPOAuthClient,
+    MCPToken,
+)
 
 
 class Command(BaseCommand):
     help = "Issue, list, revoke and audit MCP tokens for the Arribada Plane MCP server."
 
     def add_arguments(self, parser):
-        parser.add_argument("action", choices=["issue", "list", "revoke", "calls"])
+        parser.add_argument("action", choices=["issue", "list", "revoke", "calls", "prune"])
         parser.add_argument("--name", help="What this credential is for. Shown in `list` and the audit log.")
         parser.add_argument("--email", help="The user the token acts as. It can never exceed their permissions.")
         parser.add_argument("--workspace", help="Workspace slug. Optional when there is only one.")
@@ -58,6 +65,13 @@ class Command(BaseCommand):
         parser.add_argument("--prefix", help="Which token to act on, for `revoke` and `calls`.")
         parser.add_argument("--limit", type=int, default=30)
         parser.add_argument("--all", action="store_true", help="`list`: include revoked and expired.")
+        parser.add_argument(
+            "--older-than",
+            type=int,
+            default=30,
+            help="`prune`: delete spent authorization codes and dead tokens older than N days. Default 30.",
+        )
+        parser.add_argument("--dry-run", action="store_true", help="`prune`: count, change nothing.")
 
     # -- dispatch ----------------------------------------------------------
 
@@ -199,7 +213,10 @@ class Command(BaseCommand):
         shown = 0
         w = self.stdout.write
         w("")
-        w(f"{'PREFIX':<18} {'NAME':<24} {'ACTS AS':<28} {'SCOPE':<6} {'$':<3} {'STATE':<10} EXPIRES")
+        # `HOW` is not decoration: an OAuth grant and a token somebody pasted
+        # into a config are revoked for different reasons and by different
+        # people, and before this column they looked identical in this list.
+        w(f"{'PREFIX':<18} {'HOW':<7} {'NAME':<22} {'ACTS AS':<26} {'SCOPE':<6} {'$':<3} {'STATE':<8} EXPIRES")
         for token in rows:
             if token.revoked_at is not None:
                 state = "revoked"
@@ -211,8 +228,9 @@ class Command(BaseCommand):
                 continue
             shown += 1
             w(
-                f"{token.prefix:<18} {token.name[:23]:<24} {token.user.email[:27]:<28} "
-                f"{token.scope:<6} {'yes' if token.allow_money else '-':<3} {state:<10} "
+                f"{token.prefix:<18} {token.kind:<7} {token.name[:21]:<22} "
+                f"{token.user.email[:25]:<26} "
+                f"{token.scope:<6} {'yes' if token.allow_money else '-':<3} {state:<8} "
                 f"{token.expires_at:%Y-%m-%d}"
                 + ("" if not token.project_ids else f"  [{len(token.project_ids)} projects]")
             )
@@ -259,3 +277,55 @@ class Command(BaseCommand):
                 f"{row.duration_ms:<6} " + ("ok" if row.ok else f"FAILED: {row.error[:70]}")
             )
         w("")
+
+    # -- prune -------------------------------------------------------------
+
+    def _prune(self, options):
+        """Delete what is finished: spent or expired authorization codes, and
+        tokens that have been revoked or have expired.
+
+        A COMMAND AND NOT A BEAT TASK, deliberately. Adding one to the schedule
+        means a new entry in `apps.py`, a matching one in the beat config and a
+        line in `test_beat_schedule.py` — three coupled places to keep right for
+        a table that grows by one short-lived row per authorization. An OAuth
+        access token lives 24 hours and a code lives five minutes; the volume
+        here is a handful of rows a week, not a problem waiting to happen. Run
+        it by hand when the table offends you, and turn it into a task the day
+        the numbers say so.
+
+        Codes are deleted only once they are USED OR EXPIRED, so a prune racing
+        with a live authorization cannot take a code somebody is about to redeem.
+        """
+        from datetime import timedelta
+
+        cutoff = timezone.now() - timedelta(days=max(options["older_than"], 1))
+        now = timezone.now()
+
+        codes = MCPAuthorizationCode.objects.filter(created_at__lt=cutoff).filter(
+            Q(consumed_at__isnull=False) | Q(expires_at__lt=now)
+        )
+        tokens = MCPToken.objects.filter(created_at__lt=cutoff).filter(
+            Q(revoked_at__isnull=False) | Q(expires_at__lt=now)
+        )
+        # Clients with nothing left pointing at them. A connector re-registers
+        # itself on the next authorization, so an unused row is just litter.
+        clients = MCPOAuthClient.objects.filter(created_at__lt=cutoff, tokens__isnull=True, codes__isnull=True)
+
+        w = self.stdout.write
+        if options["dry_run"]:
+            w(f"would delete {codes.count()} spent codes, {tokens.count()} dead tokens, "
+              f"{clients.count()} unused clients (older than {options['older_than']} days)")
+            return
+
+        c = codes.count()
+        t = tokens.count()
+        n = clients.count()
+        codes.delete()
+        tokens.delete()
+        clients.delete()
+        w(self.style.SUCCESS(
+            f"deleted {c} spent codes, {t} dead tokens, {n} unused clients "
+            f"(older than {options['older_than']} days)"
+        ))
+        w("The MCP call log is NOT touched: it keeps `token_prefix` precisely so it outlives "
+          "the token, and it is the only record of what an agent did.")

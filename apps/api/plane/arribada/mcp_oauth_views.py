@@ -406,3 +406,93 @@ def _token_response(access, refresh, minted):
     response["Cache-Control"] = "no-store"
     response["Pragma"] = "no-cache"
     return response
+
+
+# ---------------------------------------------------------------------------
+# Revocation (RFC 7009) and the page a person uses
+# ---------------------------------------------------------------------------
+
+
+@csrf_exempt
+@require_POST
+def revoke(request):
+    """RFC 7009. **Always 200**, whether or not anything was revoked.
+
+    That is the RFC's rule and it is also the right one: an endpoint that said
+    "no such token" would let anybody test whether a string is a live
+    credential, one guess at a time, unauthenticated.
+
+    `client_id` is required and the revocation is scoped to that client's own
+    tokens. Registration is open, so without that scoping any registered client
+    could revoke anybody's token by presenting it — a denial of service with a
+    very low bar.
+    """
+    secret = (request.POST.get("token") or "").strip()
+    client_id = (request.POST.get("client_id") or "").strip()
+    if not secret:
+        return _oauth_error("invalid_request", "token is required.")
+
+    client = MCPOAuthClient.objects.filter(client_id=client_id).first() if client_id else None
+    if client is None:
+        # Unknown or absent client: still 200, still nothing revoked. Same
+        # reasoning as above — the answer must not depend on what is true.
+        return HttpResponse(status=200)
+
+    oauth.revoke_token(secret, client=client)
+    return HttpResponse(status=200)
+
+
+@xframe_options_deny
+def connections(request):
+    """`/oauth/connections` — list this account's live grants, and revoke one.
+
+    Session-authenticated like the consent screen, and for the same reason: the
+    person doing this is a human in a browser, and the question "who are you" is
+    already answered by Plane's own login.
+
+    The POST is a real form post and keeps Django's CSRF protection. There is no
+    `csrf_exempt` here and there must never be one — a revoke button that can be
+    triggered cross-site is a way to cut somebody's integrations from a forum
+    post. (Note that a CSRF failure in this product answers 200; see HANDOVER.md.
+    Nothing is revoked, which is the part that matters.)
+    """
+    base = oauth.base_url(request)
+    if not request.user.is_authenticated:
+        return HttpResponseRedirect(oauth.sign_in_url(base, request))
+
+    message = ""
+    if request.method == "POST":
+        wanted = (request.POST.get("revoke") or "").strip()
+        # Scoped to the caller's OWN tokens by the filter, not by trusting the
+        # id. Somebody else's uuid simply matches nothing.
+        killed = MCPToken.objects.filter(
+            pk=wanted, user=request.user, revoked_at__isnull=True
+        ).update(revoked_at=timezone.now()) if _is_uuid(wanted) else 0
+        message = "Revoked. That app can no longer read anything." if killed else ""
+
+    grants = list(
+        MCPToken.objects.filter(
+            user=request.user, revoked_at__isnull=True, expires_at__gt=timezone.now()
+        ).select_related("client")
+    )
+    return HttpResponse(
+        oauth.connections_page(base, request.user, grants, get_token(request), message),
+        content_type="text/html; charset=utf-8",
+    )
+
+
+def _is_uuid(value):
+    """A bad id must be a no-op, not a 500.
+
+    `MCPToken.pk` is a UUIDField, so filtering it on a non-uuid string raises
+    `ValidationError` rather than matching nothing — which would turn a stray
+    form value into a server error on a page whose whole job is to be reachable
+    when something has gone wrong.
+    """
+    import uuid as _uuid
+
+    try:
+        _uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True

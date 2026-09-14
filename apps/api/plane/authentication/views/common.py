@@ -36,11 +36,27 @@ class CSRFTokenEndpoint(APIView):
 
 
 def csrf_failure(request, reason=""):
-    """Custom CSRF failure view"""
+    """Custom CSRF failure view
+
+    ARRIBADA FIX: `status=403`. This called `render()` with no status, so a
+    request Django had just REFUSED was answered **200 OK** — the page said
+    something went wrong and the status line said it had not. Every caller that
+    judges by the status code, which is every programmatic one, was told the
+    write succeeded.
+
+    Found while writing an OAuth consent test that asserted 403 and failed
+    against a guard working perfectly, which is the dangerous direction: the
+    obvious response is to go looking for why CSRF "is not enforced".
+
+    Fork drift, one line, in an upstream file. Nothing here changes WHETHER a
+    request is refused — only what the refusal says about itself. The rendered
+    page is unchanged, so a browser shows exactly what it showed before.
+    """
     return render(
         request,
         "csrf_failure.html",
         {"reason": reason, "root_url": base_host(request=request)},
+        status=403,
     )
 
 

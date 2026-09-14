@@ -251,13 +251,15 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 679 is MEASURED — this exact command, in this exact image, against a
+              # 692 is MEASURED — this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
               # 2026-09-14 ON THE DROPLET, because the image will not build on the
               # author's machine (TLS interception breaks `apk` against the Alpine
-              # repos). The MCP work took it 600 -> 644 and the OAuth work 644 -> 679;
-              # the second delta is the 35 cases test_mcp_oauth.py contributes, which
-              # is 30 functions with two of them parametrized over 4 and 3 inputs.
+              # repos). 600 -> 644 (MCP) -> 679 (OAuth) -> 692 (revocation, the
+              # timezone-leak tests, and one consent test replaced by a sharper pair).
+              #
+              # THE RUN BEHIND THIS NUMBER WAS FULLY GREEN AT 20:22 UTC, which had
+              # not happened in months: see the timezone-leak section in HANDOVER.md.
               # That arithmetic agreeing is a check on the measurement, not its source.
               #
               # Four agents raised it in parallel during one session, each adding its
@@ -273,8 +275,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 679 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 679 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 692 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 692 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

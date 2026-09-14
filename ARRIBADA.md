@@ -409,6 +409,8 @@ Endpoints, all at the domain root (`oauth_urls.py`, mounted on the root URLconf 
 | `/oauth/register` | RFC 7591 dynamic registration, rate-limited |
 | `/oauth/authorize` | consent screen (GET) and the decision (POST) |
 | `/oauth/token` | `authorization_code` and `refresh_token` |
+| `/oauth/revoke` | RFC 7009. Always 200, scoped to the calling client's own tokens |
+| `/oauth/connections` | the page a person uses: what this account has authorised, and a Revoke button |
 
 **The proxy had to learn about them.** Upstream's Caddyfile routes `/api/*`, `/auth/*` and
 `/static/*` here and everything else to the frontend. The patched copy lives at
@@ -443,9 +445,23 @@ refresh token sent as a bearer dies at the prefix check.
 Registration is open because the protocol requires it, and grants nothing: no token exists
 until a signed-in human presses a button on the consent screen.
 
+**Revocation is self-service, and that was a gap worth closing.** The flow let anybody on
+the team authorise a connector from a browser while taking it back still needed a shell on
+the droplet — a grant a person can give and cannot take back is not a grant they control.
+`/oauth/connections` is session-authenticated, lists both kinds of token (a connector and a
+`mcp_token issue` one look different now, which they did not before), and revokes by
+queryset rather than by trusting the id in the form. `/oauth/revoke` is the machine half:
+naming either the access or the refresh secret kills the row, because they are one row.
+
+Two rules on that endpoint that look like quirks and are not. It answers **200 whether or
+not anything matched** — RFC 7009 says so, and an endpoint that said "no such token" would
+be an unauthenticated oracle for whether a string is a live credential. And it is **scoped
+to the calling client**: registration is open, so without that, any registered client could
+cut anybody's integration by presenting a token it had seen.
+
 `test_mcp_oauth.py` walks the whole chain — register, authorize, consent, exchange, then
 call the MCP server with what came out — because every piece can be individually right and
-the chain still not work.
+the chain still not work. Forty tests.
 
 ---
 

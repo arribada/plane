@@ -179,65 +179,54 @@ The CI backend job now has a real Postgres service — before this, ~48 tests er
 on every run and the floor only counted collection. A security fix shipped with five
 holes open under a green tick because of it.
 
-## ⚠️ One backend test fails in the FULL SUITE, at every commit
+## The "red every UTC afternoon" backend test — diagnosed and fixed
 
-`test_capacity_part_time.py::test_a_fully_booked_full_timer_reads_one_hundred_percent`
-fails `assert 98 == 100`. **It is not a regression, and it is not caused by any change.**
-Before you diagnose a red backend job, check whether this is the only failure.
+`test_capacity_part_time.py::test_a_fully_booked_full_timer_reads_one_hundred_percent` was
+called "time-of-day sensitive" here. That described the symptom. The cause is an **activated
+timezone leaking between tests**, and it accounts for both halves of the behaviour, which no
+flaky-test story does.
 
-Measured 2026-09-14 on the droplet, same image build, same Postgres, same command:
+`TimezoneMixin.initial` — inherited by every view in this app through `BaseAPIView` — calls
+`django.utils.timezone.activate()` with the caller's zone and calls `deactivate()` only for
+an ANONYMOUS caller. `activate` writes a thread-local that outlives the request.
+`test_caller_day.py` puts a user in `Pacific/Auckland` and drives requests through that
+mixin, so every test after it in the same process computes `timezone.localdate()` in
+Auckland — which from **12:00 UTC** onwards is already tomorrow.
 
-| Time (UTC) | Tree                                 | Command                          | Result                  |
-| ---------- | ------------------------------------ | -------------------------------- | ----------------------- |
-| 16:33      | `feat/mcp-server`                    | `pytest plane/arribada/`         | **1 failed**, 638 passed |
-| 16:52      | `arribada/main` (`f9c01bdd3c`)       | `pytest .../test_capacity_part_time.py` | **6 passed** — green |
-| 16:58      | `arribada/main` (`f9c01bdd3c`)       | `pytest plane/arribada/`         | **1 failed**, 599 passed |
+The capacity test then builds its fixture dates from a leaked-Auckland `today` while the
+endpoint recomputes `today` in UTC (the mixin re-activates the requesting user's own zone),
+the two windows are one day apart, and one working day of forty falls outside: `98 == 100`.
 
-The middle row and the last row are twenty minutes apart on the SAME COMMIT, in the same
-clock window, and they disagree. So the earlier diagnosis — "time-of-day sensitive" — is at
-best incomplete: **what actually predicts the failure is whether the whole suite runs, not
-what time it is.** The file passes alone and fails in company, which points at state leaking
-between tests (a cached holiday set, a `freeze_time` that outlives its block, a fixture
-mutating a shared row) rather than at the clock.
+That is why the file **passes when run alone at any hour** and **fails in the full suite only
+after noon UTC**, and it is why the earlier measurements looked contradictory — 10:44 and
+11:05 UTC green, 16:40 onwards red, with the boundary at exactly noon.
 
-That also means the check to run is cheap and decisive, and you should run it before calling
-anything a regression: **execute the same command on the parent commit.** That is what the
-table above is; it cost one build and seven minutes, and it is the only thing that separates
-"the code did this" from "the suite did this".
+Fixed by an autouse fixture in `plane/arribada/conftest.py` that deactivates before and
+after every test. `test_timezone_leak.py` demonstrates the mechanism in four lines, proves
+the cleanup happens, and drives a real request through the mixin to show the leak is a fact
+about the product and not about `activate()`.
 
-Two things still make this worse than one bad test:
+**Not changed: the product's own behaviour.** `TimezoneMixin` still leaves a zone activated
+after an authenticated request. In the web process that is harmless — the next request
+re-activates — but a Celery worker sharing the process would inherit it. Nothing in this
+fork's tasks reads `localdate()` that way today. Worth a look, separately.
 
-1. **The test's own docstring asserts the opposite**, in capitals — that its numbers cannot
-   depend on when the suite runs. That claim is empirically false, and stated confidently
-   enough that the failure keeps being re-diagnosed as a bank holiday.
-2. **It trains people to wave a red CI through.** A team that learns "the backend job is
-   always a bit red" is a team that will ship the run where something else broke too.
+## A CSRF failure now says 403 — fixed
 
-**Fix it separately, and do not fix it by raising the tolerance** — the assertion is the
-control that stops the part-time correction being deleted altogether, which is the whole
-point of the file it lives in. Start by running the file alone, then with each other test
-module in turn, to find which one poisons it.
+`CSRF_FAILURE_VIEW` called `render()` with no `status=`, so a request Django had just
+REFUSED was answered **200 OK**. Nothing was ever written — only the status line lied — but
+every caller that judges by the status code, which is every programmatic one, was told the
+write had succeeded.
 
-## ⚠️ A CSRF failure is answered 200 OK
+Found while writing an OAuth consent test that asserted 403 and failed against a guard that
+was working perfectly. That is the dangerous direction: the obvious response to that failing
+test is to go looking for why CSRF "is not enforced" and switch something off.
 
-`CSRF_FAILURE_VIEW = "plane.authentication.views.common.csrf_failure"` calls `render()`
-with no `status=`, so Django returns **200**. The rejection is real — the view never runs,
-nothing is written — but every caller that judges by the status code is told the write
-succeeded.
-
-Found 2026-09-14 while writing `test_a_consent_post_without_the_token_is_refused`, which
-asserted 403 and failed against a guard that was working correctly. That is the dangerous
-shape: the obvious "fix" is to relax the test or, worse, to go looking for why CSRF "is not
-enforced" and switch something off.
-
-**Not fixed here**, deliberately. `render(..., status=403)` is a one-line change in an
-upstream file and it alters every CSRF failure in the product, including paths in the web
-app that nobody has ever opened in a browser (see point 4). It should be fixed, with
-somebody watching the sign-in and the settings pages afterwards.
-
-Until then: **assert on the effect, never on the status**, for anything behind CSRF. The
-test named above asserts that no authorization code and no token exist afterwards, which is
-the question actually being asked.
+Fixed with `status=403` in `plane/authentication/views/common.py` — fork drift, one line, in
+an upstream file, commented `ARRIBADA FIX`. The rendered page, its template and its context
+are untouched, so a browser shows exactly what it showed before; only the status differs.
+**Nobody has watched the sign-in page meet it in a browser**, which is the residual risk and
+is small for that reason.
 
 ## The repository
 

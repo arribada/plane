@@ -28,8 +28,10 @@ from .mcp_oauth_views import (
     authorization_server_metadata,
     authorize_get,
     authorize_post,
+    connections,
     protected_resource_metadata,
     register,
+    revoke,
     token,
 )
 
@@ -75,10 +77,16 @@ urlpatterns = [
     path("oauth/register", register, name="arribada-oauth-register"),
     path("oauth/authorize", authorize, name="arribada-oauth-authorize"),
     path("oauth/token", token, name="arribada-oauth-token"),
+    path("oauth/revoke", revoke, name="arribada-oauth-revoke"),
+    # The page a person uses. GET lists, POST revokes; one view, because the
+    # form posts back to the same URL it was rendered from.
+    path("oauth/connections", connections, name="arribada-oauth-connections"),
     # Trailing-slash twins. Not decoration: a client that appends one otherwise
     # meets `plane.web.urls`' catch-all and is answered with the SPA, which is
     # the same silent wrong answer the `.well-known` paths used to give.
     path("oauth/register/", register),
     path("oauth/authorize/", authorize),
     path("oauth/token/", token),
+    path("oauth/revoke/", revoke),
+    path("oauth/connections/", connections),
 ]

@@ -53,6 +53,8 @@ from .models import MCPAuthorizationCode, MCPOAuthClient, MCPToken
 AUTHORIZE_PATH = "/oauth/authorize"
 TOKEN_PATH = "/oauth/token"
 REGISTER_PATH = "/oauth/register"
+REVOKE_PATH = "/oauth/revoke"
+CONNECTIONS_PATH = "/oauth/connections"
 MCP_RESOURCE_PATH = "/api/arribada/mcp/"
 PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource"
 AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server"
@@ -117,6 +119,8 @@ def authorization_server_metadata(base):
         "authorization_endpoint": f"{base}{AUTHORIZE_PATH}",
         "token_endpoint": f"{base}{TOKEN_PATH}",
         "registration_endpoint": f"{base}{REGISTER_PATH}",
+        "revocation_endpoint": f"{base}{REVOKE_PATH}",
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -463,3 +467,137 @@ def success_redirect(redirect_uri, code, state=None):
         params["state"] = state
     joiner = "&" if "?" in redirect_uri else "?"
     return f"{redirect_uri}{joiner}{urlencode(params, quote_via=quote)}"
+
+
+def revoke_token(secret, client=None):
+    """RFC 7009. Revoke an access or a refresh token; return True if one died.
+
+    Accepts EITHER secret for the same row, because a client that holds a pair
+    should not have to know which of the two this server considers canonical —
+    the RFC says a revocation request naming a refresh token SHOULD also kill
+    its access token, and here they are one row, so it always does.
+
+    The RFC requires a 200 whether or not anything matched, so the boolean is
+    for the caller's own logging and never reaches the client. Reporting "no
+    such token" would let anybody test whether a string is a live credential.
+    """
+    from .models import MCPToken
+
+    digest = hash_secret(secret)
+    rows = MCPToken.objects.filter(revoked_at__isnull=True)
+    if client is not None:
+        # A client may revoke only what was issued to it. Registration is open,
+        # so without this any registered client could revoke anybody's token by
+        # presenting it — which is a denial of service with a very low bar.
+        rows = rows.filter(client=client)
+    hit = rows.filter(models_q(digest)).first()
+    if hit is None:
+        return False
+    return (
+        MCPToken.objects.filter(pk=hit.pk, revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+        == 1
+    )
+
+
+def models_q(digest):
+    """`token_hash = digest OR refresh_hash = digest`, as a Q object.
+
+    A function rather than an inline import of `Q` at the top, so this module
+    keeps importing nothing from Django's ORM layer beyond what it already
+    needs. `refresh_hash` is empty string for CLI tokens, and `digest` is a
+    64-character hex string, so the two can never collide.
+    """
+    from django.db.models import Q
+
+    return Q(token_hash=digest) | Q(refresh_hash=digest)
+
+
+def connections_page(base, user, grants, csrf_token, message=""):
+    """`/oauth/connections` — what this account has authorised, and a way out.
+
+    Exists because the OAuth flow let anybody on the team authorise a connector
+    from a browser while revoking one still required a shell on the droplet.
+    A grant a person can give and cannot take back is not a grant they control.
+
+    Server-rendered for the same reasons as the consent screen: it must work
+    without the SPA, it must not be able to fetch anything, and a page in the
+    Plane app would have to be registered in four places (see ARRIBADA.md) to
+    be reachable at all.
+    """
+    who = escape(user.display_name or user.first_name or user.email)
+
+    if not grants:
+        rows = (
+            '<p class="empty">Nothing is authorised. Connectors you approve, and tokens '
+            "issued for you on the server, will appear here.</p>"
+        )
+    else:
+        rows = ""
+        for g in grants:
+            kind = "Connector" if g.kind == "oauth" else "Server-issued token"
+            source = escape(g.client.client_name or g.client.client_id) if g.client else escape(g.name)
+            perms = ["read"]
+            if g.scope == "write":
+                perms.append("write")
+            if g.allow_money:
+                perms.append("finance")
+            last = g.last_used_at.strftime("%d %b %Y, %H:%M UTC") if g.last_used_at else "never used"
+            rows += f"""
+        <div class="grant">
+          <div class="meta">
+            <strong>{source}</strong>
+            <small>{kind} &middot; {escape(", ".join(perms))} &middot; last used {escape(last)}
+            &middot; expires {g.expires_at:%d %b %Y}</small>
+          </div>
+          <form method="post" action="{CONNECTIONS_PATH}">
+            <input type="hidden" name="csrfmiddlewaretoken" value="{escape(csrf_token)}" />
+            <input type="hidden" name="revoke" value="{escape(str(g.id))}" />
+            <button type="submit" class="danger">Revoke</button>
+          </form>
+        </div>"""
+
+    banner = f'<p class="done">{escape(message)}</p>' if message else ""
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Connected apps — Arribada Plane</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
+         display: grid; place-items: start center; min-height: 100vh; padding: 40px 16px;
+         background: #f6f7f9; color: #14181f; }}
+  @media (prefers-color-scheme: dark) {{ body {{ background: #0f1216; color: #e6e9ee; }} }}
+  .card {{ background: #fff; border-radius: 12px; padding: 28px; max-width: 620px; width: 100%;
+           box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.08); }}
+  @media (prefers-color-scheme: dark) {{ .card {{ background: #171b21; box-shadow: none;
+           border: 1px solid #262c35; }} }}
+  h1 {{ font-size: 18px; margin: 0 0 4px; }}
+  .sub, small, .empty {{ color: #6b7280; }}
+  .sub {{ margin: 0 0 20px; font-size: 14px; }}
+  .grant {{ display: flex; gap: 12px; align-items: center; justify-content: space-between;
+            padding: 13px 14px; border: 1px solid #e3e6ea; border-radius: 8px; margin-bottom: 8px; }}
+  @media (prefers-color-scheme: dark) {{ .grant {{ border-color: #2b323c; }} }}
+  .meta {{ min-width: 0; }}
+  small {{ display: block; margin-top: 3px; font-size: 12.5px; }}
+  button {{ padding: 7px 13px; border-radius: 7px; font: inherit; font-weight: 600; cursor: pointer;
+            border: 1px solid #d3d8de; background: transparent; color: inherit; white-space: nowrap; }}
+  .danger {{ border-color: #e0b4b4; color: #b42318; }}
+  .done {{ background: #eefbf2; border: 1px solid #b7e4c7; color: #10633a; padding: 10px 12px;
+           border-radius: 8px; margin: 0 0 16px; font-size: 14px; }}
+  @media (prefers-color-scheme: dark) {{ .done {{ background: #10281c; border-color: #1d5137; color: #8fe0b4; }} }}
+  .who {{ font-size: 13px; color: #6b7280; margin-top: 18px; border-top: 1px solid #e9ecef; padding-top: 12px; }}
+  @media (prefers-color-scheme: dark) {{ .who {{ border-color: #262c35; }} }}
+</style></head>
+<body>
+  <div class="card">
+    <h1>Connected apps</h1>
+    <p class="sub">Programs that can read Arribada Plane as you.</p>
+    {banner}
+    {rows}
+    <p class="who">Signed in as {who}. Revoking takes effect on the next request — there is
+    no cache in front of this. A revoked connector can ask you to authorise it again.</p>
+  </div>
+</body></html>"""

@@ -75,3 +75,42 @@ def money_project(db):
         "slug": workspace.slug,
         "project_id": str(project.id),
     }
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_timezone():
+    """Put the process back in the default zone around every test.
+
+    WHY THIS EXISTS, because it looks like housekeeping and is not.
+    `TimezoneMixin.initial` — which every view in this app inherits through
+    `BaseAPIView` — calls `django.utils.timezone.activate()` with the caller's
+    own zone, and calls `deactivate()` only for an ANONYMOUS caller. `activate`
+    writes a thread-local that outlives the request, so the last authenticated
+    caller's zone stays current for everything that runs afterwards in the same
+    worker.
+
+    `test_caller_day.py` sets a user to `Pacific/Auckland` and makes requests
+    through that mixin. Every test that ran after it in the same process then
+    computed `timezone.localdate()` in Auckland — which, from 12:00 UTC onwards,
+    is already TOMORROW.
+
+    That is the whole of the defect this repo has been calling "the backend job
+    goes red every UTC afternoon", and both halves of its behaviour fall out of
+    it: the file passes when run ALONE because nothing activated Auckland, and
+    it fails in the FULL SUITE only after noon UTC because that is when the two
+    zones stop agreeing about the date.
+
+    The concrete failure is `test_capacity_part_time.py::test_a_fully_booked_
+    full_timer_reads_one_hundred_percent`: its fixture builds work-item dates
+    from a leaked-Auckland `today`, the endpoint recomputes `today` in UTC after
+    the mixin re-activates the requesting user's own zone, the two windows are
+    offset by one day, and one working day of forty falls outside — `98 == 100`.
+
+    Deactivating BEFORE as well as after, so a test is protected from whatever
+    ran before it even if that test bypassed this fixture.
+    """
+    from django.utils import timezone as _dj_timezone
+
+    _dj_timezone.deactivate()
+    yield
+    _dj_timezone.deactivate()

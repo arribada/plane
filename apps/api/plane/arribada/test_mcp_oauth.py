@@ -667,23 +667,12 @@ def test_the_consent_form_carries_a_csrf_token(world):
     assert "code=" in submitted["Location"]
 
 
-def test_a_consent_post_without_the_token_is_refused(world):
-    """The other direction. A consent screen that can be submitted cross-site is
-    a consent screen that grants access without a decision.
-
-    ASSERTED ON THE EFFECT, NOT THE STATUS CODE, and that is not laziness.
-    Plane sets `CSRF_FAILURE_VIEW = plane.authentication.views.common.csrf_failure`,
-    which calls `render()` with no `status=`, so **a request rejected for CSRF is
-    answered 200 OK**. The rejection is real — the view never runs — but any
-    caller that judges by the status code is told the write succeeded. That is an
-    upstream defect, it is recorded in HANDOVER.md, and it is deliberately not
-    fixed here: changing it alters every CSRF failure in the product, including
-    paths in the web app nobody has opened in a browser.
-
-    So the check that matters is that NO authorization code exists afterwards.
-    A test that asserted 403 would fail against a working guard, which is how a
-    correct control ends up being "fixed" until it stops controlling anything.
-    """
+def test_a_csrf_failure_reports_403_and_still_grants_nothing(world):
+    """Upstream answered 200 to a request it had just refused, so any caller
+    judging by the status code was told the write succeeded. This asserts BOTH
+    halves — the status, which is what was wrong, and the effect, which is what
+    matters. An earlier version of this test asserted only the 200 and
+    documented it as an upstream quirk; the quirk is now fixed."""
     strict = Client(enforce_csrf_checks=True)
     registered = make_client(strict)
     _verifier, challenge = pkce()
@@ -694,11 +683,140 @@ def test_a_consent_post_without_the_token_is_refused(world):
     params["grant"] = ["read"]
     forged = strict.post("/oauth/authorize", params)  # no csrfmiddlewaretoken
 
-    # Nothing was granted. This is the assertion with teeth.
+    assert forged.status_code == 403
     assert MCPAuthorizationCode.objects.count() == 0
     assert MCPToken.objects.filter(kind=MCPToken.KIND_OAUTH).count() == 0
-    # And it did not reach the handler: no redirect back to the client with a code.
-    assert "Location" not in forged
-    # Upstream's failure page, pinned so that if CSRF_FAILURE_VIEW ever changes
-    # this test says so instead of quietly passing on a different page.
-    assert forged.status_code == 200 and b"csrf" in forged.content.lower()
+
+
+# ---------------------------------------------------------------------------
+# Revocation, and the page a person uses
+#
+# Built because the flow above let anybody on the team authorise a connector
+# from a browser while revoking one still needed a shell on the droplet. A grant
+# a person can give and cannot take back is not a grant they control.
+# ---------------------------------------------------------------------------
+
+
+def test_the_metadata_advertises_the_revocation_endpoint(client, world):
+    """A client that cannot discover it will never call it."""
+    meta = client.get("/.well-known/oauth-authorization-server").json()
+    assert meta["revocation_endpoint"].endswith("/oauth/revoke")
+
+
+def _mcp_call(access_token):
+    """Drive the MCP endpoint with a bare client — no session, so the token is
+    the only thing that can be doing the work."""
+    return Client().post(
+        "/api/arribada/mcp/",
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access_token}",
+    )
+
+
+def test_revoking_an_access_token_kills_it(client, world):
+    registered, body = _issued(client, world)
+    assert _mcp_call(body["access_token"]).status_code == 200  # positive control
+
+    revoked = client.post(
+        "/oauth/revoke", {"token": body["access_token"], "client_id": registered["client_id"]}
+    )
+    assert revoked.status_code == 200
+    assert _mcp_call(body["access_token"]).status_code == 401
+
+
+def test_revoking_the_refresh_token_kills_the_access_token_too(client, world):
+    """They are one row, so naming either ends both — which is what RFC 7009
+    says SHOULD happen and what a client expects."""
+    registered, body = _issued(client, world)
+    assert _mcp_call(body["access_token"]).status_code == 200
+
+    assert client.post(
+        "/oauth/revoke", {"token": body["refresh_token"], "client_id": registered["client_id"]}
+    ).status_code == 200
+    assert _mcp_call(body["access_token"]).status_code == 401
+
+
+def test_revocation_answers_200_for_a_token_that_does_not_exist(client, world):
+    """RFC 7009, and the right rule: an endpoint that said "no such token" would
+    be an unauthenticated oracle for whether a string is a live credential."""
+    registered = make_client(client)
+    response = client.post(
+        "/oauth/revoke", {"token": "arb_mcp_" + "0" * 64, "client_id": registered["client_id"]}
+    )
+    assert response.status_code == 200
+
+
+def test_one_client_cannot_revoke_another_clients_token(client, world):
+    """Registration is open. Without this scoping, any registered client could
+    cut anybody's integration by presenting a token it had seen."""
+    _registered, body = _issued(client, world)
+    impostor = make_client(client, name="Impostor")
+
+    assert client.post(
+        "/oauth/revoke", {"token": body["access_token"], "client_id": impostor["client_id"]}
+    ).status_code == 200  # the RFC says 200 regardless of what happened
+
+    assert _mcp_call(body["access_token"]).status_code == 200  # untouched
+
+
+def test_the_connections_page_lists_what_this_account_authorised(client, world):
+    _registered, _body = _issued(client, world)
+    client.force_login(world["user"])
+    page = client.get("/oauth/connections")
+    assert page.status_code == 200
+    body = page.content.decode()
+    assert "Connected apps" in body
+    assert "Claude" in body
+    assert 'name="csrfmiddlewaretoken"' in body
+    assert "Revoke" in body
+
+
+def test_the_connections_page_revokes_and_the_token_dies(client, world):
+    _registered, body = _issued(client, world)
+    token_id = str(MCPToken.objects.get(kind=MCPToken.KIND_OAUTH).id)
+    client.force_login(world["user"])
+
+    done = client.post("/oauth/connections", {"revoke": token_id})
+    assert done.status_code == 200
+    assert b"Revoked" in done.content
+    assert _mcp_call(body["access_token"]).status_code == 401
+
+
+def test_you_cannot_revoke_somebody_elses_grant_from_that_page(client, world):
+    """Scoped by the queryset, not by trusting the id in the form."""
+    from plane.db.models import User, WorkspaceMember
+
+    _registered, body = _issued(client, world)
+    mine = MCPToken.objects.get(kind=MCPToken.KIND_OAUTH)
+
+    stranger = User.objects.create(
+        email="stranger@arribada.test", username="stranger", first_name="Stranger"
+    )
+    WorkspaceMember.objects.create(
+        workspace=world["workspace"], member=stranger, role=ROLE.MEMBER.value
+    )
+    other = Client()
+    other.force_login(stranger)
+    other.post("/oauth/connections", {"revoke": str(mine.id)})
+
+    mine.refresh_from_db()
+    assert mine.revoked_at is None
+    assert _mcp_call(body["access_token"]).status_code == 200
+
+
+def test_a_junk_id_on_that_page_is_a_no_op_not_a_500(client, world):
+    """`MCPToken.pk` is a UUIDField, so filtering it on a non-uuid raises rather
+    than matching nothing — on the page whose job is to work when something has
+    already gone wrong."""
+    _registered, _body = _issued(client, world)
+    client.force_login(world["user"])
+    response = client.post("/oauth/connections", {"revoke": "not-a-uuid"})
+    assert response.status_code == 200
+    assert MCPToken.objects.filter(revoked_at__isnull=False).count() == 0
+
+
+def test_the_connections_page_sends_a_stranger_to_sign_in(client, world):
+    response = client.get("/oauth/connections")
+    assert response.status_code == 302
+    assert "next_path" in response["Location"]

@@ -287,8 +287,17 @@ class MCPAuthorizationCode(models.Model):
     code_challenge = models.CharField(max_length=128)
     code_challenge_method = models.CharField(max_length=8, default="S256")
 
-    # RFC 8707. Echoed back and checked, so a code minted for this MCP server
-    # cannot be redeemed against a different resource by a client that asks.
+    # RFC 8707, RECORDED AND NOT ENFORCED, said plainly because the previous
+    # version of this comment claimed it was "echoed back and checked" and no
+    # such check exists. A comment that asserts a control nobody implemented is
+    # worse than no comment: the next person reads it and stops looking.
+    #
+    # There is nothing to enforce it against today. This authorization server
+    # guards exactly one resource — the MCP endpoint — so a code cannot be
+    # redeemed against a different one; there is no different one. The column
+    # exists so that the day a second resource appears, the value the client
+    # asked for is already on the row and the check is a comparison rather than
+    # a migration.
     resource = models.TextField(blank=True, default="")
 
     # What the human ticked. Mirrors the two grant fields on MCPToken.

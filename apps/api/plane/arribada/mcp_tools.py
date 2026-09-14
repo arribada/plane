@@ -238,6 +238,36 @@ def _ref(project, issue):
     return f"{project.identifier}-{issue.sequence_id}"
 
 
+def _scoped_list(ctx, rows, key, what):
+    """Narrow a workspace-wide list to the token's project allow-list.
+
+    FAILS CLOSED on a shape it does not recognise, and that is the whole reason
+    it exists rather than being three inline `if isinstance(...)` lines. The
+    inline version of this guessed a wrapper key that `PortfolioEndpoint` does
+    not use, matched nothing, and returned the list unfiltered — an allow-list
+    that silently stopped being one. Every endpoint wrapped here answers with a
+    list of dicts today; if one ever stops, this raises instead of leaking.
+    """
+    if not ctx.token.project_ids:
+        return rows
+    if not isinstance(rows, list):
+        raise ToolError(
+            f"This token is restricted to a named set of projects, and the {what} list came "
+            "back in a shape this server cannot scope. Refusing rather than answering with "
+            "more than the token allows. This is a bug — report it."
+        )
+    out = []
+    for row in rows:
+        if not isinstance(row, dict) or key not in row:
+            raise ToolError(
+                f"This token is restricted to a named set of projects, and a row in the {what} "
+                f"list carries no '{key}' to scope it by. Refusing rather than guessing."
+            )
+        if ctx.token.allows_project(row[key]):
+            out.append(row)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Read tools
 # ---------------------------------------------------------------------------
@@ -287,12 +317,15 @@ def t_list_projects(ctx, args):
         kwargs={"slug": ctx.slug},
         query={"include_archived": "true" if args.get("include_archived") else "false"},
     )
-    if isinstance(data, dict) and isinstance(data.get("projects"), list):
-        data = dict(data)
-        data["projects"] = [
-            p for p in data["projects"] if ctx.token.allows_project(p.get("id"))
-        ]
-    return data
+    # `PortfolioEndpoint` answers with a FLAT LIST of projects. The first draft of
+    # this function guessed `{"projects": [...]}`, found no such key, and passed
+    # the payload through untouched — so a token restricted to one project listed
+    # every project its user could see, and the test that was supposed to cover it
+    # only ever exercised `list_work_items`. Hence `_scoped_list` below, which
+    # REFUSES a shape it does not recognise instead of returning it: an
+    # allow-list that cannot find the ids it is meant to filter has failed, and
+    # failing open is how it fails silently.
+    return _scoped_list(ctx, data, key="id", what="projects")
 
 
 def t_get_project(ctx, args):
@@ -439,8 +472,7 @@ def t_my_work(ctx, args):
         path=f"/api/arribada/workspaces/{ctx.slug}/my-work/",
         kwargs={"slug": ctx.slug},
     )
-    rows = rows if isinstance(rows, list) else []
-    return [r for r in rows if ctx.token.allows_project(r.get("project_id"))]
+    return _scoped_list(ctx, rows, key="project_id", what="my-work")
 
 
 def t_list_milestones(ctx, args):
@@ -488,14 +520,25 @@ def t_list_deliverables(ctx, args):
         path=f"/api/arribada/workspaces/{ctx.slug}/deliverables/",
         kwargs={"slug": ctx.slug},
     )
-    if isinstance(rows, list):
-        return [r for r in rows if ctx.token.allows_project(r.get("project_id"))]
-    return rows
+    return _scoped_list(ctx, rows, key="project_id", what="deliverables")
 
 
 def t_get_workload(ctx, args):
     from .views import WorkloadEndpoint
 
+    # REFUSED outright for a project-restricted token, rather than filtered.
+    # `WorkloadEndpoint` aggregates every project its caller can see into ONE
+    # number per person — assigned, overdue, committed percent — and there is no
+    # project id left in the answer to scope by. Returning it would hand a token
+    # limited to one project a figure computed from all of them, which is a
+    # smaller leak than a project list and is still not what the grant says.
+    if ctx.token.project_ids:
+        raise ToolError(
+            "This token is restricted to a named set of projects, and workload is a single "
+            "figure per person aggregated across every project its user can see — there is "
+            "nothing in the answer left to narrow. Use an unrestricted token, or read "
+            "`list_work_items` per project."
+        )
     return _call_endpoint(
         ctx,
         WorkloadEndpoint,

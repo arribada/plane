@@ -654,3 +654,76 @@ def test_truncation_is_announced_rather_than_silent(world):
 
     capped, _e = call(client_for(secret), "list_work_items", {"project": "TAG", "limit": 1})
     assert capped["count"] == 2 and capped["returned"] == 1 and capped["truncated"] is True
+
+
+# ---------------------------------------------------------------------------
+# The allow-list on the WORKSPACE-WIDE tools
+#
+# These exist because the first draft leaked. `list_projects` guessed that
+# `PortfolioEndpoint` answers `{"projects": [...]}`; it answers a flat list, so
+# the filter matched nothing and passed the payload through — a token restricted
+# to one project listed every project its user could see. The allow-list test
+# that was supposed to cover this only ever exercised `list_work_items`.
+#
+# So each of these asserts the NARROWED result AND the unrestricted one, and the
+# helper they now share refuses a shape it cannot scope rather than returning it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_allow_list_narrows_the_project_list(world):
+    unrestricted, _ = issue_token(world["owner"], world["workspace"])
+    everything, error = call(client_for(unrestricted), "list_projects")
+    assert not error, everything
+    assert {p["identifier"] for p in everything} == {"TAG", "SEA"}
+
+    restricted, _ = issue_token(
+        world["owner"], world["workspace"], project_ids=[str(world["projects"]["TAG"].id)]
+    )
+    narrowed, error = call(client_for(restricted), "list_projects")
+    assert not error, narrowed
+    assert {p["identifier"] for p in narrowed} == {"TAG"}
+
+
+def test_the_allow_list_narrows_my_work(world):
+    for identifier in ("TAG", "SEA"):
+        project = world["projects"][identifier]
+        item = Issue.objects.create(
+            workspace=world["workspace"], project=project, name=f"Mine in {identifier}",
+            state=State.objects.filter(project=project, default=True).first(),
+            created_by=world["owner"],
+        )
+        IssueAssignee.objects.create(
+            issue=item, assignee=world["owner"], project=project, workspace=world["workspace"]
+        )
+
+    unrestricted, _ = issue_token(world["owner"], world["workspace"])
+    both, error = call(client_for(unrestricted), "my_work")
+    assert not error, both
+    assert {r["project_identifier"] for r in both} == {"TAG", "SEA"}
+
+    restricted, _ = issue_token(
+        world["owner"], world["workspace"], project_ids=[str(world["projects"]["TAG"].id)]
+    )
+    narrowed, error = call(client_for(restricted), "my_work")
+    assert not error, narrowed
+    assert {r["project_identifier"] for r in narrowed} == {"TAG"}
+
+
+def test_workload_is_refused_to_a_restricted_token(world):
+    """It aggregates every visible project into one figure per person, so there is
+    no project id left in the answer to narrow. Refused rather than filtered."""
+    restricted, _ = issue_token(
+        world["owner"], world["workspace"], project_ids=[str(world["projects"]["TAG"].id)]
+    )
+    message, error = call(client_for(restricted), "get_workload")
+    assert error
+    assert "restricted" in message.lower()
+
+
+def test_workload_is_served_to_an_unrestricted_token(world):
+    """The other direction — otherwise the refusal above would be indistinguishable
+    from the tool being broken for everybody."""
+    secret, _ = issue_token(world["owner"], world["workspace"])
+    payload, error = call(client_for(secret), "get_workload")
+    assert not error, payload
+    assert {row["email"] for row in payload} >= {"owner@arribada.test", "member@arribada.test"}

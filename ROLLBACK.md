@@ -44,7 +44,8 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `arribada/plane-backend:v1.3.1-arribada.143`          | `82057e4c1ec5` | `591174d297`                | **currently served**; the consent screen's CSRF token. Same migration set as `.142`              |
+| `arribada/plane-backend:v1.3.1-arribada.144`          | `12b96cd4a90e` | `042eca7c0d`                | **currently served**; OAuth revocation + `/oauth/connections`; CSRF failures now 403; timezone-leak fix. **No migration** |
+| `arribada/plane-backend:v1.3.1-arribada.143`          | `82057e4c1ec5` | `591174d297`                | the previous serve; **the roll-back target for `.144`**. Same migration set as `.142`            |
 | `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9` | `9f65c443bc`                | MCP OAuth 2.1; migration `0046`; **the deploy that changed `plane_proxy`** — see below. Its consent form had no CSRF token, so the flow 403'd on Authorise; do not roll back TO this one |
 | `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9` | `8d4eb530cb`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045` |
 | `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab` | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                    |
@@ -151,6 +152,15 @@ whenever anyone pushed. Go by image id.
 ---
 
 ## 1. Decide: code only, or code **and** database?
+
+> **2026-09-14, the five-points deploy (`.144`).** **No migration at all** — `0046` is still
+> the head. So this one is code-only in both directions: re-tag `.143` and force-recreate,
+> nothing to dump and nothing to strand. `plane_proxy` is untouched too, unlike `.142`.
+>
+> One behaviour change to know about when judging a rollback: `.144` makes a CSRF failure
+> answer **403** instead of **200**. Rolling back restores the 200, which is the defect, not
+> a safe state — a refused request reporting success. Prefer rolling forward.
+
 
 > **2026-09-14, the OAuth deploy (`.142`).** One migration, `0046_mcp_oauth`: two
 > `CreateModel`s and four `AddField`s, every column nullable or defaulted, **no

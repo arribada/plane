@@ -15,6 +15,26 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
+> **Reconciled 2026-09-14, measured on the running system.** The paragraph below was
+> stale by fourteen frontend tags and several backend builds — it named `.125` while the
+> machine was serving `.139`. Read this box, not it. This is the third time this file has
+> named an image production had stopped serving, which is the exact failure it exists to
+> prevent; the numbers here came from `docker inspect` on the CONTAINERS, and the commits
+> from the `org.opencontainers.image.revision` label `build-be.sh` now stamps.
+>
+> | | Image | Id | Commit |
+> | --- | --- | --- | --- |
+> | backend | `arribada/plane-backend:v1.3.1-arribada.135` | `d8d2186051d5` | `b131d52c4e` |
+> | frontend | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139` | `b243b5f81eac` | `f9c01bdd3c` |
+>
+> `f9c01bdd3c` is the tip of `arribada/main`. The backend is four commits behind it and
+> that is **not** drift: those four commits (`ac4b968ad0`, `b19929eef9`, `79d8741969`,
+> `f9c01bdd3c`) touch **zero files under `apps/api/`**, so the deployed backend code is
+> byte-identical to main's. Verified with
+> `git diff --stat b131d52c4e..arribada/main -- apps/api/` — empty.
+>
+> Database: `arribada` migrations applied through `0044_project_schedule_lifecycle_status`.
+
 Production `plane.arribada.org` serves **frontend `29c6d130ee`** (image tag
 `v1.3.1-arribada.125`) and **backend `e8db146a39`** (image `arribada/plane-backend:31608607b1`,
 served digest `41c2e1c34113`), deployed 2026-08-19. Frontend since `.105`:
@@ -107,6 +127,45 @@ authority on what is on that disk and what is not.
 The CI backend job now has a real Postgres service — before this, ~48 tests errored
 on every run and the floor only counted collection. A security fix shipped with five
 holes open under a green tick because of it.
+
+## ⚠️ One backend test fails in the FULL SUITE, at every commit
+
+`test_capacity_part_time.py::test_a_fully_booked_full_timer_reads_one_hundred_percent`
+fails `assert 98 == 100`. **It is not a regression, and it is not caused by any change.**
+Before you diagnose a red backend job, check whether this is the only failure.
+
+Measured 2026-09-14 on the droplet, same image build, same Postgres, same command:
+
+| Time (UTC) | Tree                                 | Command                          | Result                  |
+| ---------- | ------------------------------------ | -------------------------------- | ----------------------- |
+| 16:33      | `feat/mcp-server`                    | `pytest plane/arribada/`         | **1 failed**, 638 passed |
+| 16:52      | `arribada/main` (`f9c01bdd3c`)       | `pytest .../test_capacity_part_time.py` | **6 passed** — green |
+| 16:58      | `arribada/main` (`f9c01bdd3c`)       | `pytest plane/arribada/`         | **1 failed**, 599 passed |
+
+The middle row and the last row are twenty minutes apart on the SAME COMMIT, in the same
+clock window, and they disagree. So the earlier diagnosis — "time-of-day sensitive" — is at
+best incomplete: **what actually predicts the failure is whether the whole suite runs, not
+what time it is.** The file passes alone and fails in company, which points at state leaking
+between tests (a cached holiday set, a `freeze_time` that outlives its block, a fixture
+mutating a shared row) rather than at the clock.
+
+That also means the check to run is cheap and decisive, and you should run it before calling
+anything a regression: **execute the same command on the parent commit.** That is what the
+table above is; it cost one build and seven minutes, and it is the only thing that separates
+"the code did this" from "the suite did this".
+
+Two things still make this worse than one bad test:
+
+1. **The test's own docstring asserts the opposite**, in capitals — that its numbers cannot
+   depend on when the suite runs. That claim is empirically false, and stated confidently
+   enough that the failure keeps being re-diagnosed as a bank holiday.
+2. **It trains people to wave a red CI through.** A team that learns "the backend job is
+   always a bit red" is a team that will ship the run where something else broke too.
+
+**Fix it separately, and do not fix it by raising the tolerance** — the assertion is the
+control that stops the part-time correction being deleted altogether, which is the whole
+point of the file it lives in. Start by running the file alone, then with each other test
+module in turn, to find which one poisons it.
 
 ## The repository
 

@@ -367,6 +367,11 @@ def test_whoami_states_the_grant(world):
     assert payload["token"]["may_read_money"] is True
     assert payload["token"]["may_write"] is False
     assert [p["identifier"] for p in payload["reachable_projects"]] == ["TAG"]
+    assert payload["reachable_project_count"] == 1
+    # Measured on production before this line existed: whoami said 52 and
+    # list_projects said 23, because one counts archived projects and the other
+    # does not. Both were right and the pair was misleading, so the note says so.
+    assert "ARCHIVED" in payload["note"]
 
 
 # ---------------------------------------------------------------------------

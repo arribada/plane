@@ -319,7 +319,9 @@ each number and one implementation of each permission.
 with the streaming half declined — the spec allows a single `application/json` answer to a
 POST, every tool answers in one shot, and an SSE channel held open through the Caddy proxy
 would buy nothing. `GET` and `DELETE` answer 405 on purpose, which is what tells a client
-there is no server-initiated stream. `GET /api/arribada/mcp/health/` is unauthenticated and
+there is no server-initiated stream — 405 to a caller holding a token, that is.
+Authentication runs first, so an unauthenticated `GET` is a 401 like any other,
+and this endpoint tells a stranger nothing about which methods it supports. `GET /api/arribada/mcp/health/` is unauthenticated and
 says nothing but the server name and version, so a deploy can prove the route is wired
 before anybody pastes a credential into a config.
 

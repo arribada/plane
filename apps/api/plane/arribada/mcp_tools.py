@@ -326,10 +326,17 @@ def t_whoami(ctx, args):
             "restricted_to_projects": bool(token.project_ids),
             "expires_at": token.expires_at.isoformat(),
         },
+        # ARCHIVED PROJECTS ARE IN THIS COUNT and are not in `list_projects`,
+        # which defaults to active only. On the live workspace that is 52 here
+        # against 23 there, and an agent that reads both without being told will
+        # report 29 missing projects as a fault.
         "reachable_projects": projects,
+        "reachable_project_count": len(projects),
         "note": (
             "Permissions are the intersection of this token's grant and the user's own role "
-            "in each project. A refusal may come from either."
+            "in each project. A refusal may come from either. `reachable_projects` includes "
+            "ARCHIVED projects; `list_projects` shows active ones unless you pass "
+            "include_archived, so the two counts differ legitimately."
         ),
     }
 

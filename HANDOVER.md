@@ -34,6 +34,30 @@ session can continue without re-deriving anything.
 > `git diff --stat b131d52c4e..arribada/main -- apps/api/` — empty.
 >
 > Database: `arribada` migrations applied through `0044_project_schedule_lifecycle_status`.
+>
+> **Superseded the same day by the MCP deploy.** Production now serves backend
+> **`v1.3.1-arribada.141`** (`f2000b8324c9`, commit `8d4eb530cb` = the tip of
+> `arribada/main`), frontend unchanged at `.139`. Migrations applied through
+> `0045_mcp_token`. Backend rollback target is `.135` / `d8d2186051d5`; see `ROLLBACK.md`,
+> which has the dump and the RunPython check for this deploy.
+
+## The MCP server — new, and live
+
+`POST /api/arribada/mcp/` lets an AI agent read this instance. The design and the three
+gates are in [`ARRIBADA.md`](ARRIBADA.md); what a fresh session needs to know here:
+
+- **Nothing is on until a token exists.** `manage.py mcp_token issue|list|revoke|calls`,
+  run in the api container. One token exists today: read-only, no finance, every project,
+  for `geoffrey@arribada.org`, expiring 2026-12-13.
+- **Writes need TWO consents** — a `--scope write` token AND `ProjectSchedule.external_edits`
+  on the project, which is off everywhere. So no project accepts an agent's writes today,
+  and turning one on is a deliberate act by a lead.
+- **Verified against production**, not just in tests: `tools/list` returns 13 tools for a
+  read-only no-money token (the 3 money and 3 write tools correctly absent), `whoami`
+  answers, `list_projects` returns the real 23 active projects, and `get_project_budget`
+  and `create_work_item` are both refused with a message naming the missing grant.
+- **Not built: OAuth 2.1.** The credential is a bearer token in the user's environment.
+  Named in ARRIBADA.md; the wiki already runs an OAuth MCP server and is the shape to copy.
 
 Production `plane.arribada.org` serves **frontend `29c6d130ee`** (image tag
 `v1.3.1-arribada.125`) and **backend `e8db146a39`** (image `arribada/plane-backend:31608607b1`,

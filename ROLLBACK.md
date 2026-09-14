@@ -44,6 +44,10 @@ record:
 
 | Image                                                | Image id       | Commit                      | Notes                                                                                            |
 | ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9` | `8d4eb530cb`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045` |
+| `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab` | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                    |
+| `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5` | `b131d52c4e`                | the previous serve; **the roll-back target for the MCP deploy**                                   |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139` | `b243b5f81eac` | `f9c01bdd3c`                | **currently served** frontend; untouched by the MCP deploy, which was backend-only                |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.114`| `-` | `1db0363e85`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`); free-canvas dashboard + multi project widgets; CI loaded 2026-08-24; **roll-back target is `.111`** |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.110`| `f5ed42ff0779` | `ad4ad3782c`  | previous serve (**roll-back target for `.114`**); fix free-drag stickies snap-back (stale mobx memo) |
 | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.109`| `-` | `15283d9041`  | previous serve (**roll-back target for `.110`**); work-item project name + hide docked sticky preview when floating |
@@ -145,6 +149,34 @@ whenever anyone pushed. Go by image id.
 ---
 
 ## 1. Decide: code only, or code **and** database?
+
+> **2026-09-14, the MCP deploy (`.140` then `.141`).** One migration, `0045_mcp_token`,
+> **pure DDL, no `RunPython`** — two `CreateModel`s and nothing else. Both tables are new
+> and nothing outside `plane/arribada/mcp*.py` reads them, so rolling the code back to
+> `.135` and leaving the migration applied is safe and is the recommended direction: two
+> empty-ish tables the old code has never heard of cost nothing.
+>
+> The `RunPython` check was run in the §5 form (read from the object database, match the
+> CALL) **and proved with a positive control first** — the same loop over every migration
+> in the app finds five that DO contain `RunPython` (`0013`, `0014`, `0023`, `0038`,
+> `0041`), so a "no RunPython" answer from it means something. Note the file is
+> `0038_one_discipline_one_expense.py`; `0038_one_discipline_per_issue.py` is a
+> plausible-sounding name that does not exist, and asking the grep about it returned a
+> confident 0.
+>
+> Pre-deploy dump, taken and verified beyond `gzip -t`:
+> `/opt/backups/archive/plane-db-predeploy-2026-09-14_172059.sql.gz` — ends with
+> `PostgreSQL database dump complete`, md5 `6a98a51f62a18d353762a7ff9b254347`,
+> 667,849 bytes compressed / 3,606,858 raw, 136 `COPY` blocks.
+>
+> **That is half the size of the August dumps, and it is not a truncated dump.** Both have
+> the same 136 `COPY` blocks; the difference is `api_activity_logs`, which held 1,151 rows
+> in August and holds 0 now. The real data matches the live database exactly — 947 issues
+> and 54 projects in both. Checked rather than shrugged at, because "the backup got
+> smaller" is the sentence that precedes finding out it was empty.
+>
+> 0 invalid indexes in the database after the deploy (`pg_index.indisvalid`).
+
 
 > **2026-08-18 (frontend `.100`).** Current serve `.100` = `dfb55ab323` (inline sprint/module
 > create). `.97`–`.100` (quick-add full-modal button, discipline+effort at creation, Home

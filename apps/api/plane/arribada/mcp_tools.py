@@ -37,11 +37,14 @@ not implemented here at all.
 """
 
 import json
+import sys
 import uuid
 from datetime import datetime
+from io import BytesIO
+from urllib.parse import urlencode
 
 from django.conf import settings
-from django.test import RequestFactory
+from django.core.handlers.wsgi import WSGIRequest
 from django.utils import timezone
 
 from plane.db.models import Issue, IssueAssignee, IssueComment, Project, ProjectMember, State
@@ -74,17 +77,50 @@ class Ctx:
 # Calling a view in-process
 # ---------------------------------------------------------------------------
 
-# `RequestFactory` defaults `SERVER_NAME` to "testserver", and a handful of code
-# paths in this product build absolute URLs from the host. None of the endpoints
-# reached from here do — but a tool added later might, and "testserver" in a
-# notification link is the kind of defect that ships because nobody looked.
+# A handful of code paths in this product build absolute URLs from the request
+# host. None of the endpoints reached from here do — but a tool added later
+# might, and a hostname out of a synthesised request landing in a notification
+# link is the kind of defect that ships because nobody looked.
 def _server_name():
     base = getattr(settings, "WEB_URL", None) or getattr(settings, "APP_BASE_URL", None) or ""
     host = base.split("://")[-1].split("/")[0].split(":")[0]
     return host or "localhost"
 
 
-_factory = RequestFactory()
+def _build_request(method, path, query=None, body=None):
+    """A WSGIRequest, built by hand.
+
+    `django.test.RequestFactory` does exactly this and is the obvious tool —
+    but it lives in `django.test`, and importing that module from production
+    code drags `django.test.signals` into the running server's import graph,
+    which connects a dozen receivers to `setting_changed` in a process that is
+    not a test. It works. It is also the sort of thing that works until the day
+    it does not, and a reviewer is right to stop on it. Twenty lines is a
+    cheaper answer than explaining the import forever.
+
+    Everything below is what a WSGI server would have put in `environ`. The
+    body is JSON because every write reached from here sends JSON; DRF reads
+    `CONTENT_TYPE` and parses `wsgi.input` exactly as it does for a browser.
+    """
+    payload = b"" if body is None else json.dumps(body).encode("utf-8")
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "QUERY_STRING": urlencode(query or {}, doseq=True),
+        "SERVER_NAME": _server_name(),
+        "SERVER_PORT": "443",
+        "SERVER_PROTOCOL": "HTTP/1.1",
+        "CONTENT_TYPE": "application/json",
+        "CONTENT_LENGTH": str(len(payload)),
+        "wsgi.version": (1, 0),
+        "wsgi.url_scheme": "https",
+        "wsgi.input": BytesIO(payload),
+        "wsgi.errors": sys.stderr,
+        "wsgi.multithread": True,
+        "wsgi.multiprocess": True,
+        "wsgi.run_once": False,
+    }
+    return WSGIRequest(environ)
 
 
 def _call_endpoint(ctx, view_cls, method="GET", path="/", kwargs=None, query=None, body=None):
@@ -101,16 +137,7 @@ def _call_endpoint(ctx, view_cls, method="GET", path="/", kwargs=None, query=Non
     change the plan", and the sentence after it that says what you CAN do).
     """
     kwargs = kwargs or {}
-    if method == "GET":
-        request = _factory.get(path, data=query or {}, SERVER_NAME=_server_name())
-    else:
-        request = _factory.generic(
-            method,
-            path,
-            data=json.dumps(body or {}),
-            content_type="application/json",
-            SERVER_NAME=_server_name(),
-        )
+    request = _build_request(method, path, query=query, body=None if method == "GET" else (body or {}))
     request.user = ctx.user
 
     response = view_cls.as_view()(request, **kwargs)

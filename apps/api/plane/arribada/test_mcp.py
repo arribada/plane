@@ -727,3 +727,27 @@ def test_workload_is_served_to_an_unrestricted_token(world):
     payload, error = call(client_for(secret), "get_workload")
     assert not error, payload
     assert {row["email"] for row in payload} >= {"owner@arribada.test", "member@arribada.test"}
+
+
+def test_the_production_module_does_not_import_django_test():
+    """`mcp_tools` builds its own WSGIRequest rather than borrowing
+    `django.test.RequestFactory`, because importing `django.test` from a running
+    server connects a dozen `setting_changed` receivers in a process that is not
+    a test.
+
+    A SOURCE GREP, and its limits are worth stating: it cannot prove the module
+    graph is clean, only that this file does not name the module. A runtime check
+    is impossible here — pytest-django imports `django.test` long before this
+    test runs, so `sys.modules` says yes either way. The grep catches the thing
+    that actually happens, which is somebody reaching for `RequestFactory` again
+    because it is the obvious tool.
+    """
+    import pathlib
+
+    from plane.arribada import mcp_tools
+
+    source = pathlib.Path(mcp_tools.__file__).read_text(encoding="utf-8")
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("import ", "from ")):
+            assert "django.test" not in stripped, stripped

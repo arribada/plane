@@ -21,6 +21,13 @@ urlpatterns = [
     path("api/v1/", include("plane.api.urls")),
     path("api/arribada/", include("plane.arribada.urls")),
     path("auth/", include("plane.authentication.urls")),
+    # ARRIBADA FIX: OAuth 2.1 for the MCP server. Must sit at the domain root
+    # (RFC 8414 / RFC 9728 derive `/.well-known/...` from the issuer) and must
+    # come BEFORE plane.web.urls, whose catch-all would answer these paths with
+    # the SPA's HTML and a 200 — which is exactly what it did before this line,
+    # and why a client reported a registration failure instead of a 404.
+    # Fork drift: one line in an upstream file. See plane/arribada/oauth_urls.py.
+    path("", include("plane.arribada.oauth_urls")),
     path("", include("plane.web.urls")),
 ]
 

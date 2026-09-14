@@ -108,6 +108,38 @@ class MCPToken(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
 
+    # --- OAuth ------------------------------------------------------------
+    #
+    # An OAuth access token IS one of these rows. That is the whole reason the
+    # OAuth work added two models and not three: `MCPTokenAuthentication`, the
+    # three gates and the audit log all key off `MCPToken`, so a second
+    # credential type would have meant a second copy of every one of them —
+    # and a second copy of a permission is a permission that stops agreeing
+    # with itself. The connector's token and a `mcp_token issue` token differ
+    # only by `kind` and by who is allowed to mint them.
+    KIND_CLI = "cli"
+    KIND_OAUTH = "oauth"
+    KINDS = ((KIND_CLI, "Issued from a shell"), (KIND_OAUTH, "Issued by the OAuth flow"))
+    kind = models.CharField(max_length=8, choices=KINDS, default=KIND_CLI)
+
+    client = models.ForeignKey(
+        "arribada.MCPOAuthClient",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="tokens",
+    )
+
+    # SHA-256 of the refresh token, same as `token_hash` and for the same
+    # reason. Empty for a CLI token, which has no refresh: a credential a human
+    # pasted into a config has nothing to rotate against.
+    #
+    # The refresh secret carries the prefix `arb_mcpr_`, which deliberately does
+    # NOT start with `arb_mcp_` — so a refresh token presented as a bearer is
+    # refused by the prefix check before any query runs.
+    refresh_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    refresh_expires_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         "db.User",
@@ -180,3 +212,98 @@ class MCPCallLog(models.Model):
 
     def __str__(self):
         return f"{self.created_at:%Y-%m-%d %H:%M} {self.tool} {'ok' if self.ok else 'FAILED'}"
+
+
+class MCPOAuthClient(models.Model):
+    """A client registered through RFC 7591 Dynamic Client Registration.
+
+    REGISTRATION IS OPEN, and that is the protocol rather than an oversight:
+    the MCP spec expects a connector to register itself before a human has done
+    anything, so there is no credential to demand at that point. What keeps it
+    safe is that a registration grants NOTHING. It mints a `client_id` and a
+    `redirect_uri` allow-list and no more; every token still requires a signed-in
+    Plane user to read a consent screen and press a button. The worst an
+    unattended registration achieves is a row in this table, which is why the
+    endpoint is rate-limited and this model records where it came from.
+
+    Public clients only — `token_endpoint_auth_method: "none"` — because a
+    desktop or browser client cannot hold a secret. PKCE S256 is what stands in
+    for one, and the token endpoint refuses a code without it.
+    """
+
+    id = models.UUIDField(default=uuid.uuid4, primary_key=True, editable=False)
+
+    client_id = models.CharField(max_length=64, unique=True)
+    client_name = models.CharField(max_length=255, blank=True, default="")
+
+    # Exact-match allow-list. A redirect_uri that is not in here is refused
+    # BEFORE anything is redirected anywhere — see `validate_client_and_redirect`
+    # in mcp_oauth.py for why that ordering is the whole security of this step.
+    redirect_uris = models.JSONField(default=list)
+
+    # Not identity, and not trusted for anything — it is here so that a table
+    # full of junk registrations can be read and cleaned up by a human.
+    registered_ip = models.GenericIPAddressField(null=True, blank=True)
+    registered_user_agent = models.CharField(max_length=512, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_mcp_oauth_client"
+        ordering = ("-created_at",)
+        verbose_name = "MCP OAuth client"
+        verbose_name_plural = "MCP OAuth clients"
+
+    def __str__(self):
+        return f"{self.client_name or '(unnamed)'} [{self.client_id}]"
+
+    def allows_redirect(self, uri):
+        return uri in (self.redirect_uris or [])
+
+
+class MCPAuthorizationCode(models.Model):
+    """One authorization code, hashed, single-use, five minutes.
+
+    Single use is enforced by a CONDITIONAL UPDATE rather than a read followed
+    by a write — `filter(consumed_at__isnull=True).update(...)` and a check on
+    the row count. Two token requests racing with the same code then have
+    exactly one winner, decided by the database. The read-then-write version
+    passes every test written against it and loses the race in production,
+    which is the class of bug this fork already has a fencing token for.
+
+    The grant the user actually consented to is stored HERE, not re-read from
+    the request at the token endpoint: the consent screen is where a human made
+    a decision, and anything the client sends afterwards is just a claim.
+    """
+
+    id = models.UUIDField(default=uuid.uuid4, primary_key=True, editable=False)
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(MCPOAuthClient, on_delete=models.CASCADE, related_name="codes")
+    user = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="mcp_oauth_codes")
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="mcp_oauth_codes")
+
+    redirect_uri = models.TextField()
+    code_challenge = models.CharField(max_length=128)
+    code_challenge_method = models.CharField(max_length=8, default="S256")
+
+    # RFC 8707. Echoed back and checked, so a code minted for this MCP server
+    # cannot be redeemed against a different resource by a client that asks.
+    resource = models.TextField(blank=True, default="")
+
+    # What the human ticked. Mirrors the two grant fields on MCPToken.
+    granted_scope = models.CharField(max_length=8, default=MCPToken.SCOPE_READ)
+    granted_money = models.BooleanField(default=False)
+
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "arribada_mcp_authorization_code"
+        ordering = ("-created_at",)
+        verbose_name = "MCP authorization code"
+        verbose_name_plural = "MCP authorization codes"
+
+    def __str__(self):
+        return f"code for {self.user_id} via {self.client_id} ({'used' if self.consumed_at else 'live'})"

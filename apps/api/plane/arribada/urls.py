@@ -453,5 +453,10 @@ urlpatterns = [
     # decides on a project only after resolving one from the token's grant, and
     # it does so by calling the routes above, which that test does cover.
     path("mcp/", MCPEndpoint.as_view(), name="arribada-mcp"),
+    # Without the trailing slash. Found in the proxy log, not imagined: the
+    # Claude connector probes `POST /api/arribada/mcp` and read a 404, because
+    # Django's APPEND_SLASH does not rescue a POST. A 404 on the resource makes
+    # a client conclude the server is not there at all.
+    path("mcp", MCPEndpoint.as_view(), name="arribada-mcp-noslash"),
     path("mcp/health/", MCPHealthEndpoint.as_view(), name="arribada-mcp-health"),
 ]

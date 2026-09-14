@@ -1585,4 +1585,10 @@ class IssueChecklistItem(models.Model):
 # file is already past 1,600 lines and that subsystem is self-contained — but
 # imported HERE, by name, because Django only registers a model whose module is
 # imported, and an unregistered model has no table, no migration, and no error.
-from .mcp_models import MCPCallLog, MCPToken, mcp_default_expiry  # noqa: F401,E402
+from .mcp_models import (  # noqa: F401,E402
+    MCPAuthorizationCode,
+    MCPCallLog,
+    MCPOAuthClient,
+    MCPToken,
+    mcp_default_expiry,
+)

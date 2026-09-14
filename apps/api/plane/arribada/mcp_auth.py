@@ -105,4 +105,28 @@ class MCPTokenAuthentication(authentication.BaseAuthentication):
         return (token.user, token)
 
     def authenticate_header(self, request):
-        return f'{self.keyword} realm="{self.www_authenticate_realm}"'
+        """The `WWW-Authenticate` on every 401 from the MCP endpoint.
+
+        `resource_metadata=` is the load-bearing part and it was missing until
+        OAuth existed here. Without it a client has a 401 and nowhere to go, so
+        it falls back to guessing — which is how an empty bearer header turned
+        into "impossible to register with the login service", a message about a
+        component that was not the problem. With it, the client fetches the
+        document, finds the authorization server, and either logs the user in
+        or says something true.
+        """
+        from .mcp_oauth import www_authenticate
+
+        return www_authenticate(_base_url(request))
+
+
+def _base_url(request):
+    """Public origin of this server.
+
+    A local copy rather than importing `mcp_oauth.base_url` at module level:
+    `mcp_oauth` imports from this module, and a top-level import back would be
+    a cycle. The function-level import above is enough for the header; this
+    keeps the cheap part cheap.
+    """
+    scheme = request.META.get("HTTP_X_FORWARDED_PROTO") or ("https" if request.is_secure() else "http")
+    return f"{scheme}://{request.get_host()}"

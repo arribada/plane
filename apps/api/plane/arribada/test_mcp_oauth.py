@@ -669,7 +669,21 @@ def test_the_consent_form_carries_a_csrf_token(world):
 
 def test_a_consent_post_without_the_token_is_refused(world):
     """The other direction. A consent screen that can be submitted cross-site is
-    a consent screen that grants access without a decision."""
+    a consent screen that grants access without a decision.
+
+    ASSERTED ON THE EFFECT, NOT THE STATUS CODE, and that is not laziness.
+    Plane sets `CSRF_FAILURE_VIEW = plane.authentication.views.common.csrf_failure`,
+    which calls `render()` with no `status=`, so **a request rejected for CSRF is
+    answered 200 OK**. The rejection is real — the view never runs — but any
+    caller that judges by the status code is told the write succeeded. That is an
+    upstream defect, it is recorded in HANDOVER.md, and it is deliberately not
+    fixed here: changing it alters every CSRF failure in the product, including
+    paths in the web app nobody has opened in a browser.
+
+    So the check that matters is that NO authorization code exists afterwards.
+    A test that asserted 403 would fail against a working guard, which is how a
+    correct control ends up being "fixed" until it stops controlling anything.
+    """
     strict = Client(enforce_csrf_checks=True)
     registered = make_client(strict)
     _verifier, challenge = pkce()
@@ -679,5 +693,12 @@ def test_a_consent_post_without_the_token_is_refused(world):
     params["decision"] = "allow"
     params["grant"] = ["read"]
     forged = strict.post("/oauth/authorize", params)  # no csrfmiddlewaretoken
-    assert forged.status_code == 403
+
+    # Nothing was granted. This is the assertion with teeth.
     assert MCPAuthorizationCode.objects.count() == 0
+    assert MCPToken.objects.filter(kind=MCPToken.KIND_OAUTH).count() == 0
+    # And it did not reach the handler: no redirect back to the client with a code.
+    assert "Location" not in forged
+    # Upstream's failure page, pinned so that if CSRF_FAILURE_VIEW ever changes
+    # this test says so instead of quietly passing on a different page.
+    assert forged.status_code == 200 and b"csrf" in forged.content.lower()

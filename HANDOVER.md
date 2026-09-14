@@ -208,6 +208,27 @@ control that stops the part-time correction being deleted altogether, which is t
 point of the file it lives in. Start by running the file alone, then with each other test
 module in turn, to find which one poisons it.
 
+## ⚠️ A CSRF failure is answered 200 OK
+
+`CSRF_FAILURE_VIEW = "plane.authentication.views.common.csrf_failure"` calls `render()`
+with no `status=`, so Django returns **200**. The rejection is real — the view never runs,
+nothing is written — but every caller that judges by the status code is told the write
+succeeded.
+
+Found 2026-09-14 while writing `test_a_consent_post_without_the_token_is_refused`, which
+asserted 403 and failed against a guard that was working correctly. That is the dangerous
+shape: the obvious "fix" is to relax the test or, worse, to go looking for why CSRF "is not
+enforced" and switch something off.
+
+**Not fixed here**, deliberately. `render(..., status=403)` is a one-line change in an
+upstream file and it alters every CSRF failure in the product, including paths in the web
+app that nobody has ever opened in a browser (see point 4). It should be fixed, with
+somebody watching the sign-in and the settings pages afterwards.
+
+Until then: **assert on the effect, never on the status**, for anything behind CSRF. The
+test named above asserts that no authorization code and no token exist afterwards, which is
+the question actually being asked.
+
 ## The repository
 
 `github.com/arribada/plane` is a **public fork** of `makeplane/plane`. All our work —

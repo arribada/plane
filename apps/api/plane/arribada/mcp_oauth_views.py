@@ -28,6 +28,7 @@ two paths deliberately; `_bad_request` is the pre-validation one.
 import json
 
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
+from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.html import escape
 from django.views.decorators.clickjacking import xframe_options_deny
@@ -234,8 +235,12 @@ def authorize_get(request):
         return HttpResponseRedirect(oauth.sign_in_url(base, request))
 
     requested = set((params["scope"] or "").split())
+    # `get_token` both returns the value and marks the response for the cookie,
+    # which is what makes the POST below verifiable. Reading `request.META` for
+    # an existing token instead would work only for a browser that already had
+    # one, which the first visitor does not.
     return HttpResponse(
-        oauth.consent_page(base, client, request.user, params, requested),
+        oauth.consent_page(base, client, request.user, params, requested, get_token(request)),
         content_type="text/html; charset=utf-8",
     )
 

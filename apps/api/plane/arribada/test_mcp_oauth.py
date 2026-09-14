@@ -627,3 +627,57 @@ def test_an_oauth_call_is_written_to_the_same_audit_log(client, world):
     row = MCPCallLog.objects.filter(tool="whoami").first()
     assert row is not None and row.ok
     assert row.token.kind == MCPToken.KIND_OAUTH
+
+
+# ---------------------------------------------------------------------------
+# CSRF on the consent form
+#
+# THE TEST THAT WAS MISSING. The first version of the consent screen rendered no
+# `csrfmiddlewaretoken` at all, and every test above still passed — because
+# `django.test.Client` disables CSRF enforcement by default. The flow would have
+# 403'd the moment a real browser pressed Authorise: at the last step, after the
+# user had already made the decision, with nothing in any log to explain it.
+#
+# So these two run under `Client(enforce_csrf_checks=True)`, which is what a
+# browser actually meets.
+# ---------------------------------------------------------------------------
+
+
+def test_the_consent_form_carries_a_csrf_token(world):
+    """And the POST it produces is accepted with CSRF enforced."""
+    strict = Client(enforce_csrf_checks=True)
+    registered = make_client(strict)
+    verifier, challenge = pkce()
+    strict.force_login(world["user"])
+
+    page = strict.get("/oauth/authorize", authorize_params(registered["client_id"], challenge))
+    assert page.status_code == 200
+    body = page.content.decode()
+    assert 'name="csrfmiddlewaretoken"' in body
+
+    import re
+
+    token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', body).group(1)
+    params = authorize_params(registered["client_id"], challenge)
+    params["decision"] = "allow"
+    params["grant"] = ["read"]
+    params["csrfmiddlewaretoken"] = token
+    submitted = strict.post("/oauth/authorize", params)
+    assert submitted.status_code == 302, submitted.content
+    assert "code=" in submitted["Location"]
+
+
+def test_a_consent_post_without_the_token_is_refused(world):
+    """The other direction. A consent screen that can be submitted cross-site is
+    a consent screen that grants access without a decision."""
+    strict = Client(enforce_csrf_checks=True)
+    registered = make_client(strict)
+    _verifier, challenge = pkce()
+    strict.force_login(world["user"])
+
+    params = authorize_params(registered["client_id"], challenge)
+    params["decision"] = "allow"
+    params["grant"] = ["read"]
+    forged = strict.post("/oauth/authorize", params)  # no csrfmiddlewaretoken
+    assert forged.status_code == 403
+    assert MCPAuthorizationCode.objects.count() == 0

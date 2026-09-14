@@ -349,7 +349,7 @@ def sign_in_url(base, request):
     return f"{base}/?{urlencode({'next_path': target})}"
 
 
-def consent_page(base, client, user, params, requested):
+def consent_page(base, client, user, params, requested, csrf_token):
     """The one screen a human sees. Plain server-rendered HTML, no assets.
 
     Deliberately not a React page in the Plane app: this must render before any
@@ -357,6 +357,15 @@ def consent_page(base, client, user, params, requested):
     fetch anything. What it says matters more than how it looks — the person
     reading it is granting a program access to their own projects and, if they
     tick it, to figures that reach funders.
+
+    `csrf_token` IS NOT OPTIONAL AND IS NOT A PARAMETER FOR TIDINESS. The
+    consent POST goes through `CsrfViewMiddleware` like any other form, and the
+    first version of this function omitted the hidden field entirely — which
+    every test still passed, because `django.test.Client` disables CSRF
+    enforcement by default. The flow would have 403'd the moment a real browser
+    pressed Authorise, at the last step, after the user had already decided.
+    `test_the_consent_form_carries_a_csrf_token` runs under
+    `Client(enforce_csrf_checks=True)` so that cannot happen again.
     """
     name = escape(client.client_name or client.client_id)
     who = escape(user.display_name or user.first_name or user.email)
@@ -419,6 +428,7 @@ def consent_page(base, client, user, params, requested):
 </style></head>
 <body>
   <form class="card" method="post" action="{AUTHORIZE_PATH}">
+    <input type="hidden" name="csrfmiddlewaretoken" value="{escape(csrf_token)}" />
     <h1>{name} wants to read your Arribada Plane</h1>
     <p class="sub">It will act as you, and can never do anything you could not do yourself.</p>
     {options}

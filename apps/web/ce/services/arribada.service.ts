@@ -760,6 +760,8 @@ export class ArribadaService extends APIService {
         | "allow_edit_others"
         | "allow_add_items"
         | "lead_only_edits"
+        // The lead or a workspace admin, enforced server-side (`_integration_guard`).
+        | "external_edits"
       >
     >
   ): Promise<TProjectSchedule> {

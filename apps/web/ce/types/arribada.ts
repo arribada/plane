@@ -185,6 +185,13 @@ export type TProjectSchedule = {
    *  from `can_edit_plan`, and a narrower answer: the governance switches are the
    *  lead's alone, where the plan itself also admits a workspace admin. */
   can_set_governance?: boolean;
+  /** Whether a write that declares itself external (the wiki sync, a connected
+   *  MCP agent) may land in this project. Off by default. */
+  external_edits?: boolean;
+  /** Whether THIS caller may flip `external_edits`: the lead or a workspace
+   *  admin, so a wider answer than `can_set_governance`. The server's own
+   *  answer, for the same reason as the two above. */
+  can_set_external_edits?: boolean;
   id: string;
   project: string;
   start_date: string | null;

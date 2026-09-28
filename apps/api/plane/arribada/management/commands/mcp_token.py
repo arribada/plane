@@ -58,6 +58,14 @@ class Command(BaseCommand):
             help="Let this token read budgets, expenses and procurement. Off by default.",
         )
         parser.add_argument(
+            "--allow-plan",
+            action="store_true",
+            help=(
+                "Let this token set dates, parents, estimates, sprints and modules. Needs --scope write. "
+                "Off by default, and still subject to lead-only edits and the timeline lock on each project."
+            ),
+        )
+        parser.add_argument(
             "--projects",
             help="Comma-separated project identifiers or ids. Omit for every project the user can see.",
         )
@@ -87,6 +95,11 @@ class Command(BaseCommand):
             raise CommandError("--email is required: a token acts as somebody.")
         if options["days"] < 1 or options["days"] > 365:
             raise CommandError("--days must be between 1 and 365. A credential that outlives the year is one nobody revokes.")
+        if options.get("allow_plan") and options["scope"] != "write":
+            raise CommandError(
+                "--allow-plan needs --scope write: the plan is written through the write tools, "
+                "so a plan grant on a read-only token would be a grant nothing could use."
+            )
 
         user = User.objects.filter(email__iexact=options["email"].strip()).first()
         if user is None:
@@ -118,6 +131,7 @@ class Command(BaseCommand):
             workspace=workspace,
             scope=options["scope"],
             allow_money=bool(options["allow_money"]),
+            allow_plan=bool(options.get("allow_plan")),
             project_ids=project_ids,
             expires_at=self._expiry(options["days"]),
         )
@@ -132,6 +146,7 @@ class Command(BaseCommand):
         w(f"  acts as     {user.email} ({ROLE(membership.role).name.lower()} of {workspace.slug})")
         w(f"  scope       {token.scope}")
         w(f"  finance     {'READABLE' if token.allow_money else 'refused'}")
+        w(f"  plan        {'WRITABLE (dates, parent, estimate, sprint, modules)' if token.allow_plan else 'refused'}")
         w(f"  projects    {', '.join(str(p) for p in project_ids) if project_ids else 'every project this user can see'}")
         w(f"  expires     {token.expires_at:%Y-%m-%d %H:%M} UTC ({options['days']} days)")
         w(f"  revoke with mcp_token revoke --prefix {token.prefix}")
@@ -216,7 +231,7 @@ class Command(BaseCommand):
         # `HOW` is not decoration: an OAuth grant and a token somebody pasted
         # into a config are revoked for different reasons and by different
         # people, and before this column they looked identical in this list.
-        w(f"{'PREFIX':<18} {'HOW':<7} {'NAME':<22} {'ACTS AS':<26} {'SCOPE':<6} {'$':<3} {'STATE':<8} EXPIRES")
+        w(f"{'PREFIX':<18} {'HOW':<7} {'NAME':<22} {'ACTS AS':<26} {'SCOPE':<6} {'$':<3} {'PLAN':<5} {'STATE':<8} EXPIRES")
         for token in rows:
             if token.revoked_at is not None:
                 state = "revoked"
@@ -230,7 +245,8 @@ class Command(BaseCommand):
             w(
                 f"{token.prefix:<18} {token.kind:<7} {token.name[:21]:<22} "
                 f"{token.user.email[:25]:<26} "
-                f"{token.scope:<6} {'yes' if token.allow_money else '-':<3} {state:<8} "
+                f"{token.scope:<6} {'yes' if token.allow_money else '-':<3} "
+                f"{'yes' if token.allow_plan else '-':<5} {state:<8} "
                 f"{token.expires_at:%Y-%m-%d}"
                 + ("" if not token.project_ids else f"  [{len(token.project_ids)} projects]")
             )

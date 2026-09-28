@@ -3008,6 +3008,11 @@ class ProjectScheduleEndpoint(BaseAPIView):
         data["can_edit_plan"] = (
             not schedule.lead_only_edits or is_lead or _may_edit_plan(request.user, project_id)
         )
+        # The third question, wider than `can_set_governance`: whether this caller
+        # may let an INTEGRATION write here. A workspace admin is admitted (the
+        # PATCH below says why), so this is `_may_edit_plan`, the predicate
+        # `_integration_guard` refuses on, and not `is_lead`.
+        data["can_set_external_edits"] = _may_edit_plan(request.user, project_id)
         if not _has_project_role(request.user, slug, project_id, MONEY_ROLES):
             # Absent, not nulled. A null would read as "nobody has set a budget",
             # which is a claim about the project rather than about the caller —
@@ -3033,15 +3038,23 @@ class ProjectScheduleEndpoint(BaseAPIView):
             "allow_edit_others",
             "allow_add_items",
             "lead_only_edits",
-            # Letting an integration write into the project is the same KIND of
-            # decision as deciding who may change the plan — it is about who gets
-            # to act here, not about what the plan says — so it sits behind the
-            # same guard. A member who could switch this on could grant the wiki
-            # write access to a project whose lead never agreed to the sync.
-            "external_edits",
         }
         if governance & set(payload.keys()):
             denied = _lead_guard(request, project_id)
+            if denied:
+                return denied
+        # Letting an integration write into the project is the same KIND of
+        # decision as deciding who may change the plan: it is about who gets to
+        # act here, not about what the plan says. A member who could switch this
+        # on could grant the wiki write access to a project whose lead never
+        # agreed to the sync, so a member is refused as before. Unlike the four
+        # above it ADMITS A WORKSPACE ADMIN (decision of 2026-09-25): the admin
+        # already decides who the lead is, so refusing them this was a lock with
+        # its key hanging beside it, and in practice it meant the person who runs
+        # the integrations could not switch one on for a project whose lead had
+        # never opened Plane. `_integration_guard` is that predicate, by name.
+        if "external_edits" in payload:
+            denied = _integration_guard(request, project_id)
             if denied:
                 return denied
         # The project's own dates and the delivery-floor switch are the plan at its
@@ -6008,6 +6021,28 @@ def _lead_guard(request, project_id):
         {
             "error": "Only the project lead can do this.",
             "detail": "Anyone on the project can raise a purchase request; the lead approves it.",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _integration_guard(request, project_id):
+    """403 body when the caller may not let an integration write here, else None.
+
+    The lead, or a workspace admin: `_may_edit_plan`, by name, so the answer the
+    schedule GET reports as `can_set_external_edits` and the answer this refuses
+    on are one answer. See the PATCH on `ProjectScheduleEndpoint` for why an
+    admin is admitted here and not in `_lead_guard`.
+    """
+    if _may_edit_plan(request.user, project_id):
+        return None
+    return Response(
+        {
+            "error": "Only the project lead or a workspace admin can let an integration write here.",
+            "detail": (
+                "External edits decide whether the wiki sync and connected agents may write "
+                "into this project. Ask the lead, or a workspace admin."
+            ),
         },
         status=status.HTTP_403_FORBIDDEN,
     )

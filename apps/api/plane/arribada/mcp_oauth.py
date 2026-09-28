@@ -71,7 +71,11 @@ REFRESH_PREFIX = "arb_mcpr_"
 SCOPE_READ = "plane:read"
 SCOPE_WRITE = "plane:write"
 SCOPE_FINANCE = "plane:finance"
-SUPPORTED_SCOPES = (SCOPE_READ, SCOPE_WRITE, SCOPE_FINANCE)
+# The plan: dates, parent, estimate, sprint and modules. Implies write, because
+# the plan is written through the write tools and a plan grant with nothing to
+# carry it would be a grant nothing could use.
+SCOPE_PLAN = "plane:plan"
+SUPPORTED_SCOPES = (SCOPE_READ, SCOPE_WRITE, SCOPE_FINANCE, SCOPE_PLAN)
 
 
 def base_url(request):
@@ -219,7 +223,7 @@ def register_client(name, redirect_uris, ip=None, user_agent=""):
 # ---------------------------------------------------------------------------
 
 
-def issue_code(client, user, workspace, redirect_uri, code_challenge, resource, scope, money):
+def issue_code(client, user, workspace, redirect_uri, code_challenge, resource, scope, money, plan=False):
     """Mint an authorization code and return the plaintext exactly once."""
     code = secrets.token_urlsafe(32)
     MCPAuthorizationCode.objects.create(
@@ -233,6 +237,7 @@ def issue_code(client, user, workspace, redirect_uri, code_challenge, resource, 
         resource=resource or "",
         granted_scope=scope,
         granted_money=bool(money),
+        granted_plan=bool(plan),
         expires_at=timezone.now() + AUTH_CODE_TTL,
     )
     return code
@@ -261,7 +266,7 @@ def consume_code(code):
     return row
 
 
-def issue_tokens(user, workspace, client, scope, money, name=None):
+def issue_tokens(user, workspace, client, scope, money, name=None, plan=False):
     """Mint an access + refresh pair as ONE MCPToken row.
 
     Returns `(access, refresh, token)`. Both secrets are returned in clear here
@@ -278,6 +283,7 @@ def issue_tokens(user, workspace, client, scope, money, name=None):
         workspace=workspace,
         scope=scope,
         allow_money=bool(money),
+        allow_plan=bool(plan),
         project_ids=[],
         expires_at=now + ACCESS_TOKEN_TTL,
         kind=MCPToken.KIND_OAUTH,
@@ -313,7 +319,11 @@ def rotate(refresh, client):
     )
     if claimed != 1:
         return None
-    return issue_tokens(old.user, old.workspace, client, old.scope, old.allow_money, name=old.name)
+    # The grant travels whole through a rotation: a refresh that silently dropped
+    # the plan would look, to the agent, like a project that stopped accepting it.
+    return issue_tokens(
+        old.user, old.workspace, client, old.scope, old.allow_money, name=old.name, plan=old.allow_plan
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,8 +408,14 @@ def consent_page(base, client, user, params, requested, csrf_token):
     options += row(
         "write",
         "Create and update work items",
-        "Never dates, parents or estimates — those stay the project lead's. Only takes effect on projects that have turned on external edits.",
+        "Names, descriptions, states, priorities, owners and comments. Only takes effect on projects that accept edits from integrations.",
         SCOPE_WRITE in requested,
+    )
+    options += row(
+        "plan",
+        "Set dates, parents, estimates, sprints and modules",
+        "The plan. Implies the box above. Still refused wherever the project's plan is the lead's and you are not the lead or a workspace admin, and wherever the timeline is locked.",
+        SCOPE_PLAN in requested,
     )
 
     return f"""<!doctype html>
@@ -543,6 +559,8 @@ def connections_page(base, user, grants, csrf_token, message=""):
                 perms.append("write")
             if g.allow_money:
                 perms.append("finance")
+            if g.allow_plan:
+                perms.append("plan")
             last = g.last_used_at.strftime("%d %b %Y, %H:%M UTC") if g.last_used_at else "never used"
             rows += f"""
         <div class="grant">

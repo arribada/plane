@@ -44,8 +44,14 @@ from plane.app.permissions import ROLE
 from plane.arribada.mcp_auth import generate_secret, hash_secret, prefix_of
 from plane.arribada.models import MCPCallLog, MCPToken, ProjectSchedule
 from plane.db.models import (
+    Cycle,
+    CycleIssue,
+    Estimate,
+    EstimatePoint,
     Issue,
     IssueAssignee,
+    Module,
+    ModuleIssue,
     Project,
     ProjectMember,
     State,
@@ -756,3 +762,363 @@ def test_the_production_module_does_not_import_django_test():
         stripped = line.strip()
         if stripped.startswith(("import ", "from ")):
             assert "django.test" not in stripped, stripped
+
+
+# ---------------------------------------------------------------------------
+# The plan grant (2026-09-25)
+#
+# Every refusal below has its service twin, and every service test lands on an
+# exact value read back from the database, not on the tool's own claim that it
+# wrote something: the tool result is the thing under test, so it cannot be the
+# witness too.
+# ---------------------------------------------------------------------------
+
+
+def _plan_token(world, user=None, **kwargs):
+    return issue_token(
+        user or world["owner"],
+        world["workspace"],
+        scope=MCPToken.SCOPE_WRITE,
+        allow_plan=True,
+        **kwargs,
+    )[0]
+
+
+def _open(world, identifier="TAG", **flags):
+    """Opt the project in to integration writes, plus any governance flag."""
+    ProjectSchedule.objects.update_or_create(
+        project=world["projects"][identifier], defaults={"external_edits": True, **flags}
+    )
+
+
+def _item(world):
+    return Issue.objects.get(name="Pot the antenna")
+
+
+def test_every_plan_argument_names_a_guarded_field():
+    """The link between the MCP's plan arguments and the product's plan guard.
+
+    A field added to `PLAN_FIELDS` without a decision in `PLAN_ARGS` fails here,
+    instead of becoming an argument the grant silently does not cover. The two
+    `_id` spellings are the only fields allowed to be absent: they are aliases the
+    guard lists so that a caller using either form of an upstream route is caught.
+    """
+    from plane.arribada.mcp_tools import PLAN_ARGS
+    from plane.arribada.plan_guard import PLAN_FIELDS
+
+    assert set(PLAN_ARGS.values()) <= set(PLAN_FIELDS)
+    assert set(PLAN_FIELDS) - set(PLAN_ARGS.values()) == {"parent_id", "estimate_point_id"}
+
+
+def test_a_write_token_without_the_plan_grant_cannot_create_a_dated_item(world):
+    _open(world)
+    secret = _write_token(world)
+    message, error = call(
+        client_for(secret),
+        "create_work_item",
+        {"project": "TAG", "name": "Dated too early", "target_date": "2027-02-01"},
+    )
+    assert error
+    assert "plan grant" in message
+    assert "target_date" in message
+    assert Issue.objects.filter(name="Dated too early").count() == 0
+
+
+def test_the_plan_grant_moves_the_dates(world):
+    _open(world)
+    payload, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "start_date": "2027-02-01", "target_date": "2027-02-19"},
+    )
+    assert not error, payload
+    item = _item(world)
+    assert item.start_date.isoformat() == "2027-02-01"
+    assert item.target_date.isoformat() == "2027-02-19"
+    assert payload["changed"]["target_date"] == "2027-02-19"
+
+
+def test_a_created_item_carries_its_dates(world):
+    _open(world)
+    payload, error = call(
+        client_for(_plan_token(world)),
+        "create_work_item",
+        {"project": "TAG", "name": "Field test", "start_date": "2027-03-01", "target_date": "2027-03-12"},
+    )
+    assert not error, payload
+    created = Issue.objects.get(name="Field test")
+    assert created.target_date.isoformat() == "2027-03-12"
+    assert payload["plan"]["start_date"] == "2027-03-01"
+
+
+def test_a_start_after_the_existing_target_is_refused_and_nothing_moves(world):
+    """Checked on the FINAL pair: a start moved alone can cross a target that
+    was already there, which is the case a per-request check misses."""
+    _open(world)
+    Issue.objects.filter(id=_item(world).id).update(target_date="2027-01-10")
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "start_date": "2027-02-01", "priority": "urgent"},
+    )
+    assert error
+    assert "after target_date" in message
+    item = _item(world)
+    assert item.start_date is None
+    # The priority in the same call did not land either: one call, one answer.
+    assert item.priority != "urgent"
+
+
+def test_a_date_can_be_cleared(world):
+    _open(world)
+    Issue.objects.filter(id=_item(world).id).update(target_date="2027-01-10")
+    payload, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "target_date": None},
+    )
+    assert not error, payload
+    assert _item(world).target_date is None
+
+
+def test_a_parent_is_set_and_a_loop_is_refused(world):
+    _open(world)
+    secret = _plan_token(world)
+    created, error = call(
+        client_for(secret), "create_work_item", {"project": "TAG", "name": "Child", "parent": "TAG-1"}
+    )
+    assert not error, created
+    child = Issue.objects.get(name="Child")
+    assert child.parent_id == _item(world).id
+
+    message, error = call(
+        client_for(secret),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "parent": created["reference"]},
+    )
+    assert error
+    assert "loop" in message
+    assert _item(world).parent_id is None
+
+    message, error = call(
+        client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "parent": "TAG-1"}
+    )
+    assert error
+    assert "own parent" in message
+
+
+def _cycle(world, name, days=30):
+    now = timezone.now()
+    return Cycle.objects.create(
+        name=name,
+        project=world["projects"]["TAG"],
+        start_date=now - timedelta(days=1),
+        end_date=now + timedelta(days=days),
+        owned_by=world["owner"],
+    )
+
+
+def test_a_sprint_replaces_the_previous_one(world):
+    _open(world)
+    first, second = _cycle(world, "Sprint 1"), _cycle(world, "Sprint 2")
+    secret = _plan_token(world)
+    item = _item(world)
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "sprint": "Sprint 1"})
+    assert not error
+    assert list(CycleIssue.objects.filter(issue=item).values_list("cycle_id", flat=True)) == [first.id]
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "sprint": "Sprint 2"})
+    assert not error
+    assert list(CycleIssue.objects.filter(issue=item).values_list("cycle_id", flat=True)) == [second.id]
+    # Soft-deleted, as Plane's own viewset does, so the history is still there.
+    assert CycleIssue.all_objects.filter(issue=item, cycle=first, deleted_at__isnull=False).count() == 1
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "sprint": None})
+    assert not error
+    assert CycleIssue.objects.filter(issue=item).count() == 0
+
+
+def test_a_finished_sprint_is_refused(world):
+    _open(world)
+    _cycle(world, "Old sprint", days=-2)
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "sprint": "Old sprint"},
+    )
+    assert error
+    assert "finished sprint" in message
+    assert CycleIssue.objects.filter(issue=_item(world)).count() == 0
+
+
+def test_modules_replace_membership(world):
+    _open(world)
+    tag = world["projects"]["TAG"]
+    Module.objects.create(name="Antenna", project=tag)
+    Module.objects.create(name="Housing", project=tag)
+    secret = _plan_token(world)
+    item = _item(world)
+
+    def names():
+        return sorted(ModuleIssue.objects.filter(issue=item).values_list("module__name", flat=True))
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "modules": ["Antenna", "Housing"]})
+    assert not error
+    assert names() == ["Antenna", "Housing"]
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "modules": ["Housing"]})
+    assert not error
+    assert names() == ["Housing"]
+
+    _, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "modules": []})
+    assert not error
+    assert names() == []
+
+
+def test_an_estimate_lands_on_the_projects_scale(world):
+    _open(world)
+    tag = world["projects"]["TAG"]
+    scale = Estimate.objects.create(name="Points", project=tag, type="points")
+    for key, value in ((0, "1"), (1, "3"), (2, "5")):
+        EstimatePoint.objects.create(estimate=scale, project=tag, key=key, value=value)
+    Project.objects.filter(id=tag.id).update(estimate=scale)
+
+    payload, error = call(
+        client_for(_plan_token(world)), "update_work_item", {"project": "TAG", "item": "TAG-1", "estimate": "5"}
+    )
+    assert not error, payload
+    assert _item(world).estimate_point.value == "5"
+
+    message, error = call(
+        client_for(_plan_token(world)), "update_work_item", {"project": "TAG", "item": "TAG-1", "estimate": "8"}
+    )
+    assert error
+    assert "1, 3, 5" in message
+
+
+def test_an_estimate_on_a_project_with_no_scale_says_so(world):
+    _open(world)
+    message, error = call(
+        client_for(_plan_token(world)), "update_work_item", {"project": "TAG", "item": "TAG-1", "estimate": "5"}
+    )
+    assert error
+    assert "no estimate scale" in message
+
+
+def test_a_bad_sprint_refuses_the_whole_call(world):
+    """The state in the same call must not land: the agent would read the error
+    and retry, and a half-applied first attempt is a second change nobody asked for."""
+    _open(world)
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "state": "In progress", "sprint": "No such sprint"},
+    )
+    assert error
+    assert "No sprint called" in message
+    assert _item(world).state.name == "Backlog"
+
+
+def test_lead_only_edits_refuses_a_member_holding_the_grant(world):
+    _open(world, lead_only_edits=True)
+    secret = _plan_token(world, world["member"])
+    message, error = call(
+        client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"}
+    )
+    assert error
+    assert "only its lead" in message
+    assert _item(world).target_date is None
+
+    # The same member, the same token, a non-plan field: the plan guard is about
+    # the plan, not about the member.
+    payload, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "priority": "high"})
+    assert not error, payload
+    assert _item(world).priority == "high"
+
+
+def test_lead_only_edits_admits_the_lead(world):
+    """The service half of the test above, for a member who IS the lead."""
+    _open(world, lead_only_edits=True)
+    Project.objects.filter(id=world["projects"]["TAG"].id).update(project_lead=world["member"])
+    payload, error = call(
+        client_for(_plan_token(world, world["member"])),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"},
+    )
+    assert not error, payload
+    assert _item(world).target_date.isoformat() == "2027-02-19"
+
+
+def test_lead_only_edits_admits_a_workspace_admin_who_is_not_the_lead(world):
+    """`_may_edit_plan`'s repair path, asked by name: the same answer the gantt gets."""
+    _open(world, lead_only_edits=True)
+    Project.objects.filter(id=world["projects"]["TAG"].id).update(project_lead=world["member"])
+    payload, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-20"},
+    )
+    assert not error, payload
+    assert _item(world).target_date.isoformat() == "2027-02-20"
+
+
+def test_a_locked_timeline_refuses_the_plan_even_to_an_admin(world):
+    _open(world, timeline_locked=True)
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"},
+    )
+    assert error
+    assert "locked" in message
+    assert _item(world).target_date is None
+
+
+def test_an_unknown_write_argument_is_refused_not_ignored(world):
+    _open(world)
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "parent_id": "TAG-1", "priority": "urgent"},
+    )
+    assert error
+    assert "parent_id" in message
+    assert _item(world).priority != "urgent"
+
+
+def test_whoami_states_the_plan_grant(world):
+    with_plan, error = call(client_for(_plan_token(world)), "whoami")
+    assert not error
+    assert with_plan["token"]["may_write_plan"] is True
+
+    without, error = call(client_for(_write_token(world)), "whoami")
+    assert not error
+    assert without["token"]["may_write_plan"] is False
+    # A token pasted into a config file does not renew, and must not say it does.
+    assert without["token"]["renews_automatically"] is False
+    assert without["token"]["renewable_until"] is None
+
+
+def test_whoami_says_a_connector_token_renews_itself(world):
+    secret, token = issue_token(
+        world["owner"],
+        world["workspace"],
+        kind=MCPToken.KIND_OAUTH,
+        expires_at=timezone.now() + timedelta(hours=24),
+        refresh_expires_at=timezone.now() + timedelta(days=180),
+    )
+    payload, error = call(client_for(secret), "whoami")
+    assert not error
+    assert payload["token"]["renews_automatically"] is True
+    assert payload["token"]["renewable_until"] == token.refresh_expires_at.isoformat()
+    assert "not a deadline" in payload["note"]
+
+
+def test_the_write_tools_advertise_the_plan_arguments(world):
+    body = rpc(client_for(_plan_token(world)), "tools/list").json()
+    tools = {t["name"]: t for t in body["result"]["tools"]}
+    for name in ("create_work_item", "update_work_item"):
+        props = tools[name]["inputSchema"]["properties"]
+        for arg in ("start_date", "target_date", "parent", "estimate", "sprint", "modules"):
+            assert arg in props, (name, arg)

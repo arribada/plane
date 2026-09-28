@@ -384,6 +384,7 @@ def test_ticking_nothing_extra_grants_nothing_extra(client, world):
     minted = MCPToken.objects.get(kind=MCPToken.KIND_OAUTH)
     assert minted.scope == MCPToken.SCOPE_READ
     assert minted.allow_money is False
+    assert minted.allow_plan is False
 
 
 # ---------------------------------------------------------------------------
@@ -820,3 +821,81 @@ def test_the_connections_page_sends_a_stranger_to_sign_in(client, world):
     response = client.get("/oauth/connections")
     assert response.status_code == 302
     assert "next_path" in response["Location"]
+
+
+# ---------------------------------------------------------------------------
+# The plan grant (2026-09-25)
+# ---------------------------------------------------------------------------
+
+
+def _exchange(client, registered, verifier, code):
+    return client.post(
+        "/oauth/token",
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": verifier,
+            "client_id": registered["client_id"],
+            "redirect_uri": REDIRECT,
+        },
+    ).json()
+
+
+def test_the_consent_screen_offers_the_plan(client, world):
+    registered = make_client(client)
+    _verifier, challenge = pkce()
+    client.force_login(world["user"])
+    body = client.get("/oauth/authorize", authorize_params(registered["client_id"], challenge)).content.decode()
+    assert 'value="plan"' in body
+    assert "Set dates, parents, estimates, sprints and modules" in body
+
+
+def test_ticking_the_plan_grants_the_plan_and_implies_write(client, world):
+    """A plan grant on a read-only token would be a grant nothing could carry,
+    so the box brings write with it even when write itself was not ticked."""
+    registered = make_client(client)
+    verifier, challenge = pkce()
+    client.force_login(world["user"])
+    code = code_from(_consent(client, registered, challenge, grants=("read", "plan")))
+    body = _exchange(client, registered, verifier, code)
+    minted = MCPToken.objects.get(kind=MCPToken.KIND_OAUTH)
+    assert minted.allow_plan is True
+    assert minted.scope == MCPToken.SCOPE_WRITE
+    assert minted.allow_money is False
+    assert oauth.SCOPE_PLAN in body["scope"].split()
+
+
+def test_write_without_the_plan_box_is_not_the_plan(client, world):
+    """The service half's twin: write alone must not quietly carry the plan."""
+    registered = make_client(client)
+    verifier, challenge = pkce()
+    client.force_login(world["user"])
+    code = code_from(_consent(client, registered, challenge, grants=("read", "write")))
+    body = _exchange(client, registered, verifier, code)
+    minted = MCPToken.objects.get(kind=MCPToken.KIND_OAUTH)
+    assert minted.scope == MCPToken.SCOPE_WRITE
+    assert minted.allow_plan is False
+    assert oauth.SCOPE_PLAN not in body["scope"].split()
+
+
+def test_the_plan_survives_a_refresh(client, world):
+    """A rotation that dropped the grant would look, to the agent, like every
+    project had stopped accepting the plan at the 24-hour mark."""
+    registered = make_client(client)
+    verifier, challenge = pkce()
+    client.force_login(world["user"])
+    code = code_from(_consent(client, registered, challenge, grants=("read", "plan")))
+    body = _exchange(client, registered, verifier, code)
+    refreshed = client.post(
+        "/oauth/token",
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": body["refresh_token"],
+            "client_id": registered["client_id"],
+        },
+    )
+    assert refreshed.status_code == 200, refreshed.content
+    live = MCPToken.objects.filter(kind=MCPToken.KIND_OAUTH, revoked_at__isnull=True)
+    assert live.count() == 1
+    assert live.get().allow_plan is True
+    assert oauth.SCOPE_PLAN in refreshed.json()["scope"].split()

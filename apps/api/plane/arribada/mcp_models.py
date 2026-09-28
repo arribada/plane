@@ -96,6 +96,17 @@ class MCPToken(models.Model):
     # only" is the phrase that makes people believe it has.
     allow_money = models.BooleanField(default=False)
 
+    # THE PLAN (dates, parent, estimate, sprint and module membership) is off
+    # unless this is explicitly on, on top of a write scope. A write token files
+    # and updates work; a plan grant on top of it moves WHEN the work happens.
+    # Separate because they are different acts: an agent filing the task a human
+    # asked for is a convenience, an agent moving a funder's milestone is the
+    # thing `lead_only_edits` exists to catch. It still catches it: the grant
+    # never exceeds what the token's user may do, because `_plan_write_guard`
+    # asks the product's own predicate. Off by default, so every token minted
+    # before this column existed keeps exactly the authority it was issued with.
+    allow_plan = models.BooleanField(default=False)
+
     # Empty list = every project the user can already see. A non-empty list is an
     # allow-list, INTERSECTED with what the user may see and never added to it.
     # JSON rather than a M2M because it is read on every call and never joined.
@@ -300,9 +311,10 @@ class MCPAuthorizationCode(models.Model):
     # a migration.
     resource = models.TextField(blank=True, default="")
 
-    # What the human ticked. Mirrors the two grant fields on MCPToken.
+    # What the human ticked. Mirrors the three grant fields on MCPToken.
     granted_scope = models.CharField(max_length=8, default=MCPToken.SCOPE_READ)
     granted_money = models.BooleanField(default=False)
+    granted_plan = models.BooleanField(default=False)
 
     expires_at = models.DateTimeField()
     consumed_at = models.DateTimeField(null=True, blank=True)

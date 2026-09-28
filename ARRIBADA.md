@@ -15,15 +15,15 @@ all in `ce/`" is not true and never was.
 
 Numbers, so you can tell at a glance when this file has rotted again:
 
-|                                                      |                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------- |
-| `plane.arribada` migrations                          | `0001` → `0045` (own graph, see traps)                   |
-| Models                                               | 28 (26 in `models.py`, 2 in `mcp_models.py`)             |
-| Endpoint classes / routes in `urls.py`               | 74 (72 in `views.py`, 2 in `mcp.py`) / 74                |
-| Python files in the app                              | 73                                                       |
-| `arribada-*` celery beat entries                     | 5                                                        |
-| `@shared_task` functions                             | 5                                                        |
-| Web diff vs upstream                                 | 292 files, ~33k insertions (147 in `ce/`, 87 in `core/`) |
+|                                        |                                                          |
+| -------------------------------------- | -------------------------------------------------------- |
+| `plane.arribada` migrations            | `0001` → `0045` (own graph, see traps)                   |
+| Models                                 | 28 (26 in `models.py`, 2 in `mcp_models.py`)             |
+| Endpoint classes / routes in `urls.py` | 74 (72 in `views.py`, 2 in `mcp.py`) / 74                |
+| Python files in the app                | 73                                                       |
+| `arribada-*` celery beat entries       | 5                                                        |
+| `@shared_task` functions               | 5                                                        |
+| Web diff vs upstream                   | 292 files, ~33k insertions (147 in `ce/`, 87 in `core/`) |
 
 Regenerate any of these rather than trusting them:
 
@@ -329,8 +329,8 @@ before anybody pastes a credential into a config.
 things this fork cannot afford to lose. One implementation of every number: `get_project_budget`
 IS `ProjectBudgetEndpoint`, so an agent and the web app cannot disagree about a figure a
 funder will read. And one implementation of every permission: `allow_permission` runs on a
-synthesised request carrying the token's user, so *a route that names a project decides on
-the caller's role in that project* holds for an agent without being restated — and restating
+synthesised request carrying the token's user, so _a route that names a project decides on
+the caller's role in that project_ holds for an agent without being restated — and restating
 it is how it rots. The handful of tools with no endpoint behind them (`get_work_item`,
 `create_work_item`, `add_comment`) do their own ORM work and ask the same predicates by name.
 
@@ -341,19 +341,52 @@ it is how it rots. The handful of tools with no endpoint behind them (`get_work_
 2. **The user's role**, asked by the endpoint itself. A GUEST holding a token with
    `allow_money=True` is still refused the budget, because `MONEY_ROLES` is the other half
    of the intersection. `test_mcp.py` pins exactly that.
-3. **The project's consent to be written into** — `ProjectSchedule.external_edits`, the
+3. **The project's consent to be written into**: `ProjectSchedule.external_edits`, the
    same switch the wiki sync answers to, **off by default**. No project accepts an agent's
-   writes until a lead turns it on.
+   writes until the lead or a workspace admin turns it on, in Settings, General,
+   **External edits** (a switch since `.145`; before that the field was API-only, and a
+   lead told to "turn on external edits" found nothing by that name anywhere).
+
+   Who may flip it is `_integration_guard` in `views.py`: the lead OR a workspace admin
+   (`_may_edit_plan`, by name), decided 2026-09-25. The other four governance flags
+   (`timeline_locked`, `allow_edit_others`, `allow_add_items`, `lead_only_edits`) stay
+   behind `_lead_guard`, and a PATCH carrying both kinds is refused whole. The schedule GET
+   reports the answer as `can_set_external_edits`, next to `can_set_governance`.
 
 A tool the token can never call is not advertised in `tools/list`. That is politeness to
 the model, not a control: calling it by name anyway is refused by the grant.
 
-### What it will not do
+### The plan: a fourth gate, off by default
 
-Writes never touch **the plan**. `update_work_item` refuses any field in `plan_guard.PLAN_FIELDS`
-— dates, parent, estimate, sprint and module membership — by importing that set rather than
-re-listing it, so the two cannot drift. An agent proposes a date in a comment; the lead sets
-it. Created rows are stamped `external_source='arribada-mcp'`, which migration `0043`
+**The plan** (dates, parent, estimate, sprint and module membership) is writable through
+`create_work_item` and `update_work_item` only with the token's **`allow_plan`** grant
+(migration `0047`, since `.145`). Until then these tools refused every plan field outright;
+an agent proposed a date in a comment and a person set it. That is still what happens
+without the grant, and the refusal says how to get it.
+
+With the grant, `_plan_write_guard` in `mcp_tools.py` asks, in order:
+
+1. `allow_plan` on the token (and a write scope, which the grant implies at consent and
+   requires at `mcp_token issue`).
+2. **The timeline lock.** In the product it is a UI control, not a permission; here it is
+   enforced, because an agent that walked through "this plan is agreed" is exactly what the
+   padlock exists to stop, and it binds the lead too.
+3. **`lead_only_edits`**, answered by `plan_edits_are_lead_only` and `_may_edit_plan` by
+   name: the predicates the gantt's own routes decide on, so an agent is refused exactly
+   where its user would be refused and admitted exactly where they would be admitted (the
+   lead, or a workspace admin).
+
+Every plan argument is **resolved before anything is written**: a bad sprint name or a start
+after the (final) target refuses the whole call, so a state change in the same call does
+not half-land. `PLAN_ARGS` maps each argument onto the field in `plan_guard.PLAN_FIELDS` it
+writes, and `test_every_plan_argument_names_a_guarded_field` fails if the guard gains a
+field nobody decided about. Sprint and module membership REPLACE and soft-delete, like
+Plane's own viewsets; a finished sprint is refused as upstream refuses it; a parent that
+would close a loop is refused (Plane's own serializer does not check). Write tools also
+refuse **unknown arguments**, so `parent_id` or `due_date` is an error rather than a field
+silently dropped from a call that reports success.
+
+Created rows are stamped `external_source='arribada-mcp'`, which migration `0043`
 already indexed and the v1 `?external_source=` filter already reads, so everything an agent
 touched can be found in one query.
 
@@ -377,6 +410,7 @@ The secret is printed once, by the command that mints it, and cannot be read bac
 # on the droplet, in the api container
 python manage.py mcp_token issue --name "Claude Code" --email you@arribada.org
 python manage.py mcp_token issue --name "Funder report" --email you@arribada.org     --projects TAG,SEA --allow-money --days 30
+python manage.py mcp_token issue --name "Planner" --email you@arribada.org --scope write --allow-plan
 python manage.py mcp_token list
 python manage.py mcp_token revoke --prefix arb_mcp_1a2b3c4d
 python manage.py mcp_token calls --limit 20
@@ -402,15 +436,15 @@ There are now **two ways in**, and which one a client uses is decided by the cli
 Endpoints, all at the domain root (`oauth_urls.py`, mounted on the root URLconf because RFC
 8414 and RFC 9728 derive these paths from the issuer):
 
-| Path | What |
-| --- | --- |
-| `/.well-known/oauth-protected-resource` (+ the RFC 9728 path-suffixed form) | which AS guards the MCP endpoint |
-| `/.well-known/oauth-authorization-server` | issuer, endpoints, S256 only |
-| `/oauth/register` | RFC 7591 dynamic registration, rate-limited |
-| `/oauth/authorize` | consent screen (GET) and the decision (POST) |
-| `/oauth/token` | `authorization_code` and `refresh_token` |
-| `/oauth/revoke` | RFC 7009. Always 200, scoped to the calling client's own tokens |
-| `/oauth/connections` | the page a person uses: what this account has authorised, and a Revoke button |
+| Path                                                                        | What                                                                          |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `/.well-known/oauth-protected-resource` (+ the RFC 9728 path-suffixed form) | which AS guards the MCP endpoint                                              |
+| `/.well-known/oauth-authorization-server`                                   | issuer, endpoints, S256 only                                                  |
+| `/oauth/register`                                                           | RFC 7591 dynamic registration, rate-limited                                   |
+| `/oauth/authorize`                                                          | consent screen (GET) and the decision (POST)                                  |
+| `/oauth/token`                                                              | `authorization_code` and `refresh_token`                                      |
+| `/oauth/revoke`                                                             | RFC 7009. Always 200, scoped to the calling client's own tokens               |
+| `/oauth/connections`                                                        | the page a person uses: what this account has authorised, and a Revoke button |
 
 **The proxy had to learn about them.** Upstream's Caddyfile routes `/api/*`, `/auth/*` and
 `/static/*` here and everything else to the frontend. The patched copy lives at
@@ -431,8 +465,14 @@ Two deliberate departures from the wiki's version, both because Plane is a diffe
   else goes to Plane's own sign-in with `next_path` back here. This code never sees a
   password, and Google/GitLab SSO keeps working — which it could not if the form demanded one.
 - **Scope is the grant this fork already has.** Colanode issues one `wiki` scope; the
-  consent screen here offers read / finance / write and writes them onto the token, so an
-  OAuth token is attenuated by the same three gates as a CLI one. Read is the floor.
+  consent screen here offers read / finance / write / plan (`plane:plan`, since `.145`) and
+  writes them onto the token, so an OAuth token is attenuated by the same gates as a CLI
+  one. Read is the floor; ticking plan implies write. A refresh carries the whole grant,
+  plan included, onto the new row.
+- **A connector's `expires_at` is not a deadline.** The access token lives 24 hours and the
+  client renews it by itself for as long as the refresh token lives (180 days). `whoami`
+  says so (`renews_automatically`, `renewable_until`) because an agent reading
+  `expires_at` alone once told a person their connection would die that afternoon.
 
 The security is in the ORDER, and it is the one thing to preserve if this is ever edited:
 the client and its `redirect_uri` are validated **before** anything is reported by

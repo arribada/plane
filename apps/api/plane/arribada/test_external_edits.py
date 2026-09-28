@@ -329,8 +329,9 @@ def test_only_the_lead_may_turn_external_edits_on(wiki):
     """Granting an integration write access is a governance act, like the others.
 
     A member who could flip this could give the wiki write access to a project
-    whose lead never agreed to the sync — and could do it in the same breath as
-    the write it refuses.
+    whose lead never agreed to the sync, and could do it in the same breath as
+    the write it refuses. Since 2026-09-25 a workspace admin may flip it too
+    (the tests below); a plain member still may not, which is what this pins.
     """
     url = f"/api/arribada/workspaces/{wiki['slug']}/projects/{wiki['project_id']}/schedule/"
 
@@ -626,3 +627,58 @@ def test_the_guard_level_sweep_refuses_them_all_while_opted_out(wiki):
     assert not escaped, (
         f"the guard did not refuse these while the project was opted out: {escaped}"
     )
+
+
+# ------------------------------------- who may switch integrations on (2026-09-25)
+
+
+def _admin_client(wiki):
+    owner = wiki["workspace"].owner
+    client = APIClient()
+    client.force_login(owner)
+    client.force_authenticate(user=owner)
+    return client
+
+
+def _schedule_url(wiki):
+    return f"/api/arribada/workspaces/{wiki['slug']}/projects/{wiki['project_id']}/schedule/"
+
+
+def test_a_workspace_admin_may_turn_external_edits_on(wiki):
+    """The decision of 2026-09-25. The fixture's project HAS a lead, so this is
+    an admin who is not the lead, which is exactly the case `_lead_guard` refuses."""
+    response = _admin_client(wiki).patch(_schedule_url(wiki), data={"external_edits": True}, format="json")
+    assert response.status_code == 200, response.content
+    assert ProjectSchedule.objects.get(project=wiki["project"]).external_edits is True
+
+
+def test_a_workspace_admin_still_may_not_make_the_plan_lead_only(wiki):
+    """The service twin, the other way round: opening one switch to admins must
+    not have opened the other four."""
+    response = _admin_client(wiki).patch(_schedule_url(wiki), data={"lead_only_edits": True}, format="json")
+    assert response.status_code == 403, response.content
+    assert ProjectSchedule.objects.get(project=wiki["project"]).lead_only_edits is False
+
+
+def test_an_admin_cannot_carry_a_lead_only_flag_through_on_the_back_of_external_edits(wiki):
+    """Both keys in one body: the lead guard still fires, and NOTHING is saved,
+    including the half the admin was entitled to."""
+    response = _admin_client(wiki).patch(
+        _schedule_url(wiki), data={"external_edits": True, "lead_only_edits": True}, format="json"
+    )
+    assert response.status_code == 403, response.content
+    row = ProjectSchedule.objects.get(project=wiki["project"])
+    assert row.external_edits is False
+    assert row.lead_only_edits is False
+
+
+def test_the_schedule_read_says_who_may_switch_integrations_on(wiki):
+    """The answer the settings screen draws its switch from, for the three
+    people whose answers differ."""
+    url = _schedule_url(wiki)
+    assert wiki["clients"]["member"].get(url).json()["can_set_external_edits"] is False
+    assert wiki["clients"]["lead"].get(url).json()["can_set_external_edits"] is True
+    admin = _admin_client(wiki).get(url).json()
+    assert admin["can_set_external_edits"] is True
+    # And the narrower answer is unchanged for the admin: governance stays the lead's.
+    assert admin["can_set_governance"] is False

@@ -276,7 +276,11 @@ def authorize_post(request):
     # `read` is not in `granted` when the box is rendered disabled — a disabled
     # checkbox is not submitted. It is the floor of every grant, so it is set
     # here rather than trusted from the form.
-    scope = MCPToken.SCOPE_WRITE if "write" in granted else MCPToken.SCOPE_READ
+    plan = "plan" in granted
+    # The plan is written through the write tools, so ticking the plan box
+    # implies write: a plan grant on a read-only token would be a grant nothing
+    # could carry, and the consent screen says so beside the box.
+    scope = MCPToken.SCOPE_WRITE if ("write" in granted or plan) else MCPToken.SCOPE_READ
     money = "finance" in granted
 
     workspace = _workspace_for(request.user)
@@ -296,6 +300,7 @@ def authorize_post(request):
         resource=params["resource"],
         scope=scope,
         money=money,
+        plan=plan,
     )
     return HttpResponseRedirect(
         oauth.success_redirect(params["redirect_uri"], code, params["state"])
@@ -371,7 +376,7 @@ def _authorization_code_grant(request, client):
         return _oauth_error("invalid_grant", "PKCE verification failed.")
 
     access, refresh, minted = oauth.issue_tokens(
-        row.user, row.workspace, client, row.granted_scope, row.granted_money
+        row.user, row.workspace, client, row.granted_scope, row.granted_money, plan=row.granted_plan
     )
     return _token_response(access, refresh, minted)
 
@@ -393,6 +398,8 @@ def _token_response(access, refresh, minted):
         scopes.append(oauth.SCOPE_WRITE)
     if minted.allow_money:
         scopes.append(oauth.SCOPE_FINANCE)
+    if minted.allow_plan:
+        scopes.append(oauth.SCOPE_PLAN)
     response = JsonResponse(
         {
             "access_token": access,

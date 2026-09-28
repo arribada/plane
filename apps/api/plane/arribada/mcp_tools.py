@@ -39,7 +39,7 @@ not implemented here at all.
 import json
 import sys
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from urllib.parse import urlencode
 
@@ -47,7 +47,19 @@ from django.conf import settings
 from django.core.handlers.wsgi import WSGIRequest
 from django.utils import timezone
 
-from plane.db.models import Issue, IssueAssignee, IssueComment, Project, ProjectMember, State
+from plane.db.models import (
+    Cycle,
+    CycleIssue,
+    EstimatePoint,
+    Issue,
+    IssueAssignee,
+    IssueComment,
+    Module,
+    ModuleIssue,
+    Project,
+    ProjectMember,
+    State,
+)
 
 from .models import IssueChecklistItem, IssueEffort, IssueMilestone, IssueRole, MCPToken
 
@@ -310,6 +322,11 @@ def t_whoami(ctx, args):
         for p in _visible(ctx).order_by("name")
         if token.allows_project(p.id)
     ]
+    renews = (
+        token.kind == MCPToken.KIND_OAUTH
+        and token.refresh_expires_at is not None
+        and token.refresh_expires_at > timezone.now()
+    )
     return {
         "user": {
             "email": ctx.user.email,
@@ -322,9 +339,16 @@ def t_whoami(ctx, args):
             "prefix": token.prefix,
             "scope": token.scope,
             "may_write": token.scope == MCPToken.SCOPE_WRITE,
+            "may_write_plan": token.scope == MCPToken.SCOPE_WRITE and token.allow_plan,
             "may_read_money": token.allow_money,
             "restricted_to_projects": bool(token.project_ids),
             "expires_at": token.expires_at.isoformat(),
+            # A connector's access token lives 24 hours and the client renews it
+            # on its own for as long as the refresh token lives. Said in the
+            # payload because an agent that read `expires_at` alone reported a
+            # deadline to a human, who then planned a working day around it.
+            "renews_automatically": renews,
+            "renewable_until": token.refresh_expires_at.isoformat() if renews else None,
         },
         # ARCHIVED PROJECTS ARE IN THIS COUNT and are not in `list_projects`,
         # which defaults to active only. On the live workspace that is 52 here
@@ -336,7 +360,9 @@ def t_whoami(ctx, args):
             "Permissions are the intersection of this token's grant and the user's own role "
             "in each project. A refusal may come from either. `reachable_projects` includes "
             "ARCHIVED projects; `list_projects` shows active ones unless you pass "
-            "include_archived, so the two counts differ legitimately."
+            "include_archived, so the two counts differ legitimately. For a connector, "
+            "`expires_at` is the current 24-hour access token: the client renews it by itself "
+            "until `renewable_until`, so it is not a deadline for the work."
         ),
     }
 
@@ -656,15 +682,31 @@ def t_list_procurement(ctx, args):
 # for exactly this, and the v1 API's `?external_source=` filter already reads it.
 MCP_SOURCE = "arribada-mcp"
 
-# The fields an agent may NOT set, borrowed from the plan guard rather than
-# re-listed, so the two cannot drift. These are THE PLAN — dates, parentage,
-# estimates, sprint and module membership — and they belong to the project lead.
-# An agent proposing a plan is a feature; an agent writing one silently is the
-# thing `lead_only_edits` exists to prevent.
-def _plan_fields():
-    from .plan_guard import PLAN_FIELDS
+# The arguments of the two write tools that are THE PLAN (dates, parentage,
+# estimate, sprint and module membership), and the field in
+# `plan_guard.PLAN_FIELDS` each one writes. Until 2026-09-25 these were refused
+# outright; they are now accepted behind the token's `allow_plan` grant AND the
+# product's own answer for the caller (see `_plan_write_guard`). The mapping is
+# asserted against `PLAN_FIELDS` by `test_mcp.py`, so a field added to the guard
+# without a decision here fails a test rather than slipping through as "just
+# another argument".
+PLAN_ARGS = {
+    "start_date": "start_date",
+    "target_date": "target_date",
+    "parent": "parent",
+    "estimate": "estimate_point",
+    "sprint": "cycle_id",
+    "modules": "module_ids",
+}
 
-    return PLAN_FIELDS
+# "Leave it as it is", for the sprint and module slots of a resolved plan, where
+# None already means "remove".
+_KEEP = object()
+
+# A bounded walk up the parent chain. Plane's own serializer does not check for
+# a parent loop, and an issue that is its own ancestor makes every tree renderer
+# in the product recurse until the tab dies.
+_PARENT_WALK_LIMIT = 64
 
 
 def _writable(ctx, project):
@@ -707,9 +749,270 @@ def _write_guard(ctx, project):
     if not external_edits_allowed(project.id):
         raise ToolError(
             f"{project.name} has not turned on external edits, so it does not accept writes from "
-            "an integration. A project lead enables it in the project's schedule settings. This is "
-            "the same switch the wiki sync answers to, and it is off until somebody turns it on."
+            "an integration. The project lead, or a workspace admin, switches it on in the "
+            "project's Settings, General, 'External edits'. This is the same switch the wiki sync "
+            "answers to, and it is off until somebody turns it on."
         )
+
+
+def _plan_write_guard(ctx, project, offered):
+    """Gate 1 for the plan, then the product's own answers, in the product's words.
+
+    Runs AFTER `_write_guard`, so a plan write has passed every gate an ordinary
+    write passes and then faces three more. The first is the token's:
+    `allow_plan`, off by default, so a write token issued before the grant
+    existed still cannot move a date. The next two are not this file's to
+    define and are not defined here: `plan_edits_are_lead_only` and
+    `_may_edit_plan` are the predicates the schedule endpoint and the middleware
+    in `plan_guard.py` decide on, asked by name, so an agent holding the grant is
+    refused exactly where its user would be refused in the gantt, and admitted
+    exactly where they would be admitted. The timeline lock is the third. It is
+    a control for a person ("this plan is agreed", and it binds the lead too),
+    and an agent that walked through it would be moving a plan somebody had
+    just called final.
+    """
+    names = ", ".join(sorted(offered))
+    if not ctx.token.allow_plan:
+        raise ToolError(
+            f"This token may not write the plan. Refused fields: {names}. Dates, parent, estimate, "
+            "sprint and modules need the plan grant on top of write: `manage.py mcp_token issue "
+            "--scope write --allow-plan` on the server, or the 'Set dates, parents, estimates, "
+            "sprints and modules' box when authorising the connector. Until then, propose them in "
+            "a comment."
+        )
+    from .models import ProjectSchedule
+    from .views import PLAN_LINE_EVERYONE, PLAN_LINE_LEAD, _may_edit_plan, plan_edits_are_lead_only
+
+    if ProjectSchedule.objects.filter(project_id=project.id, timeline_locked=True).exists():
+        raise ToolError(
+            f"The timeline of {project.name} is locked: the plan is agreed, and the padlock binds "
+            f"everyone including the lead. Refused fields: {names}. Somebody unlocks it from the "
+            "timeline first."
+        )
+    if plan_edits_are_lead_only(project.id) and not _may_edit_plan(ctx.user, project.id):
+        raise ToolError(
+            f"{project.name} is set so that only its lead (or a workspace admin) changes "
+            f"{PLAN_LINE_LEAD}, and {ctx.user.email} is neither. Refused fields: {names}. "
+            f"You can still {PLAN_LINE_EVERYONE}."
+        )
+
+
+def _parse_date(name, raw):
+    if raw in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(raw).strip())
+    except ValueError:
+        raise ToolError(f"{name} must be an ISO date (YYYY-MM-DD) or null, got {raw!r}.")
+
+
+def _resolve_named(rows, value, what, project):
+    """A sprint or a module: by id, by exact name, then by a unique partial name.
+
+    Same shape as `resolve_project`, for the same reason: an agent names what a
+    human said, and ambiguity is refused with the candidates listed rather than
+    resolved by picking the first.
+    """
+    value = str(value or "").strip()
+    if not value:
+        raise ToolError(f"A {what} needs a name or an id.")
+    found = None
+    try:
+        found = rows.filter(id=uuid.UUID(value)).first()
+    except (ValueError, AttributeError, TypeError):
+        pass
+    if found is None:
+        exact = list(rows.filter(name__iexact=value)[:5])
+        if len(exact) == 1:
+            found = exact[0]
+        elif len(exact) > 1:
+            raise ToolError(
+                f"More than one {what} in {project.name} is called '{value}'. Name it by its id."
+            )
+    if found is None:
+        partial = list(rows.filter(name__icontains=value)[:6])
+        if len(partial) == 1:
+            found = partial[0]
+        elif len(partial) > 1:
+            raise ToolError(
+                f"'{value}' matches several {what}s in {project.name}: "
+                + ", ".join(r.name for r in partial)
+                + ". Be more specific."
+            )
+    if found is None:
+        available = ", ".join(rows.order_by("name").values_list("name", flat=True)[:15])
+        raise ToolError(f"No {what} called '{value}' in {project.name}. Available: {available or 'none'}.")
+    return found
+
+
+def _resolve_cycle(ctx, project, value):
+    cycle = _resolve_named(
+        Cycle.objects.filter(project_id=project.id, archived_at__isnull=True), value, "sprint", project
+    )
+    # Upstream's `CycleIssueViewSet.create` refuses this too. Refusing it here
+    # keeps the agent out of a sprint the product would not let a person pick.
+    if cycle.end_date is not None and cycle.end_date < timezone.now():
+        raise ToolError(
+            f"Sprint '{cycle.name}' ended on {cycle.end_date:%Y-%m-%d}; Plane does not add work "
+            "to a finished sprint."
+        )
+    return cycle
+
+
+def _resolve_module(ctx, project, value):
+    return _resolve_named(
+        Module.objects.filter(project_id=project.id, archived_at__isnull=True), value, "module", project
+    )
+
+
+def _resolve_plan(ctx, project, offered, issue=None):
+    """Turn the plan arguments into values, checking every one BEFORE anything is
+    written, so a bad sprint name refuses the whole call rather than leaving a
+    dated item behind with no sprint. `issue` is None on creation."""
+    fields = {}
+    start = issue.start_date if issue is not None else None
+    target = issue.target_date if issue is not None else None
+    if "start_date" in offered:
+        start = _parse_date("start_date", offered["start_date"])
+        fields["start_date"] = start
+    if "target_date" in offered:
+        target = _parse_date("target_date", offered["target_date"])
+        fields["target_date"] = target
+    # Checked on the FINAL pair, not the incoming one: a target moved alone can
+    # cross a start that was already there. `IssueCreateSerializer` refuses that
+    # pair for a person, so it is refused for an agent.
+    if start is not None and target is not None and start > target:
+        raise ToolError(
+            f"start_date {start} is after target_date {target}. Plane refuses that pair; move both."
+        )
+
+    if "parent" in offered:
+        if offered["parent"] in (None, ""):
+            fields["parent"] = None
+        else:
+            parent = resolve_issue(ctx, project, offered["parent"])
+            if issue is not None:
+                if parent.id == issue.id:
+                    raise ToolError("A work item cannot be its own parent.")
+                # Walk up from the proposed parent. Reaching `issue` means the
+                # proposed parent is already below it, and the tree would loop.
+                cursor, hops = parent, 0
+                while cursor is not None and cursor.parent_id is not None and hops < _PARENT_WALK_LIMIT:
+                    if cursor.parent_id == issue.id:
+                        raise ToolError(
+                            f"{_ref(project, parent)} is already below {_ref(project, issue)}; "
+                            "making it the parent would create a loop."
+                        )
+                    cursor = Issue.objects.filter(id=cursor.parent_id).only("id", "parent_id").first()
+                    hops += 1
+            fields["parent"] = parent
+
+    if "estimate" in offered:
+        if offered["estimate"] in (None, ""):
+            fields["estimate_point"] = None
+        else:
+            if project.estimate_id is None:
+                raise ToolError(
+                    f"{project.name} has no estimate scale, so there is nothing to set an estimate "
+                    "against. A project admin picks one under Settings, Estimates."
+                )
+            wanted = str(offered["estimate"]).strip()
+            points = EstimatePoint.objects.filter(estimate_id=project.estimate_id)
+            point = points.filter(value__iexact=wanted).first()
+            if point is None and wanted.isdigit():
+                point = points.filter(key=int(wanted)).first()
+            if point is None:
+                available = ", ".join(points.order_by("key").values_list("value", flat=True))
+                raise ToolError(
+                    f"No estimate '{wanted}' on {project.name}'s scale. Available: {available or 'none'}."
+                )
+            fields["estimate_point"] = point
+
+    sprint = _KEEP
+    if "sprint" in offered:
+        sprint = None if offered["sprint"] in (None, "") else _resolve_cycle(ctx, project, offered["sprint"])
+
+    modules = _KEEP
+    if "modules" in offered:
+        raw = offered["modules"]
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            raise ToolError(
+                "modules must be a list of module names or ids; an empty list removes the item "
+                "from every module."
+            )
+        modules = [_resolve_module(ctx, project, m) for m in raw]
+
+    return {"fields": fields, "sprint": sprint, "modules": modules}
+
+
+def _describe(project, value):
+    if value is None:
+        return None
+    if isinstance(value, Issue):
+        return _ref(project, value)
+    if isinstance(value, EstimatePoint):
+        return value.value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _write_plan(ctx, project, issue, plan):
+    """Apply what `_resolve_plan` produced. Returns what changed, by argument name.
+
+    Like every other write here it skips the activity feed, so it raises no
+    notification; the tool result says so. Membership writes soft-delete, as
+    Plane's own viewsets do, so nothing an agent removes is gone.
+    """
+    changed = {}
+    fields = plan["fields"]
+    if fields:
+        for name, value in fields.items():
+            setattr(issue, name, value)
+        issue.updated_by = ctx.user
+        issue.save()
+        for name, value in fields.items():
+            changed[{"estimate_point": "estimate"}.get(name, name)] = _describe(project, value)
+
+    sprint = plan["sprint"]
+    if sprint is not _KEEP:
+        current = CycleIssue.objects.filter(issue_id=issue.id)
+        if sprint is None:
+            current.delete()
+            changed["sprint"] = None
+        else:
+            # One sprint per item, the way `CycleIssueViewSet.create` keeps it.
+            current.exclude(cycle_id=sprint.id).delete()
+            CycleIssue.objects.get_or_create(
+                issue_id=issue.id,
+                cycle_id=sprint.id,
+                defaults={"project_id": project.id, "created_by": ctx.user, "updated_by": ctx.user},
+            )
+            changed["sprint"] = sprint.name
+
+    modules = plan["modules"]
+    if modules is not _KEEP:
+        wanted = {m.id for m in modules}
+        ModuleIssue.objects.filter(issue_id=issue.id).exclude(module_id__in=wanted).delete()
+        have = set(ModuleIssue.objects.filter(issue_id=issue.id).values_list("module_id", flat=True))
+        ModuleIssue.objects.bulk_create(
+            [
+                ModuleIssue(
+                    issue_id=issue.id,
+                    module_id=m.id,
+                    project_id=project.id,
+                    workspace_id=project.workspace_id,
+                    created_by=ctx.user,
+                    updated_by=ctx.user,
+                )
+                for m in modules
+                if m.id not in have
+            ]
+        )
+        changed["modules"] = [m.name for m in modules]
+    return changed
 
 
 def t_create_work_item(ctx, args):
@@ -719,6 +1022,14 @@ def t_create_work_item(ctx, args):
     name = (args.get("name") or "").strip()
     if not name:
         raise ToolError("A work item needs a name.")
+
+    # The plan, if any of it was offered: gated and RESOLVED before the row
+    # exists, so a refused or unresolvable plan refuses the whole call.
+    offered = {k: args[k] for k in PLAN_ARGS if k in args}
+    plan = None
+    if offered:
+        _plan_write_guard(ctx, project, offered)
+        plan = _resolve_plan(ctx, project, offered)
 
     state = (
         State.objects.filter(project_id=project.id, default=True).first()
@@ -746,6 +1057,7 @@ def t_create_work_item(ctx, args):
     )
 
     assigned, refused = _apply_assignees(ctx, project, issue, args.get("assignees") or [])
+    planned = _write_plan(ctx, project, issue, plan) if plan is not None else {}
 
     return {
         "created": True,
@@ -756,12 +1068,18 @@ def t_create_work_item(ctx, args):
         "priority": priority,
         "assignees": assigned,
         "assignees_refused": refused,
+        "plan": planned,
         # Named rather than left to be discovered: this fork's bulk writers skip
         # the activity feed on purpose (see `ProjectApplyPlanEndpoint`), and an
         # agent that believes it notified somebody has not.
         "note": (
-            "Dates, parent and estimate were not set — those are the plan and this tool will not "
-            "write them. No activity-feed entry or notification was raised; the item is stamped "
+            (
+                ""
+                if offered
+                else "No plan was set: start_date, target_date, parent, estimate, sprint and modules "
+                "are accepted here with the plan grant. "
+            )
+            + "No activity-feed entry or notification was raised; the item is stamped "
             f"external_source='{MCP_SOURCE}' and the call is in the MCP audit log."
         ),
     }
@@ -772,15 +1090,14 @@ def t_update_work_item(ctx, args):
     _write_guard(ctx, project)
     issue = resolve_issue(ctx, project, args.get("item"))
 
-    offered = {k for k in args if k not in ("project", "item")}
-    forbidden = offered & set(_plan_fields())
-    if forbidden:
-        raise ToolError(
-            "This tool does not write the plan. Refused fields: "
-            + ", ".join(sorted(forbidden))
-            + ". Dates, parent, estimate and sprint membership are the project lead's; propose "
-            "them in a comment instead."
-        )
+    # The plan half first, and resolved before anything is saved: a state change
+    # and a bad sprint name in one call must not land the state and drop the
+    # sprint, because the agent would read "updated: true" and believe both.
+    offered = {k: args[k] for k in PLAN_ARGS if k in args}
+    plan = None
+    if offered:
+        _plan_write_guard(ctx, project, offered)
+        plan = _resolve_plan(ctx, project, offered, issue=issue)
 
     changed = {}
     if args.get("name"):
@@ -805,8 +1122,11 @@ def t_update_work_item(ctx, args):
         issue.state = state
         changed["state"] = state.name
 
-    if not changed and not args.get("assignees"):
-        raise ToolError("Nothing to change. Pass at least one of name, description, priority, state, assignees.")
+    if not changed and not args.get("assignees") and plan is None:
+        raise ToolError(
+            "Nothing to change. Pass at least one of name, description, priority, state, assignees, "
+            "start_date, target_date, parent, estimate, sprint, modules."
+        )
 
     if changed:
         issue.updated_by = ctx.user
@@ -816,6 +1136,9 @@ def t_update_work_item(ctx, args):
     if args.get("assignees"):
         assigned, refused = _apply_assignees(ctx, project, issue, args["assignees"], replace=True)
         changed["assignees"] = assigned
+
+    if plan is not None:
+        changed.update(_write_plan(ctx, project, issue, plan))
 
     return {
         "updated": True,
@@ -925,6 +1248,37 @@ def _tool(name, description, handler, properties=None, required=None, money=Fals
         "write": write,
     }
 
+
+# The plan arguments the two write tools share. Each needs the plan grant
+# (`may_write_plan` in whoami) on top of a write token; without it the call is
+# refused by name, with the sentence that says how to get the grant.
+_PLAN_PROPS = {
+    "start_date": {
+        "type": ["string", "null"],
+        "description": "PLAN. ISO date (YYYY-MM-DD), or null to clear.",
+    },
+    "target_date": {
+        "type": ["string", "null"],
+        "description": "PLAN. ISO date (YYYY-MM-DD), or null to clear. Never before start_date.",
+    },
+    "parent": {
+        "type": ["string", "null"],
+        "description": "PLAN. The parent work item (reference, id or title) in the same project, or null to detach.",
+    },
+    "estimate": {
+        "type": ["string", "null"],
+        "description": "PLAN. A value on the project's estimate scale (e.g. '3' or 'M'), or null to clear.",
+    },
+    "sprint": {
+        "type": ["string", "null"],
+        "description": "PLAN. Sprint name or id. REPLACES the current sprint; null removes the item from its sprint.",
+    },
+    "modules": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "PLAN. Module names or ids. REPLACES membership; an empty list removes the item from every module.",
+    },
+}
 
 TOOLS = [
     _tool(
@@ -1057,9 +1411,10 @@ TOOLS = [
     ),
     _tool(
         "create_work_item",
-        "Create a work item. Will not set dates, parent or estimate — those are the plan and "
-        "belong to the project lead. Requires a write token AND the project to have external "
-        "edits turned on.",
+        "Create a work item. Requires a write token AND a project that accepts edits from "
+        "integrations. The PLAN arguments (dates, parent, estimate, sprint, modules) also need "
+        "the plan grant (`may_write_plan` in whoami) and are refused wherever the project's "
+        "lead-only or locked plan would refuse the user this token acts as.",
         t_create_work_item,
         {
             "project": _PROJECT_ARG,
@@ -1071,14 +1426,18 @@ TOOLS = [
                 "items": {"type": "string"},
                 "description": "Email addresses. Anyone who is not an assignable member is reported back, not silently dropped.",
             },
+            **_PLAN_PROPS,
         },
         ["project", "name"],
         write=True,
     ),
     _tool(
         "update_work_item",
-        "Change the name, description, priority, state or owners of a work item. Refuses every "
-        "plan field. Requires a write token AND external edits on the project.",
+        "Change the name, description, priority, state or owners of a work item, and, with the "
+        "plan grant (`may_write_plan` in whoami), its dates, parent, estimate, sprint and "
+        "modules. Requires a write token AND a project that accepts edits from integrations; "
+        "the PLAN arguments are refused wherever the project's lead-only or locked plan would "
+        "refuse the user this token acts as.",
         t_update_work_item,
         {
             "project": _PROJECT_ARG,
@@ -1092,6 +1451,7 @@ TOOLS = [
                 "items": {"type": "string"},
                 "description": "Email addresses. REPLACES the current owners.",
             },
+            **_PLAN_PROPS,
         },
         ["project", "item"],
         write=True,
@@ -1156,6 +1516,17 @@ def call_tool(token, name, arguments):
             )
         if tool["write"] and token.scope != MCPToken.SCOPE_WRITE:
             raise ToolError("This token is read-only.")
+        if tool["write"]:
+            # A write tool refuses what it does not know rather than ignoring it.
+            # Before the plan grant, an unknown key was harmless; now an agent
+            # sending `parent_id` or `due_date` would read "updated: true" while
+            # the one thing it meant to change was dropped on the floor.
+            unknown = set(arguments) - set(tool["inputSchema"]["properties"])
+            if unknown:
+                raise ToolError(
+                    f"Unknown argument(s) for {name}: {', '.join(sorted(unknown))}. "
+                    "Accepted: " + ", ".join(sorted(tool["inputSchema"]["properties"])) + "."
+                )
         payload = tool["handler"](ctx, arguments)
     except ToolError as exc:
         ok, error = False, str(exc)

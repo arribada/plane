@@ -255,7 +255,12 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
-              # 692 is MEASURED — this exact command, in this exact image, against a
+              # 721 is MEASURED on 2026-09-28, this exact command in the candidate
+              # image for the MCP plan grant, against a throwaway Postgres on the
+              # droplet: 721 collected, 721 passed. 692 + the 29 tests that commit
+              # added agrees, which checks the measurement; it is not its source.
+              #
+              # 692 was MEASURED: this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
               # 2026-09-14 ON THE DROPLET, because the image will not build on the
               # author's machine (TLS interception breaks `apk` against the Alpine
@@ -279,8 +284,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 692 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 692 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 721 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 721 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

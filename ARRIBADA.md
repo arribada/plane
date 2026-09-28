@@ -17,7 +17,7 @@ Numbers, so you can tell at a glance when this file has rotted again:
 
 |                                        |                                                          |
 | -------------------------------------- | -------------------------------------------------------- |
-| `plane.arribada` migrations            | `0001` → `0045` (own graph, see traps)                   |
+| `plane.arribada` migrations            | `0001` → `0047` (own graph, see traps)                   |
 | Models                                 | 28 (26 in `models.py`, 2 in `mcp_models.py`)             |
 | Endpoint classes / routes in `urls.py` | 74 (72 in `views.py`, 2 in `mcp.py`) / 74                |
 | Python files in the app                | 73                                                       |

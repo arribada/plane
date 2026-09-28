@@ -15,6 +15,50 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
+> **2026-09-28, measured on the running system: `.145`, backend AND frontend.**
+>
+> |                                    | Image                                                 | Id             | Commit       |
+> | ---------------------------------- | ----------------------------------------------------- | -------------- | ------------ |
+> | backend (api, worker, beat-worker) | `arribada/plane-backend:v1.3.1-arribada.145`          | `d91de4394657` | `7a7d971dbc` |
+> | frontend                           | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.145` | `88edb60c642e` | `403948a762` |
+>
+> Ids from `docker inspect` on the CONTAINERS. The frontend was built by CI run
+> `36381166398` from `403948a762`; `7a7d971dbc` changes only the workflow file, so the
+> served web code is main's. Migrations applied through **`0047_mcp_plan_grant`** (migrator
+> log: `Applying arribada.0047_mcp_plan_grant... OK`). Pre-deploy dump:
+> `/opt/backups/archive/plane-db-predeploy-145-2026-09-28_051954.sql.gz` (`gzip -t` clean,
+> completion marker present). Rollback targets: backend `.144` / `12b96cd4a90e`, frontend
+> `.139` / `b243b5f81eac`, both still on the disk; see `ROLLBACK.md`.
+>
+> **What `.145` is.** Decisions taken by Geoffrey on 2026-09-25, after his Claude connector
+> could neither write into REWLD nor move a date there:
+>
+> - **External edits has a switch**: Settings, General, "External edits: accept edits from
+>   integrations", under the lead-only switch. Until now it was API-only, so the refusal
+>   "turn on external edits" pointed at nothing a person could find.
+> - **A workspace admin may flip it**, not only the lead (`_integration_guard`). The other
+>   four governance flags are still the lead's alone.
+> - **MCP plan grant** (`allow_plan`): with it, `create_work_item` / `update_work_item`
+>   write dates, parent, estimate, sprint and modules, refused wherever `lead_only_edits` or
+>   the timeline lock would refuse the token's user. `whoami` now says a connector token
+>   renews itself. Details in `ARRIBADA.md`, "The plan: a fourth gate".
+>
+> **Verified live, not just in tests**: the marker string `accept edits from integrations`
+> was absent from the `.139` bundle and is present in `.145`, fetched through the public
+> domain (`/assets/page-Bv_t64_k.js`), with a witness string present in both. The live MCP
+> `whoami` returns the new fields, and `get_schedule` on REWLD answers
+> `can_set_external_edits: true`, `can_set_governance: false` for Geoffrey (workspace admin,
+> not the lead), which is the rule as decided. **Nobody has clicked the switch in a
+> browser yet**, and no token carries the plan grant yet: the claude.ai connector has to be
+> re-authorised with the plan box ticked (a connector also keeps its connect-time tool list
+> until it reconnects).
+>
+> **CI: the backend suite had not run since 2026-09-14.** An apostrophe in a comment
+> ("author's machine") inside the `sh -lc '...'` block closed the quote, and every push
+> since was red on `syntax error near unexpected token '('`, before pytest started. Fixed in
+> `7a7d971dbc`; that push is the first green backend job since: **721 collected, 721
+> passed**. Floors re-measured, never incremented: backend 721, web 735.
+
 > **Reconciled 2026-09-14, measured on the running system.** The paragraph below was
 > stale by fourteen frontend tags and several backend builds — it named `.125` while the
 > machine was serving `.139`. Read this box, not it. This is the third time this file has
@@ -22,9 +66,9 @@ session can continue without re-deriving anything.
 > prevent; the numbers here came from `docker inspect` on the CONTAINERS, and the commits
 > from the `org.opencontainers.image.revision` label `build-be.sh` now stamps.
 >
-> | | Image | Id | Commit |
-> | --- | --- | --- | --- |
-> | backend | `arribada/plane-backend:v1.3.1-arribada.135` | `d8d2186051d5` | `b131d52c4e` |
+> |          | Image                                                 | Id             | Commit       |
+> | -------- | ----------------------------------------------------- | -------------- | ------------ |
+> | backend  | `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5` | `b131d52c4e` |
 > | frontend | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139` | `b243b5f81eac` | `f9c01bdd3c` |
 >
 > `f9c01bdd3c` is the tip of `arribada/main`. The backend is four commits behind it and
@@ -56,7 +100,6 @@ session can continue without re-deriving anything.
 >   lines after any proxy image bump.
 > - **`plane_proxy` must be recreated with the backend** on any deploy that touches those
 >   routes. It is not in `ROLLBACK.md`'s usual service list, so it is easy to leave behind.
-
 
 `POST /api/arribada/mcp/` lets an AI agent read this instance. The design and the three
 gates are in [`ARRIBADA.md`](ARRIBADA.md); what a fresh session needs to know here:
@@ -121,54 +164,54 @@ confirm a deploy actually reached the browser is now to read that corner.
 **Above that line is empty.** `f8902dcd15` is the tip of `arribada/main` on the remote;
 nothing is committed ahead of what production serves.
 
-| Commit       | Deployed?       | What                                                                                                                             |
-| ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `29c6d130ee` | **serving now** | Frontend `.125`: **Asana CSV import** — upload an Asana export, map each Section to a new/existing module (or discard), import names/notes/dates/assignee(by email)/parent tree/blocked-by/Asana-id. Entry points: create-project wizard step + existing project card menu. |
+| Commit       | Deployed?                   | What                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `29c6d130ee` | **serving now**             | Frontend `.125`: **Asana CSV import** — upload an Asana export, map each Section to a new/existing module (or discard), import names/notes/dates/assignee(by email)/parent tree/blocked-by/Asana-id. Entry points: create-project wizard step + existing project card menu.                                                                                                                                   |
 | `e8db146a39` | yes (backend still serving) | Frontend+Backend `.124`: profile **Your work** by project + by discipline (new stats distributions); dashboard **semi-free** mode (snap grid, no overlap); sub-items hidden in list / shown in timeline; project widgets managed in Manage; floating stickies load on first paint; My-tasks reference tooltip+link; gantt one-day label; free reflow fix; GitHub picker search/filter. (.121-.123 folded in.) |
-| `1feb183274` | yes             | Frontend `.120`: Gantt one-day item no longer prints its name twice (diamond owns the label); free dashboard widgets no longer reflow when one is moved (stable-index slots); Link-GitHub picker gains a search box + defaults to this project's linked repos with a 'show other projects' toggle. (.119 folded in.) |
-| `07c661d553` | yes             | Frontend `.118`: free dashboard fills full width (drops the 800px centre cap in free mode); create-project form completed — optional Budget (amount+currency) + Team (members + role) alongside status/dates. (.117 full-width folded in.) |
-| `94c2adc5ee` | yes             | Frontend `.116`: project **lifecycle status** UI — create form gains optional Status + Start/Target dates (written to schedule); projects view gains a Status filter + a badge on non-active cards. Backend `.115` (`90488f172c`) adds `lifecycle_status` on ProjectSchedule (migration 0044). |
-| `90488f172c` | yes             | **Backend `.115`**: `lifecycle_status` (active/on_hold/completed/cancelled) on ProjectSchedule, writable via /schedule/, read on ProjectListSerializer. Migration 0044. Also seeds `arribada_project_spotlight` widget key (backend `.111` was folded up to here). |
-| `1db0363e85` | yes             | Frontend `.114`: free-canvas dashboard — a straight<->free toggle next to Manage widgets (keeps placements), drag/resize each widget; Project Spotlight now in Manage; **Add project widget** button spawns independent per-project cards (own project + Tasks/Budget/Spend + remove). (.112/.113 folded in; backend `.111` seeds the arribada_project_spotlight preference.) |
-| `ad4ad3782c` | yes             | Frontend `.110`: fix free-drag stickies snapping back on drop — `placedBoxes` was a `useMemo` on the mobx observable (mutated in place → stale Map); build it in render so the observer tracks position changes. PATCH already saved (200); only the screen reverted. Fixes floating overlay + docked board. |
-| `15283d9041` | yes             | Frontend `.109`: work-item header shows the **project name** next to the ID; floating stickies hide the docked preview while floating. |
-| `aa1df053d8` | yes             | Frontend `.108`: a **configurable per-project widget** (pick a project → Tasks counts / Budget / Spend-over-time), reusing existing endpoints (project-stats + Finance getBudget), permission-safe. Frontend-only widget in the Home layout; project+view persist per browser. First slice of the #3 "managed widgets" enhancement. |
-| `748bfa345f` | yes             | Frontend `.107`: customisable two-column drag-and-drop Home layout (Customise/Reset, saved). |
-| `24434dd7ef` | yes             | Frontend `.106`: stickies hide-all (eye) + translucent floating notes; my-tasks "+" opens the full create modal (any project from Home). |
-| `53aa7b643e` | yes             | Frontend `.105`: Home stickies can float over the whole page (v1) via a Move toggle (`StickiesFree` `overlay` mode). Fold = v2. |
-| `2dda93197b` | yes             | Frontend `.104`: Home my-tasks list refreshes when the peek closes + an icon-only refresh button. |
-| `dab8d3f293` | yes             | Frontend `.103`: Home calendar duration bars coloured by **status**; portfolio timeline toolbar+legend behind a Show/Hide bar (collapsed on mobile). Reads the new `MyWorkEndpoint` fields. |
-| `31608607b1` | **serving now** | **Backend** (first change since `.90`): `MyWorkEndpoint` returns `start_date` + state. No migration. |
-| `3480aaf0d5` | yes             | Frontend `.102`: drag-to-un-nest + the sprint/module create "+" moved into the dropdown footer. |
-| `cb28c2ed9f` | yes             | Frontend `.101`: milestone kind+label at creation; auto-select the sprint/module made via "+"; drag-to-nest (drop on a row's centre → sub-task). |
-| `dfb55ab323` | yes             | Frontend `.100`: inline "+" to create a sprint/module from the work-item form. |
-| `6fea7ba658` | yes             | Frontend `.99`: Home "my tasks" click opens the peek overview (full detail + built-in full-screen button) instead of navigating away. |
-| `ef58520e7a` | yes             | Frontend `.98`: set Discipline + Effort at creation via the modal-additional-properties seam; applied after create (`handleCreateUpdatePropertyValues`), no-op unless set. Milestone deferred. |
-| `e34286014c` | yes             | Frontend `.97`: the gantt quick-add gains an "expand" control that opens the full CreateUpdateIssueModal seeded with the typed title + project. |
-| `dfe3b539bb` | yes             | Frontend `.96`: a state-colour status dot in the gantt "Work items" sidebar (green when the state is completed). |
-| `8c73cb6ac8` | yes             | Frontend `.95`: **login correction** — the "GitLab" provider IS the Arribada dashboard SSO (`GITLAB_HOST=devices.arribada.org`); restored + rebranded "Arribada", GitHub/Gitea buttons dropped. Visible login: Arribada SSO + Google + email/password. VERIFIED in bundle. |
-| `e7ee0d36be` | yes             | Frontend `.94`: expense EDITING (modal edit mode + per-row button, PATCHes the pre-existing `ProjectExpenseDetailEndpoint`); new-expense currency defaults to the project budget currency not EUR; **`.94` wrongly removed the GitLab button — corrected in `.95`**; mobile pass 2. |
-| `06bf6626d0` | yes             | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Was `.93`. |
-| `f8902dcd15` | yes             | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Was frontend `.92`. |
-| `386e622001` | yes             | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`. |
-| `5658072476` | n/a — docs only | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                    |
-| `aa13efe486` | yes             | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`. Backend of `.90` + `.91`. |
-| `7fbc60ae36` | yes             | CI: web floor 725, measured on the merged tree.                                                                                  |
-| `09115501c3` | yes             | Frontend — timeline state groups, gestures and arrows (three passes, one commit).                                              |
-| `05c24aacc4` | n/a — docs only | Recorded what `.89` served, and the grep that lies about RunPython.                                                              |
-| `c77edfad9e` | yes             | CI: web suite under two non-UTC zones, `WEB_URL`, `freezegun`, measured floors (569 web / 580 backend). Was `.89`.               |
-| `d830927388` | yes             | Frontend — nested timeline, colours, exports, and dates that mean one day. 110 files.                                            |
-| `6448e35fd9` | yes             | Backend — plan governance, portfolio nesting, caller's-day dates. 30 files; migrations `0040` + `0041`.                          |
-| `ac98514a4d` | yes             | Timeline refresh: the write landed, the screen kept the old answer (MobX/React memo staleness).                                  |
-| `63c1896a20` | n/a — docs only | The handover named a commit production had not run for five deploys.                                                             |
-| `a79290d0fe` | n/a — docs only | `ROLLBACK.md`. No image, nothing to ship.                                                                                        |
-| `e75cd9a12f` | yes             | Celery ceiling + fencing-token lock; order tracking; three surfaces that lied to non-admins. Backend 432 → 468, web 121 → 151.   |
-| `145ae6c08a` | yes             | The date bomb (two permanent-500 classes), four proven seq scans, the 84-query endpoint, migration `0039_roster_lookup_indexes`. |
-| `6b3b8bcd5c` | yes             | Ops floors: cache `IGNORE_EXCEPTIONS`, socket timeouts, `CONN_MAX_AGE`, Celery retry/lock policy.                                |
-| `170c639e7b` | yes             | Notifications (point 5). Backend 381 → 396, web 106.                                                                             |
-| `0cbf11817e` | yes             | Money integrity (point 2), nine defects + migration `0038`. Backend 308 → 381, web 75 → 96.                                      |
-| `f36ea2d9c7` | yes             | Permission-level class fixed (point 1). Backend tests 210 → 308.                                                                 |
-| `876cc26b2c` | yes             | Silent-failure class fixed (point 3). Web tests 24 → 75.                                                                         |
+| `1feb183274` | yes                         | Frontend `.120`: Gantt one-day item no longer prints its name twice (diamond owns the label); free dashboard widgets no longer reflow when one is moved (stable-index slots); Link-GitHub picker gains a search box + defaults to this project's linked repos with a 'show other projects' toggle. (.119 folded in.)                                                                                          |
+| `07c661d553` | yes                         | Frontend `.118`: free dashboard fills full width (drops the 800px centre cap in free mode); create-project form completed — optional Budget (amount+currency) + Team (members + role) alongside status/dates. (.117 full-width folded in.)                                                                                                                                                                    |
+| `94c2adc5ee` | yes                         | Frontend `.116`: project **lifecycle status** UI — create form gains optional Status + Start/Target dates (written to schedule); projects view gains a Status filter + a badge on non-active cards. Backend `.115` (`90488f172c`) adds `lifecycle_status` on ProjectSchedule (migration 0044).                                                                                                                |
+| `90488f172c` | yes                         | **Backend `.115`**: `lifecycle_status` (active/on_hold/completed/cancelled) on ProjectSchedule, writable via /schedule/, read on ProjectListSerializer. Migration 0044. Also seeds `arribada_project_spotlight` widget key (backend `.111` was folded up to here).                                                                                                                                            |
+| `1db0363e85` | yes                         | Frontend `.114`: free-canvas dashboard — a straight<->free toggle next to Manage widgets (keeps placements), drag/resize each widget; Project Spotlight now in Manage; **Add project widget** button spawns independent per-project cards (own project + Tasks/Budget/Spend + remove). (.112/.113 folded in; backend `.111` seeds the arribada_project_spotlight preference.)                                 |
+| `ad4ad3782c` | yes                         | Frontend `.110`: fix free-drag stickies snapping back on drop — `placedBoxes` was a `useMemo` on the mobx observable (mutated in place → stale Map); build it in render so the observer tracks position changes. PATCH already saved (200); only the screen reverted. Fixes floating overlay + docked board.                                                                                                  |
+| `15283d9041` | yes                         | Frontend `.109`: work-item header shows the **project name** next to the ID; floating stickies hide the docked preview while floating.                                                                                                                                                                                                                                                                        |
+| `aa1df053d8` | yes                         | Frontend `.108`: a **configurable per-project widget** (pick a project → Tasks counts / Budget / Spend-over-time), reusing existing endpoints (project-stats + Finance getBudget), permission-safe. Frontend-only widget in the Home layout; project+view persist per browser. First slice of the #3 "managed widgets" enhancement.                                                                           |
+| `748bfa345f` | yes                         | Frontend `.107`: customisable two-column drag-and-drop Home layout (Customise/Reset, saved).                                                                                                                                                                                                                                                                                                                  |
+| `24434dd7ef` | yes                         | Frontend `.106`: stickies hide-all (eye) + translucent floating notes; my-tasks "+" opens the full create modal (any project from Home).                                                                                                                                                                                                                                                                      |
+| `53aa7b643e` | yes                         | Frontend `.105`: Home stickies can float over the whole page (v1) via a Move toggle (`StickiesFree` `overlay` mode). Fold = v2.                                                                                                                                                                                                                                                                               |
+| `2dda93197b` | yes                         | Frontend `.104`: Home my-tasks list refreshes when the peek closes + an icon-only refresh button.                                                                                                                                                                                                                                                                                                             |
+| `dab8d3f293` | yes                         | Frontend `.103`: Home calendar duration bars coloured by **status**; portfolio timeline toolbar+legend behind a Show/Hide bar (collapsed on mobile). Reads the new `MyWorkEndpoint` fields.                                                                                                                                                                                                                   |
+| `31608607b1` | **serving now**             | **Backend** (first change since `.90`): `MyWorkEndpoint` returns `start_date` + state. No migration.                                                                                                                                                                                                                                                                                                          |
+| `3480aaf0d5` | yes                         | Frontend `.102`: drag-to-un-nest + the sprint/module create "+" moved into the dropdown footer.                                                                                                                                                                                                                                                                                                               |
+| `cb28c2ed9f` | yes                         | Frontend `.101`: milestone kind+label at creation; auto-select the sprint/module made via "+"; drag-to-nest (drop on a row's centre → sub-task).                                                                                                                                                                                                                                                              |
+| `dfb55ab323` | yes                         | Frontend `.100`: inline "+" to create a sprint/module from the work-item form.                                                                                                                                                                                                                                                                                                                                |
+| `6fea7ba658` | yes                         | Frontend `.99`: Home "my tasks" click opens the peek overview (full detail + built-in full-screen button) instead of navigating away.                                                                                                                                                                                                                                                                         |
+| `ef58520e7a` | yes                         | Frontend `.98`: set Discipline + Effort at creation via the modal-additional-properties seam; applied after create (`handleCreateUpdatePropertyValues`), no-op unless set. Milestone deferred.                                                                                                                                                                                                                |
+| `e34286014c` | yes                         | Frontend `.97`: the gantt quick-add gains an "expand" control that opens the full CreateUpdateIssueModal seeded with the typed title + project.                                                                                                                                                                                                                                                               |
+| `dfe3b539bb` | yes                         | Frontend `.96`: a state-colour status dot in the gantt "Work items" sidebar (green when the state is completed).                                                                                                                                                                                                                                                                                              |
+| `8c73cb6ac8` | yes                         | Frontend `.95`: **login correction** — the "GitLab" provider IS the Arribada dashboard SSO (`GITLAB_HOST=devices.arribada.org`); restored + rebranded "Arribada", GitHub/Gitea buttons dropped. Visible login: Arribada SSO + Google + email/password. VERIFIED in bundle.                                                                                                                                    |
+| `e7ee0d36be` | yes                         | Frontend `.94`: expense EDITING (modal edit mode + per-row button, PATCHes the pre-existing `ProjectExpenseDetailEndpoint`); new-expense currency defaults to the project budget currency not EUR; **`.94` wrongly removed the GitLab button — corrected in `.95`**; mobile pass 2.                                                                                                                           |
+| `06bf6626d0` | yes                         | Frontend: safe responsive first pass (kanban columns + module side-panels, all gated `<sm`, desktop-neutral). Was `.93`.                                                                                                                                                                                                                                                                                      |
+| `f8902dcd15` | yes                         | Frontend: tiny bottom-right build-version badge (tag · commit · build time), injected via new `VITE_APP_*` build-args. Was frontend `.92`.                                                                                                                                                                                                                                                                    |
+| `386e622001` | yes                         | Frontend: home quickstart "Set up your workspace" pointed at a bare relative `settings` link → error page; now `/${slug}/settings`. Was frontend `.91`.                                                                                                                                                                                                                                                       |
+| `5658072476` | n/a — docs only             | Reconciled HANDOVER/ROLLBACK to `.90`; corrected a false RunPython claim about `0042`/`0043`.                                                                                                                                                                                                                                                                                                                 |
+| `aa13efe486` | yes                         | Backend: wiki-sync `external_edits` flag + a filter so the sync finds its own writes. Migrations `0042` + `0043`. Backend of `.90` + `.91`.                                                                                                                                                                                                                                                                   |
+| `7fbc60ae36` | yes                         | CI: web floor 725, measured on the merged tree.                                                                                                                                                                                                                                                                                                                                                               |
+| `09115501c3` | yes                         | Frontend — timeline state groups, gestures and arrows (three passes, one commit).                                                                                                                                                                                                                                                                                                                             |
+| `05c24aacc4` | n/a — docs only             | Recorded what `.89` served, and the grep that lies about RunPython.                                                                                                                                                                                                                                                                                                                                           |
+| `c77edfad9e` | yes                         | CI: web suite under two non-UTC zones, `WEB_URL`, `freezegun`, measured floors (569 web / 580 backend). Was `.89`.                                                                                                                                                                                                                                                                                            |
+| `d830927388` | yes                         | Frontend — nested timeline, colours, exports, and dates that mean one day. 110 files.                                                                                                                                                                                                                                                                                                                         |
+| `6448e35fd9` | yes                         | Backend — plan governance, portfolio nesting, caller's-day dates. 30 files; migrations `0040` + `0041`.                                                                                                                                                                                                                                                                                                       |
+| `ac98514a4d` | yes                         | Timeline refresh: the write landed, the screen kept the old answer (MobX/React memo staleness).                                                                                                                                                                                                                                                                                                               |
+| `63c1896a20` | n/a — docs only             | The handover named a commit production had not run for five deploys.                                                                                                                                                                                                                                                                                                                                          |
+| `a79290d0fe` | n/a — docs only             | `ROLLBACK.md`. No image, nothing to ship.                                                                                                                                                                                                                                                                                                                                                                     |
+| `e75cd9a12f` | yes                         | Celery ceiling + fencing-token lock; order tracking; three surfaces that lied to non-admins. Backend 432 → 468, web 121 → 151.                                                                                                                                                                                                                                                                                |
+| `145ae6c08a` | yes                         | The date bomb (two permanent-500 classes), four proven seq scans, the 84-query endpoint, migration `0039_roster_lookup_indexes`.                                                                                                                                                                                                                                                                              |
+| `6b3b8bcd5c` | yes                         | Ops floors: cache `IGNORE_EXCEPTIONS`, socket timeouts, `CONN_MAX_AGE`, Celery retry/lock policy.                                                                                                                                                                                                                                                                                                             |
+| `170c639e7b` | yes                         | Notifications (point 5). Backend 381 → 396, web 106.                                                                                                                                                                                                                                                                                                                                                          |
+| `0cbf11817e` | yes                         | Money integrity (point 2), nine defects + migration `0038`. Backend 308 → 381, web 75 → 96.                                                                                                                                                                                                                                                                                                                   |
+| `f36ea2d9c7` | yes                         | Permission-level class fixed (point 1). Backend tests 210 → 308.                                                                                                                                                                                                                                                                                                                                              |
+| `876cc26b2c` | yes                         | Silent-failure class fixed (point 3). Web tests 24 → 75.                                                                                                                                                                                                                                                                                                                                                      |
 
 `94f7adddea` — which an earlier version of this file named as production — is now
 six deploys behind (production is `.90`). It survives on the droplet only as the rollback image
@@ -377,7 +420,7 @@ A four-dimension read of `apps/web` (features, i18n, design, mobile). Correction
 - **Arribada/Finance strings hardcoded, not translatable** — user said leave i18n for now.
 
 **Mobile — the app is desktop-centric; nobody has opened an authed screen on a phone.**
-`.93` + `.94` shipped *safe, desktop-neutral* responsive fixes (kanban columns, module
+`.93` + `.94` shipped _safe, desktop-neutral_ responsive fixes (kanban columns, module
 side-panels, spreadsheet row min-width, image/upload modals, `workload/list.tsx` grid now
 scrolls instead of crushing, Power-K width). All gated `<sm`, so desktop is provably
 unchanged — but the authed mobile result is NOT visually confirmed. A `sidebar-menu-hamburger-toggle.tsx`
@@ -401,7 +444,7 @@ Established by reading `plane/arribada/github_sync_task.py`:
   closure reconciliation: an issue **closed on GitHub** → the row is marked closed and its work
   item moved to the project's done state. Finishing a task **in Plane does NOT touch GitHub.**
 
-- **TODO (requested by owner 2026-08-18, not started):** *Plane → GitHub write-back* — when a
+- **TODO (requested by owner 2026-08-18, not started):** _Plane → GitHub write-back_ — when a
   GitHub-linked work item goes to done in Plane, close the issue on GitHub. Needs a PAT with
   write scope (`GITHUB_PAT` today is read-only), a new backend task/hook in `plane.arribada`,
   and a backend build+deploy. Scope to be agreed (only auto-created linked items? confirmation?
@@ -416,7 +459,7 @@ Established by reading `plane/arribada/github_sync_task.py`:
   requires an equal `dragScope` (rows position among their siblings). So dropping a top-level
   item onto another to nest it is refused — the tree is rebuilt from `parent_id`, which the
   drag never sets. To nest today, set the work item's **Parent** in its detail panel.
-- **TODO (open, not started):** *drag-to-nest in the timeline* — attach a make-child
+- **TODO (open, not started):** _drag-to-nest in the timeline_ — attach a make-child
   instruction, call the parent/sub-issue update, refresh the tree. Owner asked whether to
   build it; awaiting go-ahead. Non-trivial (touches sort_order + parent_id + the scope rule).
 

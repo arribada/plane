@@ -42,49 +42,51 @@ every push.
 Labels only exist on images built after this change, so for anything older this table is the
 record:
 
-| Image                                                | Image id       | Commit                      | Notes                                                                                            |
-| ---------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| `arribada/plane-backend:v1.3.1-arribada.144`          | `12b96cd4a90e` | `042eca7c0d`                | **currently served**; OAuth revocation + `/oauth/connections`; CSRF failures now 403; timezone-leak fix. **No migration** |
-| `arribada/plane-backend:v1.3.1-arribada.143`          | `82057e4c1ec5` | `591174d297`                | the previous serve; **the roll-back target for `.144`**. Same migration set as `.142`            |
-| `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9` | `9f65c443bc`                | MCP OAuth 2.1; migration `0046`; **the deploy that changed `plane_proxy`** — see below. Its consent form had no CSRF token, so the flow 403'd on Authorise; do not roll back TO this one |
-| `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9` | `8d4eb530cb`                | **currently served** (= `makeplane/plane-backend:v1.3.1`), built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045` |
-| `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab` | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                    |
-| `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5` | `b131d52c4e`                | the previous serve; **the roll-back target for the MCP deploy**                                   |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139` | `b243b5f81eac` | `f9c01bdd3c`                | **currently served** frontend; untouched by the MCP deploy, which was backend-only                |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.114`| `-` | `1db0363e85`  | **currently served frontend** (= `makeplane/plane-frontend:v1.3.1`); free-canvas dashboard + multi project widgets; CI loaded 2026-08-24; **roll-back target is `.111`** |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.110`| `f5ed42ff0779` | `ad4ad3782c`  | previous serve (**roll-back target for `.114`**); fix free-drag stickies snap-back (stale mobx memo) |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.109`| `-` | `15283d9041`  | previous serve (**roll-back target for `.110`**); work-item project name + hide docked sticky preview when floating |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.108`| `ef383081f343` | `aa1df053d8`  | previous serve; configurable per-project widget; CI artifact loaded 2026-08-19 |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.107`| `d1f82fd628fe` | `748bfa345f`  | previous frontend serve (**roll-back target for `.108`**); two-column drag-drop Home layout; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.106`| `0c558e199139` | `24434dd7ef`  | previous frontend serve (**roll-back target for `.107`**); stickies hide-all + translucency; my-tasks "+"; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.105`| `dd96c7a401a2` | `53aa7b643e`  | older frontend serve; stickies floating overlay (v1); OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.104`| `1e5230bfc1ad` | `2dda93197b`  | previous frontend serve (**roll-back target for `.105`**); Home my-tasks refresh (peek-close + button); OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.103`| `79f576735eb5` | `dab8d3f293`  | previous frontend serve (**the roll-back target for `.104`**); calendar duration bars + collapsible portfolio controls; OCI revision label present |
-| `arribada/plane-backend:31608607b1`                  | `41c2e1c34113` | `31608607b1`         | **currently served backend** (= `makeplane/plane-backend:v1.3.1`), MyWorkEndpoint start_date+state; built on the droplet 2026-08-19; OCI revision label present. **The `.90` image below is its rollback target.** |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.102`| `991cb8292461` | `3480aaf0d5`         | previous frontend serve; **the frontend roll-back target for the `.103` deploy**; drag-to-un-nest + in-dropdown create |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.101`| `b79573b3469b` | `cb28c2ed9f`                | previous serve; **the frontend roll-back target for the `.102` deploy**; milestone + auto-select + drag-to-nest |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.100`| `2a487692f76b` | `dfb55ab323`                | previous serve; **the frontend roll-back target for the `.101` deploy** (esp. if drag-to-nest misbehaves); inline sprint/module create |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.99` | (built, may be unloaded) | `6fea7ba658`       | Home my-tasks peek; the `.100` tree contains it, so `.100` was deployed directly |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.98` | (built, may be unloaded) | `ef58520e7a`       | discipline+effort at creation; contained in `.100` |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.97` | `70ae4ec9baeb` | `e34286014c`                | quick-add full-modal button; **the frontend roll-back target for the `.100` deploy** (last serve before it) |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.96` | `7c86b64a045d` | `dfe3b539bb`                | gantt status dot; older serve; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.95` | `61c7cb867329` | `8c73cb6ac8`                | login correction; older serve; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.94` | `9ade7a9552a4` | `e7ee0d36be`                | older frontend serve; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93` | `cd36c65d2f45` | `06bf6626d0`                | older frontend serve; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92` | `be1449169e9f` | `f8902dcd15`                | older frontend serve; OCI revision label present |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91` | `d618eb235591` | `386e622001`                | older frontend serve; OCI revision label present |
-| `arribada/plane-backend:v1.3.1-arribada.90`          | `6a0c7e1faffd` | `aa13efe486`                | **the backend roll-back target** (served `.90`→`.102`; superseded by `31608607b1` on 2026-08-19). Built on the droplet 2026-08-12 16:49. To roll the backend back: `docker tag 6a0c7e1faffd makeplane/plane-backend:v1.3.1` + recreate api/worker/beat |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.90` | `d37d47244cf4` | `aa13efe486`                | older frontend serve; OCI revision label present |
-| `arribada/plane-backend:v1.3.1-arribada.89`          | `7d7b3e85559a` | `c77edfad9e`                | older backend serve, built on the droplet 2026-08-12 10:45 |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89` | `976196a923c8` | `c77edfad9e`                | the previous serve; pair with the backend above; CI artifact of run 31588685459 (past its 5-day window — may be gone) |
-| `arribada/plane-backend:v1.3.1-arribada.88`          | `950d044e64c0` | `e75cd9a12f`                | one before that, built 2026-08-10 07:10                                                          |
-| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88` | `d2afafdd41ad` | `e75cd9a12f`                | one before that; pair it with the backend above                                                 |
-| `arribada/plane-backend:v1.3.1-arribada.87`          | `59d2c947c519` | `170c639e7b`                | one before that                                                                                  |
-| `arribada/plane-frontend:v1.3.1-arribada.87`         | `7bbff227cf0b` | `170c639e7b`                | one before that; pair it with the backend above                                                  |
-| `arribada/plane-backend:rollback-94f7adddea`         | `0bc09cf9a567` | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                         |
-| `arribada/plane-frontend:rollback-94f7adddea`        | `6a65bd4702e1` | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                                 |
-| `arribada/plane-backend:rollback-20260730`           | `e2ce98341ca1` | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                                      |
-| `arribada/plane-frontend:rollback-20260730`          | `a60822d87386` | (undated)                   | also tagged `v1.3.1-arribada.1`                                                                  |
+| Image                                                 | Image id                 | Commit                      | Notes                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------- | ------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `arribada/plane-backend:v1.3.1-arribada.145`          | `d91de4394657`           | `7a7d971dbc`                | **currently served** (api, worker, beat-worker), built on the droplet 2026-09-28 05:20 UTC; MCP plan grant, `_integration_guard`; carries migration `0047` (two defaulted booleans, no `RunPython` CALL)                                               |
+| `arribada/plane-backend:v1.3.1-arribada.144`          | `12b96cd4a90e`           | `042eca7c0d`                | the previous serve; **the roll-back target for `.145`**; OAuth revocation + `/oauth/connections`; CSRF failures now 403; timezone-leak fix. **No migration**                                                                                           |
+| `arribada/plane-backend:v1.3.1-arribada.143`          | `82057e4c1ec5`           | `591174d297`                | the previous serve; **the roll-back target for `.144`**. Same migration set as `.142`                                                                                                                                                                  |
+| `arribada/plane-backend:v1.3.1-arribada.142`          | `603c4690dfc9`           | `9f65c443bc`                | MCP OAuth 2.1; migration `0046`; **the deploy that changed `plane_proxy`** — see below. Its consent form had no CSRF token, so the flow 403'd on Authorise; do not roll back TO this one                                                               |
+| `arribada/plane-backend:v1.3.1-arribada.141`          | `f2000b8324c9`           | `8d4eb530cb`                | former serve, built on the droplet 2026-09-14 17:35; MCP server; carries migration `0045`                                                                                                                                                              |
+| `arribada/plane-backend:v1.3.1-arribada.140`          | `25c390d985ab`           | `5d03d63060`                | the MCP deploy an hour earlier; `0045` was applied by THIS one                                                                                                                                                                                         |
+| `arribada/plane-backend:v1.3.1-arribada.135`          | `d8d2186051d5`           | `b131d52c4e`                | the previous serve; **the roll-back target for the MCP deploy**                                                                                                                                                                                        |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.145` | `88edb60c642e`           | `403948a762`                | **currently served** frontend; the External edits switch; CI run 36381166398, artifact loaded 2026-09-28 (5-day retention)                                                                                                                             |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139` | `b243b5f81eac`           | `f9c01bdd3c`                | the previous serve; **the roll-back target for `.145`**; untouched by the MCP deploy, which was backend-only                                                                                                                                           |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.114` | `-`                      | `1db0363e85`                | former frontend serve; free-canvas dashboard + multi project widgets; CI loaded 2026-08-24; **roll-back target is `.111`**                                                                                                                             |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.110` | `f5ed42ff0779`           | `ad4ad3782c`                | previous serve (**roll-back target for `.114`**); fix free-drag stickies snap-back (stale mobx memo)                                                                                                                                                   |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.109` | `-`                      | `15283d9041`                | previous serve (**roll-back target for `.110`**); work-item project name + hide docked sticky preview when floating                                                                                                                                    |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.108` | `ef383081f343`           | `aa1df053d8`                | previous serve; configurable per-project widget; CI artifact loaded 2026-08-19                                                                                                                                                                         |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.107` | `d1f82fd628fe`           | `748bfa345f`                | previous frontend serve (**roll-back target for `.108`**); two-column drag-drop Home layout; OCI revision label present                                                                                                                                |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.106` | `0c558e199139`           | `24434dd7ef`                | previous frontend serve (**roll-back target for `.107`**); stickies hide-all + translucency; my-tasks "+"; OCI revision label present                                                                                                                  |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.105` | `dd96c7a401a2`           | `53aa7b643e`                | older frontend serve; stickies floating overlay (v1); OCI revision label present                                                                                                                                                                       |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.104` | `1e5230bfc1ad`           | `2dda93197b`                | previous frontend serve (**roll-back target for `.105`**); Home my-tasks refresh (peek-close + button); OCI revision label present                                                                                                                     |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.103` | `79f576735eb5`           | `dab8d3f293`                | previous frontend serve (**the roll-back target for `.104`**); calendar duration bars + collapsible portfolio controls; OCI revision label present                                                                                                     |
+| `arribada/plane-backend:31608607b1`                   | `41c2e1c34113`           | `31608607b1`                | **currently served backend** (= `makeplane/plane-backend:v1.3.1`), MyWorkEndpoint start_date+state; built on the droplet 2026-08-19; OCI revision label present. **The `.90` image below is its rollback target.**                                     |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.102` | `991cb8292461`           | `3480aaf0d5`                | previous frontend serve; **the frontend roll-back target for the `.103` deploy**; drag-to-un-nest + in-dropdown create                                                                                                                                 |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.101` | `b79573b3469b`           | `cb28c2ed9f`                | previous serve; **the frontend roll-back target for the `.102` deploy**; milestone + auto-select + drag-to-nest                                                                                                                                        |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.100` | `2a487692f76b`           | `dfb55ab323`                | previous serve; **the frontend roll-back target for the `.101` deploy** (esp. if drag-to-nest misbehaves); inline sprint/module create                                                                                                                 |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.99`  | (built, may be unloaded) | `6fea7ba658`                | Home my-tasks peek; the `.100` tree contains it, so `.100` was deployed directly                                                                                                                                                                       |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.98`  | (built, may be unloaded) | `ef58520e7a`                | discipline+effort at creation; contained in `.100`                                                                                                                                                                                                     |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.97`  | `70ae4ec9baeb`           | `e34286014c`                | quick-add full-modal button; **the frontend roll-back target for the `.100` deploy** (last serve before it)                                                                                                                                            |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.96`  | `7c86b64a045d`           | `dfe3b539bb`                | gantt status dot; older serve; OCI revision label present                                                                                                                                                                                              |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.95`  | `61c7cb867329`           | `8c73cb6ac8`                | login correction; older serve; OCI revision label present                                                                                                                                                                                              |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.94`  | `9ade7a9552a4`           | `e7ee0d36be`                | older frontend serve; OCI revision label present                                                                                                                                                                                                       |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.93`  | `cd36c65d2f45`           | `06bf6626d0`                | older frontend serve; OCI revision label present                                                                                                                                                                                                       |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.92`  | `be1449169e9f`           | `f8902dcd15`                | older frontend serve; OCI revision label present                                                                                                                                                                                                       |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.91`  | `d618eb235591`           | `386e622001`                | older frontend serve; OCI revision label present                                                                                                                                                                                                       |
+| `arribada/plane-backend:v1.3.1-arribada.90`           | `6a0c7e1faffd`           | `aa13efe486`                | **the backend roll-back target** (served `.90`→`.102`; superseded by `31608607b1` on 2026-08-19). Built on the droplet 2026-08-12 16:49. To roll the backend back: `docker tag 6a0c7e1faffd makeplane/plane-backend:v1.3.1` + recreate api/worker/beat |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.90`  | `d37d47244cf4`           | `aa13efe486`                | older frontend serve; OCI revision label present                                                                                                                                                                                                       |
+| `arribada/plane-backend:v1.3.1-arribada.89`           | `7d7b3e85559a`           | `c77edfad9e`                | older backend serve, built on the droplet 2026-08-12 10:45                                                                                                                                                                                             |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.89`  | `976196a923c8`           | `c77edfad9e`                | the previous serve; pair with the backend above; CI artifact of run 31588685459 (past its 5-day window — may be gone)                                                                                                                                  |
+| `arribada/plane-backend:v1.3.1-arribada.88`           | `950d044e64c0`           | `e75cd9a12f`                | one before that, built 2026-08-10 07:10                                                                                                                                                                                                                |
+| `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.88`  | `d2afafdd41ad`           | `e75cd9a12f`                | one before that; pair it with the backend above                                                                                                                                                                                                        |
+| `arribada/plane-backend:v1.3.1-arribada.87`           | `59d2c947c519`           | `170c639e7b`                | one before that                                                                                                                                                                                                                                        |
+| `arribada/plane-frontend:v1.3.1-arribada.87`          | `7bbff227cf0b`           | `170c639e7b`                | one before that; pair it with the backend above                                                                                                                                                                                                        |
+| `arribada/plane-backend:rollback-94f7adddea`          | `0bc09cf9a567`           | `94f7adddea`                | also tagged `v1.3.1-arribada.5`; **the rollback target**                                                                                                                                                                                               |
+| `arribada/plane-frontend:rollback-94f7adddea`         | `6a65bd4702e1`           | `94f7adddea`                | also tagged `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.85`                                                                                                                                                                                       |
+| `arribada/plane-backend:rollback-20260730`            | `e2ce98341ca1`           | (undated, pre-`94f7adddea`) | older escape hatch, provenance not recorded                                                                                                                                                                                                            |
+| `arribada/plane-frontend:rollback-20260730`           | `a60822d87386`           | (undated)                   | also tagged `v1.3.1-arribada.1`                                                                                                                                                                                                                        |
 
 Why the numbered tags cannot be trusted as history: `v1.3.1-arribada.5` is dated 2026-08-05,
 five days _after_ `.4`, and `.77`, `.78`, `.79` and `.80` are all the single image id
@@ -153,6 +155,24 @@ whenever anyone pushed. Go by image id.
 
 ## 1. Decide: code only, or code **and** database?
 
+> **2026-09-28, the plan-grant deploy (`.145`, backend and frontend).** One migration,
+> `0047_mcp_plan_grant`: two `AddField`s (`allow_plan` on `arribada_mcp_token`,
+> `granted_plan` on `arribada_mcp_authorization_code`), both `BooleanField(default=False)`.
+> **No `RunPython` call**, checked in the §5 form with the positive control: matching the
+> CALL `migrations.RunPython(` finds 0 in `0047` and 2 in `0038`. The bare word does appear
+> in `0047`, in its docstring, so the one-line `grep -l RunPython` in
+> `plane-predeploy-dump.sh`'s header reports it: a false positive. A dump was taken anyway:
+> `/opt/backups/archive/plane-db-predeploy-145-2026-09-28_051954.sql.gz`.
+>
+> Code-only rollback is safe in both halves: `.144`'s code never reads the two columns.
+> Backend: `docker tag arribada/plane-backend:v1.3.1-arribada.144 makeplane/plane-backend:v1.3.1`
+>
+> - `--force-recreate --no-deps api worker beat-worker`. Frontend: `docker tag
+ghcr.io/arribada/plane-frontend:v1.3.1-arribada.139 makeplane/plane-frontend:v1.3.1` +
+>   `--force-recreate --no-deps web`. `plane_proxy` is untouched by this deploy. Rolling back
+>   the backend alone after someone has turned External edits on as a workspace admin leaves
+>   the flag on (it is data); only the guard on who may flip it goes back to lead-only.
+
 > **2026-09-14, the five-points deploy (`.144`).** **No migration at all** — `0046` is still
 > the head. So this one is code-only in both directions: re-tag `.143` and force-recreate,
 > nothing to dump and nothing to strand. `plane_proxy` is untouched too, unlike `.142`.
@@ -160,7 +180,6 @@ whenever anyone pushed. Go by image id.
 > One behaviour change to know about when judging a rollback: `.144` makes a CSRF failure
 > answer **403** instead of **200**. Rolling back restores the 200, which is the defect, not
 > a safe state — a refused request reporting success. Prefer rolling forward.
-
 
 > **2026-09-14, the OAuth deploy (`.142`).** One migration, `0046_mcp_oauth`: two
 > `CreateModel`s and four `AddField`s, every column nullable or defaulted, **no
@@ -186,7 +205,6 @@ whenever anyone pushed. Go by image id.
 >
 > Leaving the proxy lines in place while rolling the backend back is harmless — they route
 > to an `api` that answers 404 on those paths, which is what it did before any of this.
-
 
 > **2026-09-14, the MCP deploy (`.140` then `.141`).** One migration, `0045_mcp_token`,
 > **pure DDL, no `RunPython`** — two `CreateModel`s and nothing else. Both tables are new
@@ -214,7 +232,6 @@ whenever anyone pushed. Go by image id.
 > smaller" is the sentence that precedes finding out it was empty.
 >
 > 0 invalid indexes in the database after the deploy (`pg_index.indisvalid`).
-
 
 > **2026-08-18 (frontend `.100`).** Current serve `.100` = `dfb55ab323` (inline sprint/module
 > create). `.97`–`.100` (quick-add full-modal button, discipline+effort at creation, Home
@@ -253,7 +270,7 @@ whenever anyone pushed. Go by image id.
 >   If ever reported failed, check for an INVALID index and drop it (see §2's index query).
 >
 > So a `.90 → .89` code rollback needs **no** database action. `git diff --name-only
-> c77edfad9e..aa13efe486 -- apps/api/plane/arribada/migrations/` lists `0042`+`0043`; both
+c77edfad9e..aa13efe486 -- apps/api/plane/arribada/migrations/` lists `0042`+`0043`; both
 > are schema/DDL only.
 
 > **2026-08-12.** `c77edfad9e` (`.89`) carries **two** migrations, `0040` and `0041`.

@@ -244,6 +244,11 @@ jobs:
             plane-backend:candidate \
             sh -lc '
               set -e
+              # NO APOSTROPHES IN THIS BLOCK, comments included: it is one
+              # single-quoted argument, so a stray apostrophe ends it and bash fails
+              # on whatever follows. One in a comment kept this whole suite from
+              # running in CI from 2026-09-14 to 2026-09-28, red for a syntax error
+              # nobody read. Check with `bash -n` on the step before pushing.
               # Pins mirror apps/api/requirements/test.txt. `freezegun` is NOT
               # optional: eight test files import `freeze_time` to pin the clock, and
               # this image carries production deps only — without it those files fail
@@ -263,7 +268,7 @@ jobs:
               # 692 was MEASURED: this exact command, in this exact image, against a
               # real Postgres — and not the previous floor plus a delta. Taken
               # 2026-09-14 ON THE DROPLET, because the image will not build on the
-              # author's machine (TLS interception breaks `apk` against the Alpine
+              # author machine (TLS interception breaks `apk` against the Alpine
               # repos). 600 -> 644 (MCP) -> 679 (OAuth) -> 692 (revocation, the
               # timezone-leak tests, and one consent test replaced by a sharper pair).
               #

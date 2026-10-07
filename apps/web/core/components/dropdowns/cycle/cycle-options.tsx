@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Placement } from "@popperjs/core";
+import { orderBy } from "lodash-es"; // ARRIBADA
 import { Plus } from "lucide-react"; // ARRIBADA
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
@@ -58,9 +59,11 @@ export const CycleOptions = observer(function CycleOptions(props: CycleOptionsPr
     if (isOpen) {
       onOpen();
       if (!isMobile) {
-        inputRef.current && inputRef.current.focus();
+        inputRef.current?.focus(); // ARRIBADA: was `a && a.focus()` (no-unused-expressions)
       }
     }
+    // ARRIBADA: `onOpen` is redefined every render; listing it would re-run this and refocus each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isMobile]);
 
   // popper-js init
@@ -76,11 +79,21 @@ export const CycleOptions = observer(function CycleOptions(props: CycleOptionsPr
     ],
   });
 
-  const cycleIds = (getProjectCycleIds(projectId) ?? [])?.filter((cycleId) => {
-    const cycleDetails = getCycleById(cycleId);
-    if (currentCycleId && currentCycleId === cycleId) return false;
-    return cycleDetails?.status ? (cycleDetails?.status.toLowerCase() != "completed" ? true : false) : true;
-  });
+  // ARRIBADA FIX: upstream dropped completed cycles here, so work done in a past sprint could
+  // never be filed under it. They are listed now, after the open ones, most recently ended
+  // first; the server accepts them too (CycleIssueViewSet.create). Fork drift.
+  const isCompleted = (cycleId: string) => getCycleById(cycleId)?.status?.toLowerCase() === "completed";
+  const projectCycleIds = (getProjectCycleIds(projectId) ?? []).filter(
+    (cycleId) => !(currentCycleId && currentCycleId === cycleId)
+  );
+  const cycleIds = [
+    ...projectCycleIds.filter((cycleId) => !isCompleted(cycleId)),
+    ...orderBy(
+      projectCycleIds.filter((cycleId) => isCompleted(cycleId)),
+      (cycleId) => getCycleById(cycleId)?.end_date ?? "",
+      "desc"
+    ),
+  ];
 
   const onOpen = () => {
     if (workspaceSlug && !cycleIds) fetchAllCycles(workspaceSlug.toString(), projectId);

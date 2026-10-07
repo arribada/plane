@@ -925,14 +925,8 @@ class CycleIssueListCreateAPIEndpoint(BaseAPIView):
 
         cycle = Cycle.objects.get(workspace__slug=slug, project_id=project_id, pk=cycle_id)
 
-        if cycle.end_date is not None and cycle.end_date < timezone.now():
-            return Response(
-                {
-                    "code": "CYCLE_COMPLETED",
-                    "message": "The Cycle has already been completed so no new issues can be added",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # ARRIBADA FIX: a completed cycle accepts work items, as in the app's
+        # CycleIssueViewSet.create. Fork drift.
 
         # Get all CycleWorkItems already created
         cycle_issues = list(CycleIssue.objects.filter(~Q(cycle_id=cycle_id), issue_id__in=issues))

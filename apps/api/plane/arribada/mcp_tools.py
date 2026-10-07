@@ -849,13 +849,9 @@ def _resolve_cycle(ctx, project, value):
     cycle = _resolve_named(
         Cycle.objects.filter(project_id=project.id, archived_at__isnull=True), value, "sprint", project
     )
-    # Upstream's `CycleIssueViewSet.create` refuses this too. Refusing it here
-    # keeps the agent out of a sprint the product would not let a person pick.
-    if cycle.end_date is not None and cycle.end_date < timezone.now():
-        raise ToolError(
-            f"Sprint '{cycle.name}' ended on {cycle.end_date:%Y-%m-%d}; Plane does not add work "
-            "to a finished sprint."
-        )
+    # A finished sprint is accepted: the fork lets a person pick one too (cycle dropdown,
+    # `CycleIssueViewSet.create`), so work done in a past sprint can be filed under it.
+    # Archived sprints stay out, as they do in the pickers.
     return cycle
 
 

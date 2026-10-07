@@ -229,11 +229,9 @@ class CycleIssueViewSet(BaseViewSet):
 
         cycle = Cycle.objects.get(workspace__slug=slug, project_id=project_id, pk=cycle_id)
 
-        if cycle.end_date is not None and cycle.end_date < timezone.now():
-            return Response(
-                {"error": "The Cycle has already been completed so no new issues can be added"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # ARRIBADA FIX: upstream refused a cycle whose end date had passed, so work done in
+        # a past sprint could never be filed under it. Completed cycles accept work items
+        # again; archived ones stay out because they are not in the pickers. Fork drift.
 
         # Get all CycleIssues already created
         cycle_issues = list(CycleIssue.objects.filter(~Q(cycle_id=cycle_id), issue_id__in=issues))

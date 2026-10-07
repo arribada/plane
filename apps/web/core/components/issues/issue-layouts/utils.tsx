@@ -70,9 +70,7 @@ export const isWorkspaceLevel = (type: EIssuesStoreType) =>
     EIssuesStoreType.TEAM_VIEW,
     EIssuesStoreType.TEAM_PROJECT_WORK_ITEMS,
     EIssuesStoreType.WORKSPACE_DRAFT,
-  ].includes(type)
-    ? true
-    : false;
+  ].includes(type);
 
 type TGetGroupByColumns = {
   groupBy: GroupByColumnTypes | null;
@@ -88,6 +86,8 @@ type TGetGroupByColumns = {
 export const getGroupByColumns = ({
   groupBy,
   includeNone,
+  // ARRIBADA: the field is named by TGetGroupByColumns; shadowing the export is upstream's choice.
+  // oxlint-disable-next-line no-shadow
   isWorkspaceLevel,
   isEpic = false,
   projectId,
@@ -162,14 +162,13 @@ const getCycleColumns = (): IGroupByColumn[] | undefined => {
   const cycles: IGroupByColumn[] = [];
   cycleDetails?.map((cycle) => {
     const cycleStatus = cycle.status ? (cycle.status.toLocaleLowerCase() as TCycleGroups) : "draft";
-    const isDropDisabled = cycleStatus === "completed";
+    // ARRIBADA FIX: a completed cycle accepts work items again (see the cycle dropdown), so
+    // dropping onto its column is allowed too. Fork drift.
     cycles.push({
       id: cycle.id,
       name: cycle.name,
       icon: <CycleGroupIcon cycleGroup={cycleStatus} className="h-3.5 w-3.5" />,
       payload: { cycle_id: cycle.id },
-      isDropDisabled,
-      dropErrorMessage: isDropDisabled ? "Work item cannot be moved to completed cycles" : undefined,
     });
   });
   cycles.push({
@@ -251,6 +250,8 @@ const getPriorityColumns = (): IGroupByColumn[] => {
   }));
 };
 
+// ARRIBADA: the field is named by TGetColumns; shadowing the export is upstream's choice.
+// oxlint-disable-next-line no-shadow
 const getLabelsColumns = ({ isWorkspaceLevel }: TGetColumns): IGroupByColumn[] => {
   const { workspaceLabels, projectLabels } = store.label;
   // map labels to group by columns
@@ -269,6 +270,8 @@ const getLabelsColumns = ({ isWorkspaceLevel }: TGetColumns): IGroupByColumn[] =
   }));
 };
 
+// ARRIBADA: the field is named by TGetColumns; shadowing the export is upstream's choice.
+// oxlint-disable-next-line no-shadow
 const getAssigneeColumns = ({ isWorkspaceLevel, projectId }: TGetColumns): IGroupByColumn[] | undefined => {
   // store values
   const { getUserDetails } = store.memberRoot;
@@ -452,8 +455,8 @@ const handleSortOrder = (
 
   if (destinationIssues && destinationIssues.length > 0) {
     if (destinationIndex === 0) {
-      const destinationIssueId = destinationIssues[0];
-      const destinationIssue = getIssueById(destinationIssueId);
+      const firstIssueId = destinationIssues[0]; // ARRIBADA: renamed, shadowed the parameter (no-shadow)
+      const destinationIssue = getIssueById(firstIssueId);
       if (!destinationIssue) return currentIssueState;
 
       currentIssueState = {
@@ -461,8 +464,8 @@ const handleSortOrder = (
         sort_order: destinationIssue.sort_order - sortOrderDefaultValue,
       };
     } else if (destinationIndex === destinationIssues.length) {
-      const destinationIssueId = destinationIssues[destinationIssues.length - 1];
-      const destinationIssue = getIssueById(destinationIssueId);
+      const lastIssueId = destinationIssues[destinationIssues.length - 1]; // ARRIBADA: renamed (no-shadow)
+      const destinationIssue = getIssueById(lastIssueId);
       if (!destinationIssue) return currentIssueState;
 
       currentIssueState = {
@@ -731,7 +734,8 @@ export const isDisplayFiltersApplied = (filters: Partial<IIssueFilters>): boolea
     (key) => !filters.displayProperties?.[key as keyof IIssueDisplayProperties]
   );
 
-  const isDisplayFiltersApplied = Object.keys(filters.displayFilters ?? {}).some((key) => {
+  // ARRIBADA: renamed, shadowed the function itself (no-shadow)
+  const hasDisplayFilters = Object.keys(filters.displayFilters ?? {}).some((key) => {
     const value = filters.displayFilters?.[key as keyof IIssueDisplayFilterOptions];
     if (!value) return false;
     // -create_at is the default order
@@ -741,7 +745,7 @@ export const isDisplayFiltersApplied = (filters: Partial<IIssueFilters>): boolea
     return true;
   });
 
-  return isDisplayPropertiesApplied || isDisplayFiltersApplied;
+  return isDisplayPropertiesApplied || hasDisplayFilters;
 };
 
 /**

@@ -939,16 +939,44 @@ def test_a_sprint_replaces_the_previous_one(world):
     assert CycleIssue.objects.filter(issue=item).count() == 0
 
 
-def test_a_finished_sprint_is_refused(world):
+def test_a_finished_sprint_is_accepted(world):
+    # Work done in a past sprint must be fileable under it, as it is from the web app.
     _open(world)
-    _cycle(world, "Old sprint", days=-2)
-    message, error = call(
+    now = timezone.now()
+    old = Cycle.objects.create(
+        name="Old sprint",
+        project=world["projects"]["TAG"],
+        start_date=now - timedelta(days=20),
+        end_date=now - timedelta(days=6),
+        owned_by=world["owner"],
+    )
+    _, error = call(
         client_for(_plan_token(world)),
         "update_work_item",
         {"project": "TAG", "item": "TAG-1", "sprint": "Old sprint"},
     )
+    assert not error
+    assert list(CycleIssue.objects.filter(issue=_item(world)).values_list("cycle_id", flat=True)) == [old.id]
+
+
+def test_an_archived_sprint_is_still_refused(world):
+    _open(world)
+    now = timezone.now()
+    Cycle.objects.create(
+        name="Shelved sprint",
+        project=world["projects"]["TAG"],
+        start_date=now - timedelta(days=20),
+        end_date=now - timedelta(days=6),
+        owned_by=world["owner"],
+        archived_at=now,
+    )
+    message, error = call(
+        client_for(_plan_token(world)),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "sprint": "Shelved sprint"},
+    )
     assert error
-    assert "finished sprint" in message
+    assert "No sprint called 'Shelved sprint'" in message
     assert CycleIssue.objects.filter(issue=_item(world)).count() == 0
 
 

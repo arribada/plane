@@ -15,7 +15,50 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
-> **2026-09-28, measured on the running system: `.145`, backend AND frontend.**
+> **2026-10-07, measured on the running system: `.146`, backend AND frontend.**
+>
+> |                                    | Image                                                 | Id             | Commit       |
+> | ---------------------------------- | ----------------------------------------------------- | -------------- | ------------ |
+> | backend (api, worker, beat-worker) | `arribada/plane-backend:v1.3.1-arribada.146`          | `17ad038142fc` | `db09bfb85c` |
+> | frontend                           | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.146` | `72aac5f5141e` | `db09bfb85c` |
+>
+> Ids from `docker inspect` on the CONTAINERS; both images carry the OCI revision label
+> `db09bfb85c`. Frontend from CI run `37588912565` (artifact `plane-frontend-image`). No
+> migration. Pre-deploy dump anyway: `/opt/backups/archive/plane-db-146-2026-10-07_074259.sql.gz`
+> (`gzip -t` clean, completion marker present). Rollback targets: backend `.145` /
+> `d91de4394657`, frontend `.145` / `88edb60c642e`, both on the disk; see `ROLLBACK.md`.
+>
+> **What `.146` is.** Geoffrey asked (2026-10-07) to be able to file a work item under a
+> sprint that has already ended. Upstream froze a completed cycle in five places; all five
+> now accept it: the cycle dropdown (completed sprints listed after the open ones, most
+> recently ended first), the kanban drop onto a completed cycle column, the app's
+> `CycleIssueViewSet.create`, the public API `CycleIssueListCreateAPIEndpoint.post`, and the
+> MCP `_resolve_cycle`. Archived sprints stay out everywhere. Upstream edits are marked
+> `ARRIBADA FIX` (fork drift). **Deliberately left as upstream** (Geoffrey not yet asked):
+> the completed-cycle page is still read-only, and a completed cycle still cannot be renamed
+> or re-dated (`CycleViewSet.partial_update`). A cycle closed with a transfer keeps its frozen
+> `progress_snapshot`, so an item added afterwards shows in it but not in those figures.
+>
+> **Verified**: backend markers (the two upstream "so no new issues can be added" strings and
+> the MCP "Plane does not add work" refusal) present in `.145`, absent in `.146`, witness
+> "so it cannot be edited" present in both. Frontend marker "cannot be moved to completed
+> cycles" in 1 asset of `.145`, 0 of `.146`, witness "Create a new sprint" in both; the
+> witness chunk fetched through the public domain is byte-identical to the image's. CI: web
+> tsc + vitest 735, backend **725 collected, 725 passed** (floor re-measured 721 -> 725).
+> **Nobody has picked a past sprint in a browser yet.**
+>
+> **Found, not fixed:** the worker logs `Received unregistered task of type
+'plane.bgtasks.logger_task.process_logs'` (112 in the first two minutes after restart):
+> the public-API request logs posted by `plane/middleware/logger.py` are discarded. Nothing
+> in `celery.py`, `settings/` or `bgtasks/` changed between `.145` and `.146`, so it
+> predates this deploy.
+>
+> **Test-environment trap:** run `plane/arribada/` against a throwaway Postgres WITH a Redis
+> and the 22 `test_mcp_oauth.py` tests fail on `429 Too many registrations` — the
+> registration limiter only counts when a cache is reachable. CI has no Redis, so they pass
+> there. Same result on the parent commit; not a regression.
+
+> **Previous: 2026-09-28, measured on the running system: `.145`, backend AND frontend.**
 >
 > |                                    | Image                                                 | Id             | Commit       |
 > | ---------------------------------- | ----------------------------------------------------- | -------------- | ------------ |

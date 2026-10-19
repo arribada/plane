@@ -15,6 +15,38 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
+> **2026-10-19, measured on the running system: frontend `.148`, backend still `.146`.**
+>
+> Frontend `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.148`, id `e3e738bed758`, commit
+> `b6b9912cbe` (CI run 39215865526). Rollback: `.147` (`a6a98d8c2e88`) or `.146`
+> (`72aac5f5141e`), both on the disk. Backend untouched (`17ad038142fc`, `db09bfb85c`).
+> Two frontend deploys that day:
+>
+> - **`.147` (`ca5590f`)** — Geoffrey's Portfolio timeline read "Sept, Oct, w43, Jun 2026 w25".
+>   Pages that own a gantt called `initGantt()` from a mount `useEffect`, which React runs
+>   AFTER the chart's own mount effects: the store went back to the view template (start =
+>   today) while the drawn weeks started four months earlier. The first left-scroll then
+>   prepended "four months before today" ahead of the real start, every bar was positioned
+>   from the wrong origin (~4 months off), and the block ids the chart had just been given were
+>   cleared. Now a layout effect (`ce/components/gantt-chart/use-init-gantt.ts`) on the
+>   Portfolio, My timeline, the work-item gantt and the module wrapper (the last two upstream,
+>   `ARRIBADA FIX`). `use-init-gantt.test.tsx` has a control that keeps the old order and
+>   asserts the backwards jump.
+> - **`.148` (`b6b9912`)** — (1) the dependency dot straddled each bar edge at z-20 with a
+>   ~44px hit area (grown for touch on 09-04), covering the 12px resize grip: pressing an edge
+>   armed a link. The dot now sits 14-26px outside the bar, hit area outward only. (2) A
+>   deliverable spanning several days drew as a plain bar (the overlay diamond is one-day
+>   only); the bar now shows a filled diamond before its name, titled kind + due date
+>   (`blocks.tsx`, upstream, `ARRIBADA FIX`).
+>
+> Verified: marker `-left-[26px] after:right-0` in 0 assets of `.147`, 1 of `.148`; witness
+> "Link this work item to another" 1 in both; the chunk fetched through the public domain is
+> byte-identical to the image's. Web suite 741 under both CI zones; floor 735 -> 741, measured.
+> **Nobody has dragged a grip or looked at the diamond in a browser yet.**
+> Droplet disk cleaned the same day 93 % -> 82 % (old platform `pre-v2.0.8..13` rollbacks, two
+> colanode builds, build cache > 72h); no Plane image removed. ChirpStack's json log is 7.8 GB
+> with no rotation configured — untouched.
+
 > **2026-10-07, measured on the running system: `.146`, backend AND frontend.**
 >
 > |                                    | Image                                                 | Id             | Commit       |

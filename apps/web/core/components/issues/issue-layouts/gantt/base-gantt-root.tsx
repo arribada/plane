@@ -81,6 +81,7 @@ import { usePlanLock } from "@/plane-web/components/gantt-chart/use-plan-lock";
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
+import { useInitGanttBeforeChart } from "@/plane-web/components/gantt-chart/use-init-gantt";
 
 import { IssueLayoutHOC } from "../issue-layout-HOC";
 import { GanttQuickAddIssueButton, QuickAddIssueRoot } from "../quick-add";
@@ -135,10 +136,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
     fetchIssues("init-loader", { canGroup: false, perPageCount: 100 }, viewId);
   }, [fetchIssues, storeType, viewId]);
 
-  useEffect(() => {
-    initGantt();
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- once per mount, by design
-  }, []);
+  // ARRIBADA FIX: a layout effect, so the reset lands before the chart's own mount
+  // effects instead of after them (upstream: useEffect). See use-init-gantt.
+  useInitGanttBeforeChart(initGantt);
 
   const issuesIds = (issues.groupedIssueIds?.[ALL_ISSUES] as string[]) ?? NO_IDS;
 

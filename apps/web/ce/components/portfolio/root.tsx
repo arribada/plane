@@ -20,6 +20,7 @@ import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { useUser } from "@/hooks/store/user";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import { useInitGanttBeforeChart } from "@/plane-web/components/gantt-chart/use-init-gantt";
 import { GanttColorScaleProvider } from "@/plane-web/components/gantt-chart/color-scale";
 import { GanttLegend, type TLegendMark } from "@/plane-web/components/gantt-chart/legend";
 import { isDarkSurface, unsetColor } from "@/plane-web/components/gantt-chart/palette";
@@ -56,10 +57,9 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
   // is unchanged.
   const dark = isDarkSurface();
 
-  useEffect(() => {
-    initGantt();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Before the chart's own mount effects, or the weeks it draws and the start date
+  // the store keeps disagree (Oct 2026 followed by Jun 2026); see use-init-gantt.
+  useInitGanttBeforeChart(initGantt);
 
   useEffect(() => {
     portfolio.setMeUserId(currentUser?.id ?? null);

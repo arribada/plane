@@ -88,7 +88,11 @@ jobs:
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
-          # 735 is MEASURED on 2026-09-28 (the External edits switch: the
+          # 739 is MEASURED on 2026-10-19 (use-init-gantt.test.tsx, 4 tests: the
+          # timeline that jumped from Oct 2026 to Jun 2026), with this exact
+          # command on the committed tree, 739 under both zones below.
+          #
+          # 735 was MEASURED on 2026-09-28 (the External edits switch: the
           # governance test file went from 9 to 18), with this exact command on
           # the committed tree. The history of the number follows.
           #
@@ -121,8 +125,8 @@ jobs:
           #
           # If a fourth pass lands on top of this one, MEASURE AGAIN rather than
           # adding the numbers up.
-          if [ "$N" -lt 735 ]; then
-            echo "::error::only $N web tests collected, expected at least 735 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          if [ "$N" -lt 739 ]; then
+            echo "::error::only $N web tests collected, expected at least 739 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
           for ZONE in America/Los_Angeles Pacific/Auckland; do

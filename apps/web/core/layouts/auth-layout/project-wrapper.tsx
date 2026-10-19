@@ -5,7 +5,7 @@
  */
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { observer } from "mobx-react";
 import useSWR from "swr";
 // plane imports
@@ -37,6 +37,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import { useProjectView } from "@/hooks/store/use-project-view";
 import { useUser, useUserPermissions } from "@/hooks/store/user";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
+import { useInitGanttBeforeChart } from "@/plane-web/components/gantt-chart/use-init-gantt";
 
 interface IProjectAuthWrapper {
   workspaceSlug: string;
@@ -74,10 +75,9 @@ export const ProjectAuthWrapper = observer(function ProjectAuthWrapper(props: IP
   const currentProjectRole = getProjectRoleByWorkspaceSlugAndProjectId(workspaceSlug, projectId);
   const isWorkspaceAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, workspaceSlug);
   // Initialize module timeline chart
-  useEffect(() => {
-    initGantt();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ARRIBADA FIX: a layout effect, so the reset lands before a module chart's own
+  // mount effects instead of after them (upstream: useEffect). See use-init-gantt.
+  useInitGanttBeforeChart(initGantt);
 
   // fetching project details
   const { isLoading: isProjectDetailsLoading, error: projectDetailsError } = useSWR(

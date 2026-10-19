@@ -17,6 +17,7 @@ import { useUser } from "@/hooks/store/user";
 import { useTimeLineChart } from "@/hooks/use-timeline-chart";
 import { PortfolioBar } from "@/plane-web/components/portfolio/bar";
 import { usePortfolio } from "@/plane-web/hooks/store/use-portfolio";
+import { useInitGanttBeforeChart } from "@/plane-web/components/gantt-chart/use-init-gantt";
 import { MyTimelineSidebar } from "./my-timeline-sidebar";
 import { MyTimelineToolbar, type TTimelineGroupBy } from "./my-timeline-toolbar";
 
@@ -46,10 +47,8 @@ export const MyTimelineRoot = observer(function MyTimelineRoot() {
   const { initGantt } = useTimeLineChart(GANTT_TIMELINE_TYPE.PROJECT);
   const [groupBy, setGroupBy] = useState<TTimelineGroupBy>("project");
 
-  useEffect(() => {
-    initGantt();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Before the chart's own mount effects; see use-init-gantt.
+  useInitGanttBeforeChart(initGantt);
 
   useEffect(() => {
     portfolio.setMeUserId(currentUser?.id ?? null);

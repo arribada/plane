@@ -16,7 +16,6 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
-import { NARROW_BLOCK_PX } from "@/components/gantt-chart/constants";
 import { useTimeLineChartStore } from "@/hooks/use-timeline-chart";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { ganttLinking } from "@/plane-web/store/gantt-linking";
@@ -67,7 +66,6 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
   );
 
   const source = store.linkingSourceId;
-  const narrow = (store.getBlockById(blockId)?.position?.width ?? Number.POSITIVE_INFINITY) < NARROW_BLOCK_PX;
   const isSource = source === blockId;
   const isCandidate = !!source && source !== blockId;
 
@@ -211,18 +209,17 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
             ? "Click to cancel"
             : "Link: this item depends on the selected one"
       }
-      // On a short bar the handle steps fully outside it. At z-20 it sits above
-      // the move area, so half of it overlapping a twelve-pixel bar left nothing
-      // to grab — the bar could not be dragged at all at the coarser scales.
+      // Outside the bar, beyond the resize grip, on every bar. It used to straddle
+      // the bar's edge at z-20 with a ~44px hit area centred there, which covered
+      // the 12px resize grip (z-6) completely: a press meant to drag a start or
+      // end date always armed a dependency instead. The dot now spans 14-26px out
+      // from the edge and its enlarged hit area grows outward and vertically only,
+      // so nothing of it comes within 14px of the edge: the grip owns that, +/-6px
+      // on a wide bar, 0-12px outside a short one (HANDLE_WIDTH, NARROW_BLOCK_PX).
       className={cn(
         "shadow absolute top-1/2 z-20 size-3 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-2 border-white transition-opacity hover:opacity-100",
-        // The 12px dot is far below a tappable target. The ::after overlay grows
-        // the hit area to ~44px without taking any layout, so the bar-edge
-        // offsets below stay visually identical and pointer capture is unaffected
-        // (the press still lands on this same button). Same pattern the subtask
-        // and milestone toggles use.
-        "after:absolute after:-inset-4 after:content-['']",
-        narrow ? (side === "right" ? "-right-3" : "-left-3") : side === "right" ? "-right-1.5" : "-left-1.5",
+        "after:absolute after:-inset-y-4 after:content-['']",
+        side === "right" ? "-right-[26px] after:-right-4 after:left-0" : "-left-[26px] after:right-0 after:-left-4",
         {
           "bg-blue-500 ring-blue-300 opacity-100 ring-2": isSource,
           "bg-success-primary opacity-100": isCandidate,

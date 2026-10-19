@@ -5,12 +5,13 @@
  */
 
 import { observer } from "mobx-react";
+import { Diamond } from "lucide-react";
 import { useParams } from "next/navigation";
 // plane imports
 import { Popover } from "@plane/propel/popover";
 import { Tooltip } from "@plane/propel/tooltip";
 import { ControlLink } from "@plane/ui";
-import { findTotalDaysInRange, generateWorkItemLink } from "@plane/utils";
+import { findTotalDaysInRange, generateWorkItemLink, renderFormattedDate } from "@plane/utils";
 // components
 import { GANTT_SIDEBAR_COLLAPSED_WIDTH } from "@/components/gantt-chart/constants";
 // hooks
@@ -29,7 +30,9 @@ import { IssueStats } from "@/plane-web/components/issues/issue-layouts/issue-st
 import { barLook } from "@/plane-web/components/gantt-chart/bar-appearance";
 import { useGanttColorScale } from "@/plane-web/components/gantt-chart/color-scale";
 import { CANCELLED_GLYPH, cancelledFill, completedFill, DONE_GLYPH } from "@/plane-web/components/gantt-chart/palette";
+import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
 import { useProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
+import { MILESTONE_KIND_LABEL } from "@/plane-web/components/issues/milestone/kinds";
 import { WorkItemPreviewCard } from "../../preview-card";
 import { getBlockViewDetails } from "../utils";
 import type { GanttStoreType } from "./base-gantt-root";
@@ -84,6 +87,11 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
   // above it: the fill was only ever visible through the 50% veil that used to
   // cover every bar, and removing that veil made it invisible outright.
   const percent = useProjectProgress(issueId);
+  // ARRIBADA FIX: a marked deliverable that spans several days drew as an ordinary
+  // bar — the overlay's diamond is for one-day items only — so nothing on the chart
+  // said "this is a delivery". The same per-project fetch the sidebar marker uses.
+  const milestones = useProjectMilestones(workspaceSlug, issueDetails?.project_id ?? undefined);
+  const mark = milestones[issueId];
   /**
    * Work that has left the plan, drawn distinctly — and only when the reader has
    * asked for it.
@@ -177,33 +185,43 @@ export const IssueGanttBlock = observer(function IssueGanttBlock(props: Props) {
                 cramped, overlapping text that reads as a rendering fault. Let the diamond own the
                 name; the bar draws nothing. */}
             {!look.milestone && (
-            <div
-              className={
-                showCancelled
-                  ? // No fill left to read against, so the label takes the
-                    // ordinary text token — the one pairing this product has
-                    // already contrast-checked against both surfaces — and the
-                    // line through it is the channel that says "cancelled"
-                    // outright rather than by inference.
-                    "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13 text-primary line-through decoration-1"
-                  : "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
-              }
-              // Chosen against the bar's own fill, done or not: the hatch keeps the
-              // bar's own colour, so the contrast decision is the same one. The
-              // `look.done ? undefined` that used to be here existed for the veil.
-              style={{ left: `${sidebarPaneWidth}px`, color: showCancelled ? undefined : look.text }}
-            >
-              {/* The glyph, not only the texture. A hatch is invisible on a
+              <div
+                className={
+                  showCancelled
+                    ? // No fill left to read against, so the label takes the
+                      // ordinary text token — the one pairing this product has
+                      // already contrast-checked against both surfaces — and the
+                      // line through it is the channel that says "cancelled"
+                      // outright rather than by inference.
+                      "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13 text-primary line-through decoration-1"
+                    : "sticky w-auto flex-1 truncate overflow-hidden px-2.5 py-1 text-13"
+                }
+                // Chosen against the bar's own fill, done or not: the hatch keeps the
+                // bar's own colour, so the contrast decision is the same one. The
+                // `look.done ? undefined` that used to be here existed for the veil.
+                style={{ left: `${sidebarPaneWidth}px`, color: showCancelled ? undefined : look.text }}
+              >
+                {/* The glyph, not only the texture. A hatch is invisible on a
                   three-day bar and gone entirely in a greyscale print — and a ✕
                   says the opposite thing from a ✓, which is why cancelled work
                   stopped sharing the tick. */}
-              {showCancelled ? (
-                <span aria-hidden>{CANCELLED_GLYPH} </span>
-              ) : (
-                showDone && <span aria-hidden>{DONE_GLYPH} </span>
-              )}
-              {issueDetails?.name}
-            </div>
+                {showCancelled ? (
+                  <span aria-hidden>{CANCELLED_GLYPH} </span>
+                ) : (
+                  showDone && <span aria-hidden>{DONE_GLYPH} </span>
+                )}
+                {mark && (
+                  <span
+                    className="mr-1 inline-flex align-[-1px]"
+                    title={`${MILESTONE_KIND_LABEL[mark.kind]}${
+                      issueDetails?.target_date ? ` — due ${renderFormattedDate(issueDetails.target_date)}` : ""
+                    }`}
+                  >
+                    <Diamond className="size-3 fill-current" aria-label={MILESTONE_KIND_LABEL[mark.kind]} />
+                  </span>
+                )}
+                {issueDetails?.name}
+              </div>
             )}
             {isEpic && (
               <IssueStats

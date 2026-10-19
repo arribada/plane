@@ -143,3 +143,25 @@ describe("push dependents says why it did nothing", () => {
     expect(portfolioToolbar).toContain("PushDependentsUnavailable");
   });
 });
+
+describe("the dependency dot leaves the resize grip alone", () => {
+  // The dot straddled the bar's edge at z-20 with a hit area grown 16px on every
+  // side, so it covered the 12px resize grip (z-6) entirely: pressing an edge to
+  // drag a date armed a dependency instead. Geometry from the class names, since
+  // jsdom has no layout.
+  const offset = (side: "left" | "right") => {
+    const m = dependencyHandle.match(new RegExp(`"-${side}-\\[(\\d+)px\\]`));
+    return m ? Number(m[1]) : NaN;
+  };
+
+  it("sits wholly beyond the widest the grip reaches outside a bar", () => {
+    // size-3 = 12px dot; the grip reaches HANDLE_WIDTH (12px) outside a short bar.
+    for (const side of ["left", "right"] as const) expect(offset(side) - 12).toBeGreaterThan(12);
+  });
+
+  it("grows its hit area outward and vertically, never back over the edge", () => {
+    expect(dependencyHandle).not.toContain("after:-inset-4");
+    expect(dependencyHandle).toContain('"-left-[26px] after:right-0 after:-left-4"');
+    expect(dependencyHandle).toContain('"-right-[26px] after:-right-4 after:left-0"');
+  });
+});

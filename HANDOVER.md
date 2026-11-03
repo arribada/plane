@@ -15,6 +15,49 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
+> **2026-11-03, measured on the running system: backend `.150`, frontend `.149`.**
+>
+> |                                    | Image                                                 | Id             | Commit       |
+> | ---------------------------------- | ----------------------------------------------------- | -------------- | ------------ |
+> | backend (api, worker, beat-worker) | `arribada/plane-backend:v1.3.1-arribada.150`          | `b00da3f9598a` | `4574f21783` |
+> | frontend                           | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.149` | `a523eb3680eb` | `3340de05a9` |
+>
+> Ids from `docker inspect` on the containers; OCI revision labels match. Frontend from CI run
+> `41659415706`. **No migration** (latest `plane.arribada` migration is still `0047`), so no
+> pre-deploy dump was taken. Rollback: backend `.149` (`b580f753899a`, same feature without the
+> throttle fix) or `.146` (`17ad038142fc`, before the feature); frontend `.148`
+> (`e3e738bed758`). All on the disk.
+>
+> **What it is: the wiki project template, linked both ways (Geoffrey, 2026-11-03).** The wiki
+> (docs.arribada.org) can now create a project's pages from a template whose code is the Plane
+> identifier; Plane is the other half.
+>
+> - `apps/api/plane/arribada/wiki_projects.py`. `WikiProjectsEndpoint`
+>   (`/api/arribada/workspaces/<slug>/wiki-projects/`) is called **by the wiki server**,
+>   authenticated by the header `X-Wiki-Secret` = env `WIKI_PROJECT_LINK_SECRET` (wired in
+>   `docker-compose.plane.yml`, value in `.env.plane`, the same value as the wiki's
+>   `projectLinks.secret`). GET lists projects (identifier, name, url, wiki_node_id, archived);
+>   POST `mode=create` creates a project (default states, views on, `external_source
+arribada-wiki`), `mode=link` links an existing one; both write `ProjectWikiDoc`. A project
+>   already linked to another wiki page is refused, never re-pointed.
+> - `ProjectWikiParentsEndpoint` / `ProjectWikiCreateEndpoint` are **session** endpoints
+>   (project ADMIN/MEMBER) behind the **Create the wiki project** button of the Pages panel
+>   (`ce/components/pages/wiki-project-create.tsx`, `wiki-links-panel.tsx`): they call the
+>   wiki's `/client/v1/project-links/{parents,projects}` with `x-project-secret`.
+> - `.150` (`4574f21`): the endpoint is `AllowAny` + secret, so it fell under the anonymous
+>   throttle (30/min). Aligning 28 wiki projects in a row hit 429s and missed links.
+>   `_AnonUnlessWikiSecret` exempts a caller holding the right secret; a wrong or missing
+>   secret is still throttled (two locmem-cache tests, both directions).
+>
+> Verified: backend suite 746/746, floor 744 -> 746, measured; served chunk
+> `wiki-links-panel-Tb5WfM3Z.js` fetched through the public domain is byte-identical to the
+> image's. Used for real by the wiki: its task sync now matches 52 of the 53 Plane projects by
+> code (was 51 by name), and the alignment linked 7 of 8 template projects (the eighth, REEFP, failed on
+> the wiki side: no Overview page; fixed in the wiki, not yet deployed there).
+> **Nobody has pressed "Create the wiki project" in a browser**: Plane's UI cannot be
+> authenticated headless (see the Plane browser-testing note); the endpoints were exercised
+> through the API only.
+
 > **2026-10-19, measured on the running system: frontend `.148`, backend still `.146`.**
 >
 > Frontend `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.148`, id `e3e738bed758`, commit

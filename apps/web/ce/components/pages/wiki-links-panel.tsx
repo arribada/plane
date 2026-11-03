@@ -33,6 +33,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 import { githubSyncToast } from "@/plane-web/components/github-triage/sync-toast";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TDriveLink, TProjectDocs } from "@/plane-web/types/arribada";
+import { WikiProjectCreate } from "./wiki-project-create";
 
 const WIKI_BASE = "https://docs.arribada.org";
 const EMPTY: TProjectDocs = {
@@ -69,7 +70,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
   const service = useMemo(() => new ArribadaService(), []);
   const { allowPermissions } = useUserPermissions();
   const [docs, setDocs] = useState<TProjectDocs>(EMPTY);
-  const [editing, setEditing] = useState<"wiki" | "drive" | "chat" | "github" | null>(null);
+  const [editing, setEditing] = useState<"wiki" | "create-wiki" | "drive" | "chat" | "github" | null>(null);
   const [draftDoc, setDraftDoc] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDrive, setDraftDrive] = useState("");
@@ -149,6 +150,8 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
     void persist({ github_repo_urls: repos.filter((u) => u !== url) });
   };
 
+  // Bumped after the wiki project is created, to read back the link it stored.
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     if (workspaceSlug && projectId) {
@@ -170,7 +173,7 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, service]);
+  }, [workspaceSlug, projectId, service, reloadKey]);
 
   const persist = async (data: {
     doc_id?: string;
@@ -265,7 +268,17 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
           emptyRow("Not linked yet — add the wiki page so everyone can find it.")
         )}
         <div className="flex-grow" />
-        {editing === "wiki" ? (
+        {editing === "create-wiki" && workspaceSlug && projectId ? (
+          <WikiProjectCreate
+            workspaceSlug={workspaceSlug.toString()}
+            projectId={projectId.toString()}
+            onCreated={() => {
+              setEditing(null);
+              setReloadKey((key) => key + 1);
+            }}
+            onCancel={() => setEditing(null)}
+          />
+        ) : editing === "wiki" ? (
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={draftTitle}
@@ -294,18 +307,28 @@ export const WikiLinksPanel = observer(function WikiLinksPanel() {
           </div>
         ) : (
           editable && (
-            <button
-              type="button"
-              onClick={() => {
-                setDraftDoc(docs.doc_id ?? "");
-                setDraftTitle(docs.title ?? "");
-                setEditing("wiki");
-              }}
-              className={editBtn}
-            >
-              {wikiLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
-              {wikiLink ? "Change" : "Add link"}
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Only while the project has no wiki page: creating a second set
+                  of pages would split its documentation in two. */}
+              {!wikiLink && (
+                <button type="button" onClick={() => setEditing("create-wiki")} className={editBtn}>
+                  <BookOpen className="size-3" />
+                  Create the wiki project
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftDoc(docs.doc_id ?? "");
+                  setDraftTitle(docs.title ?? "");
+                  setEditing("wiki");
+                }}
+                className={editBtn}
+              >
+                {wikiLink ? <Pencil className="size-3" /> : <Plus className="size-3" />}
+                {wikiLink ? "Change" : "Add link"}
+              </button>
+            </div>
           )
         )}
       </div>

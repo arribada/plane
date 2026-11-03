@@ -5,6 +5,7 @@
 from django.urls import path
 
 from .mcp import MCPEndpoint, MCPHealthEndpoint
+from .wiki_projects import ProjectWikiCreateEndpoint, ProjectWikiParentsEndpoint, WikiProjectsEndpoint
 
 from .views import (
     ProjectProcurementDecisionEndpoint,
@@ -276,6 +277,21 @@ urlpatterns = [
         "workspaces/<str:slug>/team-sync/",
         TeamSyncEndpoint.as_view(),
         name="arribada-team-sync",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki-projects/",
+        WikiProjectsEndpoint.as_view(),
+        name="arribada-wiki-projects",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/wiki-project/",
+        ProjectWikiCreateEndpoint.as_view(),
+        name="arribada-project-wiki-project",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/wiki-project/parents/",
+        ProjectWikiParentsEndpoint.as_view(),
+        name="arribada-project-wiki-project-parents",
     ),
     path(
         "workspaces/<str:slug>/workload/",

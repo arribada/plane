@@ -27,6 +27,7 @@ import type {
   TProjectBudget,
   TDriveLink,
   TProjectDocs,
+  TWikiProjectParent,
   TProcurementRequest,
   TProjectExpense,
   TCurrencySettings,
@@ -350,6 +351,28 @@ export class ArribadaService extends APIService {
     }
   ): Promise<TProjectDocs> {
     return this.put(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-doc/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  // The wiki missions and product lines this project's pages can be created
+  // under (the wiki's project template). Relayed by the Plane server, which
+  // holds the secret shared with the wiki.
+  async getWikiProjectParents(workspaceSlug: string, projectId: string): Promise<TWikiProjectParent[]> {
+    return this.get(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-project/parents/`)
+      .then((response) => (response?.data?.parents ?? []) as TWikiProjectParent[])
+      .catch(rethrow);
+  }
+
+  // Creates this project's pages on the wiki from its template and links them.
+  async createWikiProject(
+    workspaceSlug: string,
+    projectId: string,
+    parentId: string
+  ): Promise<{ wiki_node_id: string; wiki_url: string | null }> {
+    return this.post(`/api/arribada/workspaces/${workspaceSlug}/projects/${projectId}/wiki-project/`, {
+      parent_id: parentId,
+    })
       .then((response) => response?.data)
       .catch(rethrow);
   }

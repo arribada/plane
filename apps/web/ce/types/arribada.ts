@@ -112,6 +112,15 @@ export type TProjectDocs = {
   github_repo_urls: string[];
 };
 
+// A wiki mission or product line a project's pages can be created under.
+export type TWikiProjectParent = {
+  id: string;
+  spaceId: string;
+  name: string;
+  depth: number;
+  path: string;
+};
+
 // Someone on a project's roster, with the disciplines they cover. Plane's own
 // ProjectMember.role is a permission level (admin/member/guest), never a job
 // function, so the roster is a separate list that can also hold people who have

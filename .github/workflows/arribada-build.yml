@@ -267,6 +267,10 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
+              # 744 is MEASURED on 2026-11-03: this exact suite, candidate code for the
+              # wiki project link (test_wiki_projects.py, 19 tests), against a throwaway
+              # Postgres on the droplet with no Redis: 744 collected, 744 passed.
+              #
               # 725 is MEASURED on 2026-10-07: this exact suite, candidate code for the
               # past-sprint change, against a throwaway Postgres on the droplet: 725
               # collected (703 passed; the 22 others are test_mcp_oauth, which hits its
@@ -302,8 +306,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 725 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 725 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 744 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 744 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

@@ -14,6 +14,8 @@ Run explicitly: `python -m pytest plane/arribada/test_wiki_projects.py`
 """
 
 import pytest
+from django.core.cache import cache
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -296,3 +298,30 @@ def test_the_wiki_missions_are_listed_for_a_member(money_project, fake_wiki):
     answer = money_project["clients"]["member"].get(url)
     assert answer.status_code == 200
     assert answer.json()["parents"][0]["name"] == "Mission Fisheries"
+
+
+# --- throttling ---------------------------------------------------------------
+
+LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+
+@override_settings(CACHES=LOCMEM)
+def test_the_wiki_is_not_held_to_the_anonymous_rate(money_project, secret, wiki):
+    """Aligning every project lists Plane's projects once per project.
+
+    The anonymous rate is 30 a minute; with a cache that counts (the test run
+    has no Redis, so this one is in memory) the 31st list used to be a 429.
+    """
+    cache.clear()
+    codes = [wiki.get(_url(money_project)).status_code for _ in range(40)]
+    assert codes == [200] * 40
+
+
+@override_settings(CACHES=LOCMEM)
+def test_a_caller_without_the_secret_is_still_throttled(money_project, secret):
+    cache.clear()
+    stranger = APIClient()
+    stranger.credentials(HTTP_X_WIKI_SECRET="not-it")
+    codes = [stranger.get(_url(money_project)).status_code for _ in range(35)]
+    assert codes[:30] == [401] * 30
+    assert 429 in codes[30:]

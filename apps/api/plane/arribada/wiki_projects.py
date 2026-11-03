@@ -31,6 +31,7 @@ from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from plane.app.permissions import ROLE, allow_permission
 from plane.app.serializers import ProjectSerializer
@@ -52,6 +53,28 @@ NODE_ID_PATTERN = re.compile(r"^[a-z0-9]{20,64}$")
 
 def _secret():
     return os.environ.get("WIKI_PROJECT_LINK_SECRET") or ""
+
+
+def _secret_given(request):
+    secret = _secret()
+    given = request.headers.get("X-Wiki-Secret") or ""
+    return bool(secret) and hmac.compare_digest(given.encode(), secret.encode())
+
+
+class _AnonUnlessWikiSecret(AnonRateThrottle):
+    """The anonymous rate (30 a minute) for anyone but the wiki server.
+
+    Without a session every caller here is anonymous, so the wiki aligning
+    28 projects ran into the limit a third of the way through: the list it
+    reads first came back 429, the wiki took Plane for unreachable, and the
+    projects it should have linked were left unlinked. A caller holding the
+    256-bit secret is not throttled; a caller without it still is.
+    """
+
+    def allow_request(self, request, view):
+        if _secret_given(request):
+            return True
+        return super().allow_request(request, view)
 
 
 def _project_url(slug, project):
@@ -91,13 +114,12 @@ class WikiProjectsEndpoint(BaseAPIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [_AnonUnlessWikiSecret]
 
     def _refusal(self, request):
-        secret = _secret()
-        if not secret:
+        if not _secret():
             return Response({"error": "not_configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        given = request.headers.get("X-Wiki-Secret") or ""
-        if not hmac.compare_digest(given.encode(), secret.encode()):
+        if not _secret_given(request):
             return Response({"error": "unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
         return None
 

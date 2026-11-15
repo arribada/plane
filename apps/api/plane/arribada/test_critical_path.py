@@ -244,3 +244,107 @@ def test_workspace_endpoint_carries_the_same_diagnostics(money_project):
     assert response.status_code == 200, response.data
     assert response.data["issue_ids"] == []
     assert response.data["diagnostics"]["status"] == "no_dependencies"
+
+
+# --- start-to-start links bound the START, not the finish ---------------------
+
+
+def test_a_start_to_start_predecessor_with_a_day_in_hand_is_not_critical():
+    """The case that was measured: A 1–18 Sep, B start_after A, B 2 Sep–30 Oct.
+
+    B asks one thing of A — that A has STARTED by the day B starts. The backward
+    pass bounded A's latest FINISH by B's latest start minus one day, as if the
+    link were finish-to-start, and reported A critical with zero float. A can
+    slip exactly one working day before B's start moves, and that is the number.
+    """
+    issues = {
+        "A": {"start": D(2026, 9, 1), "target": D(2026, 9, 18)},
+        "B": {"start": D(2026, 9, 2), "target": D(2026, 10, 30)},
+    }
+    rels = [{"issue_id": "B", "related_issue_id": "A", "relation_type": "start_after"}]
+    slack = slack_for_issues(issues, rels)
+
+    assert slack["B"] == {"free": 0, "total": 0, "critical": True}
+    assert slack["A"]["free"] == 1
+    assert slack["A"]["total"] == 1
+    assert slack["A"]["critical"] is False, "an SS predecessor was bounded as if it were FS"
+
+
+def test_a_start_to_start_predecessor_that_cannot_slip_is_critical():
+    """And the guard on the fix: when the two starts coincide and the successor
+    is at its own latest, the predecessor really is critical, still."""
+    issues = {
+        "A": {"start": D(2026, 9, 1), "target": D(2026, 9, 18)},
+        "B": {"start": D(2026, 9, 1), "target": D(2026, 10, 30)},
+    }
+    rels = [{"issue_id": "B", "related_issue_id": "A", "relation_type": "start_after"}]
+    slack = slack_for_issues(issues, rels)
+
+    assert slack["A"] == {"free": 0, "total": 0, "critical": True}
+    assert slack["B"]["critical"] is True
+
+
+def test_start_before_is_the_same_link_from_the_other_end():
+    """`start_before` on A is `start_after` on B. One edge, two spellings."""
+    issues = {
+        "A": {"start": D(2026, 9, 1), "target": D(2026, 9, 18)},
+        "B": {"start": D(2026, 9, 2), "target": D(2026, 10, 30)},
+    }
+    rels = [{"issue_id": "A", "related_issue_id": "B", "relation_type": "start_before"}]
+    assert slack_for_issues(issues, rels)["A"] == {"free": 1, "total": 1, "critical": False}
+
+
+def test_an_ss_predecessor_still_cannot_finish_past_the_horizon():
+    """The SS bound is on the start; the project's last day still bounds the end.
+
+    A long task whose SS successor starts late would otherwise be told it may
+    finish after the project does.
+    """
+    issues = {
+        "A": {"start": D(2026, 9, 1), "target": D(2026, 10, 30)},  # 44 working days
+        "B": {"start": D(2026, 10, 26), "target": D(2026, 10, 30)},
+    }
+    rels = [{"issue_id": "B", "related_issue_id": "A", "relation_type": "start_after"}]
+    slack = slack_for_issues(issues, rels)
+    # B's start could be as late as 26 Oct, so by the SS rule alone A could start
+    # on the 26th — but A ends on the project's last day already. The project
+    # end is a successor of every finish, so A's free float is zero too: free
+    # never exceeds total, which an SS-only reading of `free` would have broken.
+    assert slack["A"]["total"] == 0
+    assert slack["A"]["free"] == 0
+    assert slack["A"]["critical"] is True
+
+
+def test_a_finish_to_start_chain_reads_exactly_as_before():
+    """FS figures are published; the SS fix must not move them.
+
+    A→B→C on consecutive weeks, one week between B and C.
+    """
+    issues = {
+        "A": {"start": D(2026, 8, 3), "target": D(2026, 8, 7)},
+        "B": {"start": D(2026, 8, 10), "target": D(2026, 8, 14)},
+        "C": {"start": D(2026, 8, 24), "target": D(2026, 8, 28)},
+    }
+    rels = [
+        {"issue_id": "A", "related_issue_id": "B", "relation_type": "finish_before"},
+        {"issue_id": "B", "related_issue_id": "C", "relation_type": "finish_before"},
+    ]
+    slack = slack_for_issues(issues, rels)
+    assert slack["A"] == {"free": 0, "total": 5, "critical": False}
+    assert slack["B"] == {"free": 5, "total": 5, "critical": False}
+    assert slack["C"] == {"free": 0, "total": 0, "critical": True}
+
+
+def test_a_lag_on_a_link_is_not_float():
+    """The setup planner's "five days after" link. The gap is mandatory, so the
+    predecessor cannot spend it; without the lag the same dates read as five
+    days of slack."""
+    issues = {
+        "A": {"start": D(2026, 8, 3), "target": D(2026, 8, 7)},
+        "B": {"start": D(2026, 8, 17), "target": D(2026, 8, 21)},  # five working days after A
+    }
+    plain = [{"issue_id": "B", "related_issue_id": "A", "relation_type": "blocked_by"}]
+    lagged = [{"issue_id": "B", "related_issue_id": "A", "relation_type": "blocked_by", "lag": 5}]
+
+    assert slack_for_issues(issues, plain)["A"]["total"] == 5
+    assert slack_for_issues(issues, lagged)["A"] == {"free": 0, "total": 0, "critical": True}

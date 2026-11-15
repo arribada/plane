@@ -383,3 +383,42 @@ def test_a_sprint_west_of_greenwich_ends_on_the_day_its_project_says(sprints):
     got = next(r for r in payload["cycles"] if r["cycle_id"] == str(cycle.id))
 
     assert got["end_date"] == "2026-10-30"
+
+
+# --- an item taken OUT of a sprint -------------------------------------------
+#
+# Removing an item from a sprint soft-deletes its CycleIssue row. The count used
+# to go through the issue's multi-valued relation with
+# `issue_cycle__deleted_at__isnull=True`, which dropped that row — and with it the
+# item, which then landed under no key at all. Its money, computed through
+# `CycleIssue.objects` (which hides deleted rows), landed under "Not in any
+# sprint". "0 items · €4,000", on production.
+
+
+def test_an_item_taken_out_of_its_sprint_is_counted_as_unsprinted(sprints):
+    first = sprints["cycle"]("Sprint 1")
+    moved_out = sprints["item"]("Taken out", in_cycle=first)
+    CycleIssue.objects.filter(issue=moved_out).update(deleted_at=timezone.now())
+
+    payload = cost(sprints, labour={None: 4000.0})
+    loose = row(payload, None)
+    assert (loose["items"], loose["labour"]) == (1, 4000.0), (
+        "an item removed from its sprint vanished from the count while its money stayed"
+    )
+    assert row(payload, first.id)["items"] == 0
+
+
+def test_an_item_moved_between_sprints_is_counted_once_in_its_new_sprint(sprints):
+    """The same removal, followed by the usual next step."""
+    first = sprints["cycle"]("Sprint 1")
+    second = sprints["cycle"]("Sprint 2")
+    moved = sprints["item"]("Moved", in_cycle=first)
+    CycleIssue.objects.filter(issue=moved).update(deleted_at=timezone.now())
+    CycleIssue.objects.create(
+        cycle=second, issue=moved, project=sprints["project"], workspace=sprints["workspace"]
+    )
+
+    payload = cost(sprints, labour={second.id: 10.0})
+    assert row(payload, first.id)["items"] == 0
+    assert row(payload, second.id)["items"] == 1
+    assert all(r["cycle_id"] is not None for r in payload["cycles"])

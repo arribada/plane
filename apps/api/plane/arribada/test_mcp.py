@@ -1065,6 +1065,65 @@ def test_lead_only_edits_refuses_a_member_holding_the_grant(world):
     assert _item(world).priority == "high"
 
 
+def test_edit_others_off_refuses_a_member_on_somebody_elses_item(world):
+    """`allow_edit_others` off: the agent is refused exactly where its user would
+    be refused in the gantt — on an item they are not assigned to — and admitted
+    the moment they are. The same product answer `plan_guard.py` gives a person."""
+    _open(world, allow_edit_others=False)
+    secret = _plan_token(world, world["member"])
+    message, error = call(
+        client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"}
+    )
+    assert error
+    assert "own assignees" in message
+    assert _item(world).target_date is None
+
+    # A non-plan field is still theirs to change.
+    payload, error = call(client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "priority": "high"})
+    assert not error, payload
+
+    # Assigned, the same call lands.
+    IssueAssignee.objects.create(
+        issue=_item(world), assignee=world["member"], project=world["projects"]["TAG"],
+        workspace=world["workspace"],
+    )
+    payload, error = call(
+        client_for(secret), "update_work_item", {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"}
+    )
+    assert not error, payload
+    assert str(_item(world).target_date) == "2027-02-19"
+
+
+def test_edit_others_off_still_admits_the_lead_and_refuses_a_parent_that_is_not_theirs(world):
+    _open(world, allow_edit_others=False)
+    # The lead may change anybody's item.
+    Project.objects.filter(id=world["projects"]["TAG"].id).update(project_lead=world["member"])
+    payload, error = call(
+        client_for(_plan_token(world, world["member"])),
+        "update_work_item",
+        {"project": "TAG", "item": "TAG-1", "target_date": "2027-02-19"},
+    )
+    assert not error, payload
+    Project.objects.filter(id=world["projects"]["TAG"].id).update(project_lead=None)
+
+    # A new item filed UNDER somebody else's item is a plan write on that parent.
+    message, error = call(
+        client_for(_plan_token(world, world["member"])),
+        "create_work_item",
+        {"project": "TAG", "name": "Under the antenna", "parent": "TAG-1"},
+    )
+    assert error
+    assert "own assignees" in message
+    assert not Issue.objects.filter(name="Under the antenna").exists()
+    # Without a parent the new item is nobody's yet, so it is allowed.
+    payload, error = call(
+        client_for(_plan_token(world, world["member"])),
+        "create_work_item",
+        {"project": "TAG", "name": "Beside the antenna", "target_date": "2027-02-19"},
+    )
+    assert not error, payload
+
+
 def test_lead_only_edits_admits_the_lead(world):
     """The service half of the test above, for a member who IS the lead."""
     _open(world, lead_only_edits=True)

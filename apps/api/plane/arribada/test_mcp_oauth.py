@@ -899,3 +899,45 @@ def test_the_plan_survives_a_refresh(client, world):
     assert live.count() == 1
     assert live.get().allow_plan is True
     assert oauth.SCOPE_PLAN in refreshed.json()["scope"].split()
+
+
+def test_a_failed_mint_leaves_the_old_refresh_token_usable(client, world, monkeypatch):
+    """Rotation is ONE step: revoke the old row and mint the new one, or neither.
+
+    `rotate` claims the old row with a conditional UPDATE and then mints. As two
+    statements with nothing around them, a failure in the mint — a dropped
+    connection, a constraint — left the old refresh token revoked with no
+    successor: the connector's only credential dead, and a person re-authorising
+    it to get it back. Under `transaction.atomic()` the failed mint rolls the
+    claim back, so the retry the client makes with the same token succeeds.
+    """
+    registered, body = _issued(client, world)
+    row = MCPOAuthClient.objects.get(client_id=registered["client_id"])
+    real_issue_tokens = oauth.issue_tokens
+    attempts = []
+
+    def flaky(*args, **kwargs):
+        # Fails the first time only, so the retry below is the real thing.
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("the database went away mid-rotation")
+        return real_issue_tokens(*args, **kwargs)
+
+    monkeypatch.setattr(oauth, "issue_tokens", flaky)
+
+    with pytest.raises(RuntimeError):
+        oauth.rotate(body["refresh_token"], row)
+
+    old = MCPToken.objects.get(refresh_hash=oauth.hash_secret(body["refresh_token"]))
+    assert old.revoked_at is None, "the mint failed and the old refresh token was revoked anyway"
+
+    retried = client.post(
+        "/oauth/token",
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": body["refresh_token"],
+            "client_id": registered["client_id"],
+        },
+    )
+    assert retried.status_code == 200, retried.content
+    assert retried.json()["refresh_token"] != body["refresh_token"]

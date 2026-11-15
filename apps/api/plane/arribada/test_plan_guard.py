@@ -36,6 +36,13 @@ dependencies and sprint membership are upstream viewsets. Those are covered by
 file are the only thing standing between that middleware and an upstream rename
 turning it into decoration.
 
+THE SECOND SWITCH, AND THE SECOND DOOR. `allow_edit_others` off means a member
+changes only the items they are assigned to; it is the same middleware, the same
+body rule, and a check that EVERY targeted item is the caller's own. And `/api/v1/`
+authenticates inside the view, after the middleware has run, so both rules are
+asked again from `BaseAPIView.initial()` — the tests at the very end send nothing
+but an API key, because that is the request the middleware cannot see.
+
 Needs a database.
 """
 
@@ -48,9 +55,19 @@ from rest_framework.test import APIClient
 
 from plane.app.permissions import ROLE
 from plane.arribada.models import ProjectSchedule, ProjectTeamMember
-from plane.arribada.plan_guard import GUARDED
+from plane.arribada.plan_guard import GUARDED, OWN_ITEMS_LINE, TARGETS
 from plane.arribada.urls import urlpatterns
-from plane.db.models import Issue, Project, ProjectMember, State, User, Workspace, WorkspaceMember
+from plane.db.models import (
+    APIToken,
+    Issue,
+    IssueAssignee,
+    Project,
+    ProjectMember,
+    State,
+    User,
+    Workspace,
+    WorkspaceMember,
+)
 
 WRITE_METHODS = ("post", "patch", "put", "delete")
 
@@ -70,6 +87,9 @@ def no_broker(monkeypatch):
         "plane.app.views.issue.base",
         "plane.app.views.issue.sub_issue",
         "plane.app.views.issue.relation",
+        # The public API's handlers publish too, and the v1 door is tested below.
+        "plane.api.views.issue",
+        "plane.api.views.cycle",
     ):
         try:
             target = __import__(module, fromlist=["issue_activity"])
@@ -630,10 +650,15 @@ def test_every_guarded_name_is_a_class_that_is_actually_routed():
             if actions:
                 for method in actions:
                     seen.add((cls.__name__, method.upper()))
-            else:
-                for method in ("post", "patch", "put", "delete"):
-                    if hasattr(cls, method):
-                        seen.add((cls.__name__, method.upper()))
+                continue
+            # A plain APIView answers every handler it defines — unless the route
+            # narrowed it with `http_method_names`, which the v1 URLconf does on
+            # every entry. `IssueDetailAPIEndpoint` defines `put` and no route
+            # serves it; an entry for it in the map would be a wish.
+            allowed = (getattr(callback, "view_initkwargs", None) or {}).get("http_method_names")
+            for method in ("post", "patch", "put", "delete"):
+                if hasattr(cls, method) and (allowed is None or method in allowed):
+                    seen.add((cls.__name__, method.upper()))
 
     walk(get_resolver())
 
@@ -643,3 +668,309 @@ def test_every_guarded_name_is_a_class_that_is_actually_routed():
         f"renamed the class or moved the method, and the guard on that route is now doing "
         f"nothing whatsoever. Fix the map — do not delete the entry."
     )
+
+
+def test_every_guarded_route_says_which_items_it_changes():
+    """`TARGETS` is what `allow_edit_others` reads. A guarded route missing from it
+    refuses everything on a project with the switch off — safe, and wrong."""
+    missing = sorted(key for key in GUARDED if key not in TARGETS)
+    assert not missing, f"plan_guard.GUARDED routes with no TARGETS entry: {missing}"
+    stray = sorted(key for key in TARGETS if key not in GUARDED)
+    assert not stray, f"plan_guard.TARGETS names routes GUARDED does not: {stray}"
+
+
+# --- PUT and POST on `IssueViewSet` -------------------------------------------
+
+
+def test_a_member_cannot_move_a_date_through_upstreams_issue_put(governed):
+    """`put: update` is routed on the same URL as the PATCH and runs the same
+    serializer, so a PUT carrying a date was the PATCH guard with the method changed."""
+    url = _issue_url(governed)
+    dated = {"name": "Radio bring-up", "target_date": "2026-12-01"}
+
+    refused = governed["clients"]["member"].put(url, dated, format="json")
+    assert refused.status_code == 403, f"a member rewrote a date with PUT: {refused.status_code}"
+    governed["issue"].refresh_from_db()
+    assert governed["issue"].target_date is None
+
+    served = governed["clients"]["lead"].put(url, dated, format="json")
+    assert served.status_code != 403, f"the lead was refused a PUT: {served.status_code}"
+
+    # A PUT that says nothing about the plan is nobody's business.
+    renamed = governed["clients"]["member"].put(url, {"name": "Radio bring-up, renamed"}, format="json")
+    assert renamed.status_code != 403, f"a member could not rename with PUT: {renamed.status_code}"
+
+
+def test_a_member_cannot_create_a_dated_item_but_still_creates_an_undated_one(governed):
+    url = _upstream(governed, "issues/")
+    member = governed["clients"]["member"]
+
+    dated = member.post(url, {"name": "Dated", "target_date": "2026-12-01"}, format="json")
+    assert dated.status_code == 403, f"a member created a work item that arrived dated: {dated.status_code}"
+    assert not Issue.objects.filter(name="Dated").exists()
+
+    plain = member.post(url, {"name": "Undated"}, format="json")
+    assert plain.status_code == 201, (
+        f"a member could not add an undated item: {plain.status_code} {getattr(plain, 'data', None)}"
+    )
+
+    # The create modal posts its WHOLE form, nulls included. A null is not a date,
+    # and a rule that read it as one would take the New Item button away.
+    modal = member.post(
+        url,
+        {
+            "name": "From the modal",
+            "start_date": None,
+            "target_date": None,
+            "parent_id": None,
+            "cycle_id": None,
+            "module_ids": [],
+            "estimate_point": None,
+        },
+        format="json",
+    )
+    assert modal.status_code == 201, (
+        f"the modal's default payload was refused: {modal.status_code} {getattr(modal, 'data', None)}"
+    )
+
+    lead = governed["clients"]["lead"].post(url, {"name": "Dated by the lead", "target_date": "2026-12-01"}, format="json")
+    assert lead.status_code == 201, f"{lead.status_code} {getattr(lead, 'data', None)}"
+
+
+def test_with_the_setting_off_a_member_creates_a_dated_item(governed):
+    _open_up(governed)
+    answer = governed["clients"]["member"].post(
+        _upstream(governed, "issues/"), {"name": "Dated", "target_date": "2026-12-01"}, format="json"
+    )
+    assert answer.status_code == 201, f"{answer.status_code} {getattr(answer, 'data', None)}"
+
+
+# --- `allow_edit_others`: whose items a member may change ---------------------
+#
+# The second switch. With it OFF, a plan write is refused unless every work item
+# the request changes has the caller among its assignees; the lead and a
+# workspace admin are excepted, as for `lead_only_edits`. Until the middleware
+# enforced it, the switch was honoured by the project gantt's drag grip alone,
+# and the portfolio view and the API let anyone move anyone's item.
+
+
+def _others_off_limits(world):
+    """Switch `allow_edit_others` off — and `lead_only_edits` off with it, so a
+    refusal in these tests can only be the second rule's."""
+    ProjectSchedule.objects.filter(project=world["project"]).update(
+        lead_only_edits=False, allow_edit_others=False
+    )
+
+
+def _assign(world, user, issue=None):
+    IssueAssignee.objects.create(
+        issue=issue or world["issue"],
+        assignee=user,
+        project=world["project"],
+        workspace=world["workspace"],
+    )
+
+
+def _dates_url(world):
+    return reverse("project-issue-dates", kwargs={"slug": world["slug"], "project_id": world["project_id"]})
+
+
+def test_a_member_cannot_date_somebody_elses_item_when_others_are_off_limits(governed):
+    _others_off_limits(governed)
+    answer = governed["clients"]["member"].patch(
+        _issue_url(governed), {"target_date": "2026-12-01"}, format="json"
+    )
+    assert answer.status_code == 403, f"a member dated an item they are not assigned to: {answer.status_code}"
+    assert OWN_ITEMS_LINE in answer.json()["detail"], answer.json()
+    governed["issue"].refresh_from_db()
+    assert governed["issue"].target_date is None, "refused, and the date moved anyway"
+
+
+def test_an_assignee_dates_their_own_item_when_others_are_off_limits(governed):
+    _others_off_limits(governed)
+    _assign(governed, governed["users"]["member"])
+    answer = governed["clients"]["member"].patch(
+        _issue_url(governed), {"target_date": "2026-12-01"}, format="json"
+    )
+    assert answer.status_code < 300, (
+        f"an assignee could not date their own item: {answer.status_code} {getattr(answer, 'data', None)}"
+    )
+    governed["issue"].refresh_from_db()
+    assert str(governed["issue"].target_date) == "2026-12-01"
+
+
+def test_the_lead_and_an_admin_date_anybodys_item_when_others_are_off_limits(governed):
+    _others_off_limits(governed)
+    for label in ("lead", "ws_admin"):
+        answer = governed["clients"][label].patch(
+            _issue_url(governed), {"target_date": "2026-12-01"}, format="json"
+        )
+        assert answer.status_code < 300, f"the {label} was refused somebody else's item: {answer.status_code}"
+
+
+def test_with_others_allowed_a_member_dates_anybodys_item(governed):
+    """The default, which every project in production is on."""
+    _open_up(governed)
+    assert ProjectSchedule.objects.get(project=governed["project"]).allow_edit_others is True
+    answer = governed["clients"]["member"].patch(
+        _issue_url(governed), {"target_date": "2026-12-01"}, format="json"
+    )
+    assert answer.status_code < 300, f"the guard fired with the switch on: {answer.status_code}"
+
+
+def test_a_member_still_moves_the_state_of_somebody_elses_item(governed):
+    """The body rule holds for this switch too: the state is the work, not the plan."""
+    _others_off_limits(governed)
+    answer = governed["clients"]["member"].patch(
+        _issue_url(governed), {"state_id": str(governed["other_state"].id)}, format="json"
+    )
+    assert answer.status_code < 300, f"{answer.status_code} {getattr(answer, 'data', None)}"
+
+
+def test_the_bar_drag_is_the_assignees_when_others_are_off_limits(governed):
+    _others_off_limits(governed)
+    url = _dates_url(governed)
+    payload = {"updates": [{"id": str(governed["issue"].id), "target_date": "2026-12-24"}]}
+
+    refused = governed["clients"]["member"].post(url, payload, format="json")
+    assert refused.status_code == 403, f"a member dragged somebody else's bar: {refused.status_code}"
+    assert OWN_ITEMS_LINE in refused.json()["detail"]
+    governed["issue"].refresh_from_db()
+    assert str(governed["issue"].target_date) != "2026-12-24"
+
+    _assign(governed, governed["users"]["member"])
+    served = governed["clients"]["member"].post(url, payload, format="json")
+    assert served.status_code == 200, f"an assignee could not drag their own bar: {served.status_code}"
+
+    assert governed["clients"]["lead"].post(url, payload, format="json").status_code == 200
+
+
+def test_a_drag_that_touches_one_item_not_yours_is_refused_whole(governed):
+    """EVERY targeted item, not any: one bar of the caller's own does not carry the rest."""
+    _others_off_limits(governed)
+    _assign(governed, governed["users"]["member"])
+    other = Issue.objects.create(
+        name="Somebody else's",
+        project=governed["project"],
+        workspace=governed["workspace"],
+        state=governed["state"],
+        created_by=governed["users"]["lead"],
+    )
+    payload = {
+        "updates": [
+            {"id": str(governed["issue"].id), "target_date": "2026-12-24"},
+            {"id": str(other.id), "target_date": "2026-12-24"},
+        ]
+    }
+    answer = governed["clients"]["member"].post(_dates_url(governed), payload, format="json")
+    assert answer.status_code == 403, answer.status_code
+    other.refresh_from_db()
+    assert other.target_date is None
+
+
+def test_a_sprint_transfer_is_the_leads_when_others_are_off_limits(governed):
+    """Moving a sprint's unfinished items moves every one of them at once."""
+    _others_off_limits(governed)
+    url = _upstream(governed, f"cycles/{uuid.uuid4()}/transfer-issues/")
+    body = {"new_cycle_id": str(uuid.uuid4())}
+
+    answer = governed["clients"]["member"].post(url, body, format="json")
+    assert answer.status_code == 403, answer.status_code
+    assert OWN_ITEMS_LINE in answer.json()["detail"]
+    # The lead reaches the view, which answers about the invented cycle, not the permission.
+    assert governed["clients"]["lead"].post(url, body, format="json").status_code != 403
+
+
+def test_a_new_item_under_somebody_elses_parent_is_refused_when_others_are_off_limits(governed):
+    """A create carrying a parent is a plan write on the parent."""
+    _others_off_limits(governed)
+    url = _upstream(governed, "issues/")
+    member = governed["clients"]["member"]
+    under = {"name": "Sub-task", "parent_id": str(governed["issue"].id)}
+
+    refused = member.post(url, under, format="json")
+    assert refused.status_code == 403, refused.status_code
+    assert OWN_ITEMS_LINE in refused.json()["detail"]
+
+    # An item of their own, dated, with no parent, touches nobody else's and is theirs to add.
+    own = member.post(url, {"name": "Own item", "target_date": "2026-12-01"}, format="json")
+    assert own.status_code == 201, f"{own.status_code} {getattr(own, 'data', None)}"
+
+    _assign(governed, governed["users"]["member"])
+    assert member.post(url, under, format="json").status_code == 201
+
+
+# --- the public API ------------------------------------------------------------
+#
+# `/api/v1/` authenticates with an API key INSIDE the view, after every
+# `process_view` has returned, so the middleware sees AnonymousUser and stands
+# aside — and any member can mint a personal key. The rules are asked again from
+# `BaseAPIView.initial()` (same table, same predicates), and these tests are the
+# only thing that proves that door is wired.
+
+
+def _v1_client(world, label):
+    """A client holding nothing but an API key minted by `label`, like a script would."""
+    token = APIToken.objects.create(
+        user=world["users"][label], workspace=world["workspace"], label=f"{label} key"
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=token.token)
+    return client
+
+
+def _v1_items_url(world):
+    return f"/api/v1/workspaces/{world['slug']}/projects/{world['project_id']}/work-items/"
+
+
+def _v1_issue_url(world):
+    return f"{_v1_items_url(world)}{world['issue'].id}/"
+
+
+def test_the_public_api_honours_lead_only_edits(governed):
+    member, lead = _v1_client(governed, "member"), _v1_client(governed, "lead")
+    url = _v1_issue_url(governed)
+
+    refused = member.patch(url, {"target_date": "2026-12-01"}, format="json")
+    assert refused.status_code == 403, (
+        f"a member's API key moved a date on a lead-only project: {refused.status_code} {refused.content}"
+    )
+    assert "lead" in refused.json()["detail"], refused.json()
+    governed["issue"].refresh_from_db()
+    assert governed["issue"].target_date is None
+
+    renamed = member.patch(url, {"name": "Renamed by key"}, format="json")
+    assert renamed.status_code == 200, f"a member's key could not rename: {renamed.status_code} {renamed.content}"
+
+    served = lead.patch(url, {"target_date": "2026-12-01"}, format="json")
+    assert served.status_code == 200, f"the lead's key was refused: {served.status_code} {served.content}"
+
+
+def test_the_public_api_honours_edit_others(governed):
+    _others_off_limits(governed)
+    member = _v1_client(governed, "member")
+    url = _v1_issue_url(governed)
+
+    refused = member.patch(url, {"target_date": "2026-12-01"}, format="json")
+    assert refused.status_code == 403, refused.content
+    assert OWN_ITEMS_LINE in refused.json()["detail"]
+
+    _assign(governed, governed["users"]["member"])
+    served = member.patch(url, {"target_date": "2026-12-01"}, format="json")
+    assert served.status_code == 200, served.content
+
+
+def test_the_public_api_is_untouched_on_an_ungoverned_project(governed):
+    _open_up(governed)
+    answer = _v1_client(governed, "member").patch(
+        _v1_issue_url(governed), {"target_date": "2026-12-01"}, format="json"
+    )
+    assert answer.status_code == 200, answer.content
+
+
+def test_a_key_cannot_create_a_dated_item_on_a_lead_only_project(governed):
+    member = _v1_client(governed, "member")
+    dated = member.post(_v1_items_url(governed), {"name": "Dated by key", "target_date": "2026-12-01"}, format="json")
+    assert dated.status_code == 403, dated.content
+    plain = member.post(_v1_items_url(governed), {"name": "Undated by key"}, format="json")
+    assert plain.status_code == 201, plain.content

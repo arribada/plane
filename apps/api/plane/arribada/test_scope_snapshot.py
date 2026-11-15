@@ -281,3 +281,47 @@ def test_a_run_the_next_night_adds_a_day_rather_than_replacing_one(money_project
         "the first day was rewritten from today's total — which is the retroactive "
         "reshaping this table exists to prevent"
     )
+
+
+# --- what the row no longer counts --------------------------------------------
+
+
+@freeze_time(TICK)
+def test_an_item_taken_out_of_the_sprint_stops_counting(money_project):
+    """Removing an item from a cycle soft-deletes its `CycleIssue`, and the join
+    through `issue_cycle` applies no manager — so the removed item counted
+    against the cycle for the rest of its life, and the one table that exists to
+    show scope MOVING could not show it shrinking."""
+    cycle = plan_cycle(money_project)
+    kept = put_in(money_project, cycle, name="Kept")
+    dropped = put_in(money_project, cycle, name="Dropped")
+    CycleIssue.objects.filter(cycle=cycle, issue=dropped).update(deleted_at=datetime.now(dt_timezone.utc))
+
+    cycle_scope_snapshot()
+
+    row = CycleScopeSnapshot.objects.get(cycle=cycle, date=DAY)
+    assert row.total == 1, "an item removed from the sprint is still counted in its scope"
+    assert kept.id == Issue.objects.get(id=kept.id).id  # still there, still counted
+
+
+@freeze_time(TICK)
+def test_a_leaked_active_timezone_does_not_move_the_recorded_day(money_project):
+    """`localtime()` reads the active zone, and the active zone is a thread-local
+    that outlives whatever set it (see `_no_leaked_timezone` in conftest.py for
+    the request mixin that sets it and never clears it). At 23:50 UTC on the
+    25th, Auckland is already past noon on the 26th; a run inheriting that zone
+    filed the 25th's figures under the 26th, where the 26th's own run then
+    overwrote them. The task puts itself back in TIME_ZONE before reading the clock."""
+    from django.utils import timezone as dj_timezone
+
+    cycle = plan_cycle(money_project)
+    put_in(money_project, cycle)
+
+    dj_timezone.activate("Pacific/Auckland")
+    try:
+        result = cycle_scope_snapshot()
+    finally:
+        dj_timezone.deactivate()
+
+    assert result["day"] == "2026-10-25"
+    assert days_recorded(cycle) == [DAY], "an inherited zone moved the row to the wrong day"

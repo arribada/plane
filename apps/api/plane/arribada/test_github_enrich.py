@@ -12,6 +12,8 @@ gap somebody can fix. These tests pin the refusals as hard as the matches.
 No database: the mapping is pure, which is why it lives apart from the task.
 """
 
+import pytest
+
 from plane.arribada.github_enrich import (
     cycle_from_milestone,
     discipline_from_labels,
@@ -121,3 +123,58 @@ def test_a_partial_name_does_not_match():
 def test_no_milestone_is_silence():
     assert cycle_from_milestone("", CYCLES) is None
     assert cycle_from_milestone(None, CYCLES) is None
+
+
+# --- whole tokens, not substrings ---------------------------------------------
+#
+# Every hint used to match as a SUBSTRING of the normalised label, and a
+# substring of a label is not what the label says: "cadence" read as cad,
+# "docker" as doc, "updated" as data, "latest" as test, "p10" as p1, "debug" as
+# bug, "highlight" as high and "workflow" as low. Each of those is a label that
+# says nothing about the discipline or priority it set, and a wrong discipline
+# is the failure this module exists to avoid — so each must be silence.
+
+WIDE = VOCAB + ["software", "field ops", "data / science", "project manager"]
+
+
+@pytest.mark.parametrize("label", ["cadence", "docker", "updated", "latest", "happy-path"])
+def test_a_label_that_merely_contains_a_hint_is_silence(label):
+    assert discipline_from_labels([label], WIDE) is None
+
+
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("docs", "project manager"),
+        ("documentation", "project manager"),
+        ("area/docs", "project manager"),
+        ("mechanical", "mechanical"),
+        ("electronics", "hardware engineer"),
+        ("tests", "qa / test"),
+        ("testing", "qa / test"),
+        ("deployment", "field ops"),
+        ("Data :bar_chart:", "data / science"),
+    ],
+)
+def test_the_spelled_out_variants_still_map(label, expected):
+    """Whole tokens cost the stems, so the variants a team actually types are listed."""
+    assert discipline_from_labels([label], WIDE) == expected
+
+
+@pytest.mark.parametrize("label", ["workflow", "debug", "highlight", "p10", "p1000", "lowercase"])
+def test_a_priority_hint_inside_another_word_is_silence(label):
+    assert priority_from_labels([label]) is None
+
+
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("p1", "high"),
+        ("priority: p1", "high"),
+        ("P2-medium", "medium"),
+        ("Priority/High", "high"),
+        ("nice-to-have", "low"),
+    ],
+)
+def test_a_priority_token_still_maps_inside_a_longer_label(label, expected):
+    assert priority_from_labels([label]) == expected

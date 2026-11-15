@@ -446,6 +446,15 @@ CELERY_TASK_TIME_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", 28 * 60)) 
 
 
 CELERY_IMPORTS = (
+    # ARRIBADA FIX: `plane.middleware.logger.APITokenLogMiddleware` posts
+    # `process_logs` for every public-API request made with an API key, and only
+    # the web process imports that module. The worker never did, so it answered
+    # "Received unregistered task" 2,516 times in three days (measured on
+    # 2026-11-15), each with a traceback and the full request body, and the
+    # 30 MB log rotation on the worker kept under two days of real history. The
+    # rows go to `APIActivityLog` (Mongo is not configured here), which
+    # `cleanup_task` already purges past its cutoff.
+    "plane.bgtasks.logger_task",
     # scheduled tasks
     "plane.bgtasks.issue_automation_task",
     "plane.bgtasks.exporter_expired_task",

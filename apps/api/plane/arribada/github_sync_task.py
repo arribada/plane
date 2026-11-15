@@ -179,18 +179,28 @@ def repos_with_open_issues():
     )
 
 
-def _repos_to_sync():
-    """owner/repo set: explicit GITHUB_SYNC_REPOS, else every repo mapped to a project."""
-    from plane.arribada.models import ProjectWikiDoc
-    from plane.arribada.views import _github_url  # reuse the hardened extractor
+def _repos_to_sync(claims=None):
+    """owner/repo set: explicit GITHUB_SYNC_REPOS plus every repo a LIVE project claims.
 
-    # The explicit list ADDS to the mapped ones; it does not replace them.
-    #
-    # It used to return early, which made sense when it was written: nothing was
-    # mapped, so an env var was the only way to name a repo. Now that ten projects
-    # declare 43 repos between them, the early return meant the sync fetched nine
-    # and ignored the rest — so "issues go to the project that linked the repo"
-    # could never fire for a repo that was not also in the variable.
+    The explicit list ADDS to the mapped ones; it does not replace them.
+
+    It used to return early, which made sense when it was written: nothing was
+    mapped, so an env var was the only way to name a repo. Now that ten projects
+    declare 43 repos between them, the early return meant the sync fetched nine
+    and ignored the rest — so "issues go to the project that linked the repo"
+    could never fire for a repo that was not also in the variable.
+
+    The mapped half comes from `_repo_claims`, not from a scan of its own. Its
+    own scan had no live-project filter, and a wiki doc row is a plain model
+    that survives Plane's soft delete — so a repo linked only by a deleted or
+    archived project went on being fetched every half hour, its issues went on
+    filling the triage queue, and the daily digest went on warning about work
+    nobody could file anywhere. `_repo_claims` is where "live" is defined once,
+    and the repos to fetch are exactly the repos somebody live has claimed.
+
+    `claims` is accepted so the sync, which has already scanned, can pass its
+    result in; views.py calls this with no arguments and must keep working.
+    """
     repos = set()
     explicit = os.environ.get("GITHUB_SYNC_REPOS", "").strip()
     for part in explicit.split(","):
@@ -198,15 +208,8 @@ def _repos_to_sync():
         if part:
             repos.add(part.lower())
 
-    for doc in ProjectWikiDoc.objects.exclude(github_repo_urls=[]):
-        for url in doc.github_repo_urls or []:
-            u = _github_url(url) or str(url)
-            # take owner/repo from a github.com url
-            m = u.lower().split("github.com/", 1)
-            if len(m) == 2:
-                parts = m[1].strip("/").split("/")
-                if len(parts) >= 2:
-                    repos.add(f"{parts[0]}/{parts[1]}".removesuffix(".git"))
+    claims = _repo_claims() if claims is None else claims
+    repos.update(claims)
     return repos
 
 
@@ -668,14 +671,17 @@ def _github_plane_sync():
     if not pat:
         return {"skipped": "GITHUB_PAT not set"}
 
-    repos = _repos_to_sync()
+    # One scan of the claims, shared with the repo list: the repos fetched ARE the
+    # repos a live project claims (plus GITHUB_SYNC_REPOS), so the list and the
+    # routing cannot disagree about which projects are still here.
+    claims = _repo_claims()
+    repos = _repos_to_sync(claims)
     if not repos:
         return {"skipped": "no repos mapped (set GITHUB_SYNC_REPOS or link repos to projects)"}
 
     by_repo = {repo: _fetch_open_issues(pat, repo) for repo in repos}
     total_fetched = sum(len(issues) for issues, _ in by_repo.values())
 
-    claims = _repo_claims()
     owners = _repo_owners(claims)
     workspaces = _repo_workspaces(repos, claims)
 
@@ -685,6 +691,7 @@ def _github_plane_sync():
     close_skipped = {}
     no_workspace = []
     partial_fetch = []
+    relocation_refused = []
     confirm_budget = CLOSE_CONFIRM_BUDGET
 
     # Per-project, not per-repo: ten repos claimed by one project used to mean ten
@@ -821,13 +828,17 @@ def _github_plane_sync():
             # retired GHIN inbox still holds its rows, soft-deleted along with
             # it; adopting one would resurrect a work item into a live project
             # by a side door, which is not what retiring the inbox meant.
-            existing = Issue.objects.filter(
-                external_source="github",
-                external_id=gid,
-                workspace_id=workspace_id,
-                project__deleted_at__isnull=True,
-                project__archived_at__isnull=True,
-            ).first()
+            existing = (
+                Issue.objects.filter(
+                    external_source="github",
+                    external_id=gid,
+                    workspace_id=workspace_id,
+                    project__deleted_at__isnull=True,
+                    project__archived_at__isnull=True,
+                )
+                .select_related("project")
+                .first()
+            )
             if existing:
                 # A row somebody has already dealt with is theirs, not the
                 # sync's. Filing it, dating it, attaching it to a task or
@@ -855,9 +866,27 @@ def _github_plane_sync():
 
                 fields = []
                 if existing.project_id != target.id:
-                    existing.project_id = target.id
-                    existing.state = target_state
-                    fields.extend(["project", "state"])
+                    # The repo's owner has changed since this item was filed, and
+                    # the item STAYS WHERE IT IS. It used to be moved: project and
+                    # state rewritten in place. `Issue.save` assigns `sequence_id`
+                    # (and the IssueSequence row) on insert only, and nothing makes
+                    # (project, sequence_id) unique, so the moved item kept its old
+                    # project's number and became a second "B-17" beside B's real
+                    # B-17 — `resolve_issue` in the MCP tools and every reference
+                    # lookup then picked one of the two at random — while the
+                    # CycleIssue and IssueRole rows written at creation stayed
+                    # attached to the project it had left. Named in the run's
+                    # summary instead, so a person can move it deliberately, with
+                    # a tool that renumbers. The title and the link are still kept
+                    # current below: the item is the router's to update, just not
+                    # its to relocate.
+                    relocation_refused.append(
+                        {
+                            "issue": f"{repo}#{gh.get('number')}",
+                            "item": f"{existing.project.identifier}-{existing.sequence_id}",
+                            "claimed_by": target.identifier,
+                        }
+                    )
                 if existing.name != title:
                     existing.name = title
                     fields.append("name")
@@ -927,6 +956,13 @@ def _github_plane_sync():
         # Repos whose open list came back short or errored: nothing was reconciled
         # there, because absence from a partial list is not evidence of closure.
         "skipped_partial_fetch": sorted(partial_fetch),
+        # Auto-filed items whose repo is now claimed by a different project. The
+        # router leaves them where they are (see the `existing` branch for why a
+        # move in place corrupts the numbering) and names them here, one entry per
+        # item: {"issue": "owner/repo#N", "item": "OLD-17", "claimed_by": "NEW"}.
+        # A person moves them, or leaves them; either is a decision the sync must
+        # not make for them.
+        "relocation_refused": relocation_refused,
         "at": str(timezone.now()),
     }
 

@@ -1240,13 +1240,30 @@ def compute_float(tasks, placed, project_end=None):
 
     issues = {key: {"start": v["start"], "target": v["target"]} for key, v in placed.items()}
     # `slack_for_issues` speaks the relation shape the rest of the app stores.
-    # `after` is a predecessor list, which is exactly what blocked_by means.
-    relations = [
-        {"issue_id": task["key"], "related_issue_id": pred, "relation_type": "blocked_by"}
-        for task in tasks
-        for pred in (task.get("after") or [])
-        if pred in placed and task["key"] in placed
-    ]
+    # `after` is a predecessor list, which is exactly what blocked_by means —
+    # for a finish-to-start link. Each entry goes through `parse_link`, the same
+    # normalisation `schedule` placed the dates with: an entry is a bare key OR
+    # `{"key", "lag", "type"}`, and testing a dict with `pred in placed` was a
+    # `TypeError` that turned every object-form dependency into a 500 on the
+    # setup planner. The kind and the lag travel with the relation, because the
+    # dates were placed honouring both and a float figure that ignores either
+    # calls a mandatory gap slack.
+    relations = []
+    for task in tasks:
+        if task["key"] not in placed:
+            continue
+        for entry in task.get("after") or []:
+            pred, lag, kind = parse_link(entry)
+            if not pred or pred not in placed:
+                continue
+            relations.append(
+                {
+                    "issue_id": task["key"],
+                    "related_issue_id": pred,
+                    "relation_type": "start_after" if kind == "SS" else "blocked_by",
+                    "lag": lag,
+                }
+            )
     return slack_for_issues(issues, relations)
 
 

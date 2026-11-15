@@ -93,6 +93,15 @@ def cycle_scope_snapshot(self):
 
     from plane.arribada.models import CycleScopeSnapshot
 
+    # `localtime()` reads the ACTIVE zone, and the active zone is a thread-local
+    # that outlives whatever set it. Nothing in a worker should have activated
+    # one, but `TimezoneMixin.initial` in the web process does so for every
+    # authenticated request and never undoes it, and a task run in-process — by
+    # hand, from a shell, or under test — inherits it. The row this writes is
+    # keyed on a DATE, so an inherited Auckland would file tonight's figures
+    # under tomorrow. Back to TIME_ZONE, explicitly, before the clock is read.
+    timezone.deactivate()
+
     day = _recorded_day(timezone.localtime())
 
     # Running cycles only. A finished one cannot change scope, and an unstarted one
@@ -130,7 +139,15 @@ def cycle_scope_snapshot(self):
     written = 0
     for cycle_id in cycles:
         try:
-            counts = Issue.issue_objects.filter(issue_cycle__cycle_id=cycle_id).aggregate(
+            # `CycleIssue` is soft-deleted when an item is taken OUT of a sprint,
+            # and the join through `issue_cycle` applies no manager — so a removed
+            # item kept counting against the cycle for the rest of its life, and
+            # the one table that exists to show scope moving could not show it
+            # shrinking. Both conditions in ONE filter call, so they apply to the
+            # same join row rather than to two separate joins.
+            counts = Issue.issue_objects.filter(
+                issue_cycle__cycle_id=cycle_id, issue_cycle__deleted_at__isnull=True
+            ).aggregate(
                 total=Count("id", distinct=True),
                 completed=Count("id", filter=Q(state__group="completed"), distinct=True),
             )

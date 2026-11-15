@@ -29,11 +29,13 @@ Run explicitly: `python -m pytest plane/arribada/test_procurement_money.py`
 """
 
 import threading
+from datetime import date
 
 import pytest
 from django.db import IntegrityError, connection, transaction
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from freezegun import freeze_time
 
 from plane.arribada.models import ProcurementRequest, ProjectExpense, ProjectTeamMember
 
@@ -237,3 +239,87 @@ def test_only_the_lead_may_spend(with_lead, pending):
     )
     assert response.status_code == 403
     assert ProjectExpense.objects.filter(project=with_lead["project"]).count() == 0
+
+
+# --- the withdrawal decides on the locked row ---------------------------------
+
+
+def test_a_requester_whose_request_was_approved_under_them_cannot_withdraw_it(
+    with_lead, pending, monkeypatch
+):
+    """`own_and_pending` was computed from the unlocked read. A request approved
+    between that read and the lock was then deleted — line and all — by someone
+    who may only withdraw a PENDING request of their own.
+
+    The approval is injected at the lock itself: the handler's first read sees
+    "pending", the row is approved, and the locked re-read sees "approved".
+    """
+    line = ProjectExpense.objects.create(
+        project=with_lead["project"], label="10 Linkit boards", amount=250, quantity=10, currency="GBP"
+    )
+    real = ProcurementRequest.objects.select_for_update
+
+    def approve_then_lock(*args, **kwargs):
+        ProcurementRequest.objects.filter(id=pending.id).update(
+            status=ProcurementRequest.APPROVED, expense=line
+        )
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ProcurementRequest.objects, "select_for_update", approve_then_lock)
+
+    response = with_lead["clients"]["member"].delete(decide_url(with_lead, pending))
+    assert response.status_code == 403, response.data
+    assert ProcurementRequest.objects.filter(id=pending.id).exists(), (
+        "a withdrawal that should have been refused deleted the approved request"
+    )
+    assert ProjectExpense.objects.filter(id=line.id).exists(), (
+        "a withdrawal that should have been refused deleted the approved line"
+    )
+
+
+# --- what removing a request does to its money, by how far the purchase got --
+
+
+@pytest.mark.parametrize(
+    "state,kept",
+    [
+        (ProcurementRequest.APPROVED, False),
+        (ProcurementRequest.ORDERED, True),
+        (ProcurementRequest.RECEIVED, True),
+    ],
+)
+def test_removing_a_request_keeps_the_line_once_the_parts_are_ordered(with_lead, pending, state, kept):
+    """Approved is a commitment the withdrawal takes back. Ordered or received is
+    money that has left, or is about to — a supplier holds an order — so the
+    line stays on the sheet and only the link to it goes."""
+    client = with_lead["clients"]["lead"]
+    url = decide_url(with_lead, pending)
+    assert client.post(url, {"decision": "approved"}, format="json").status_code == 200
+    ProcurementRequest.objects.filter(id=pending.id).update(status=state)
+
+    response = client.delete(url)
+    assert response.status_code == 200, response.data
+    assert response.data == {"deleted": True, "expense_kept": kept}
+    assert not ProcurementRequest.objects.filter(id=pending.id).exists()
+    assert ProjectExpense.objects.filter(project=with_lead["project"]).exists() is kept
+
+
+# --- the line is dated on the day of the decision ----------------------------
+
+
+@freeze_time("2026-10-25 12:00:00")
+def test_approving_dates_the_line_on_the_day_of_the_decision(with_lead, pending):
+    """The line was created with no date at all, so every approved purchase was
+    "undated" on the curve and in the ledger."""
+    client = with_lead["clients"]["lead"]
+    assert client.post(decide_url(with_lead, pending), {"decision": "approved"}, format="json").status_code == 200
+    assert ProjectExpense.objects.get(project=with_lead["project"]).incurred_on == date(2026, 10, 25)
+
+
+def test_the_caller_may_say_which_day_the_money_was_committed(with_lead, pending):
+    client = with_lead["clients"]["lead"]
+    response = client.post(
+        decide_url(with_lead, pending), {"decision": "approved", "incurred_on": "2026-09-30"}, format="json"
+    )
+    assert response.status_code == 200, response.data
+    assert ProjectExpense.objects.get(project=with_lead["project"]).incurred_on == date(2026, 9, 30)

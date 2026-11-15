@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
-"""`lead_only_edits`, enforced on the routes this app does not own.
+"""`lead_only_edits` and `allow_edit_others`, enforced on the routes this app does not own.
 
 WHY THIS EXISTS AT ALL. `_plan_guard` in `views.py` covers every arribada
 endpoint that writes a plan, and that is not most of them. The gantt's bar drag
@@ -36,8 +36,23 @@ list. Every API V1 view (`/api/v1/`) is `APIKeyAuthentication`, which DRF runs
 inside `APIView.initial()` — after every `process_view` has returned. So a v1
 request carrying only `X-Api-Key` reaches this hook as AnonymousUser, and any
 check placed behind `is_authenticated` is INERT for it. The plan guard is a
-question about a person and correctly waits for one; the external guard is a
-question about a body and a project and correctly does not.
+question about a person and correctly waits for one. Which is why it has a
+SECOND DOOR: `refuse_plan_write`, called from `BaseAPIView.initial()` in
+`plane/api/views/base.py` once `APIKeyAuthentication` has named the caller.
+Any member can mint a personal API key (`ApiTokenEndpoint` has no role gate),
+so a plan rule the public API did not enforce was a rule with a documented
+bypass. Both doors ask `plan_write_refusal`, one table (`GUARDED`) names the
+routes of both, and the external guard — a question about a body and a project
+— correctly needs neither.
+
+TWO RULES, ONE DECISION. `lead_only_edits` says WHO may change the plan: the
+lead, or a workspace admin. `allow_edit_others` says WHOSE items a member may
+change: with it off, a plan write is refused unless every work item the request
+targets has the caller among its assignees — the lead and a workspace admin
+excepted, as for the first rule. Until this module enforced it, the second
+switch was honoured by the project gantt's drag grip alone, and the portfolio
+view and the API let anyone move anyone's item. `TARGETS` says, per route,
+which items a request changes.
 
 This module also carries `external_edits`, which is not about the plan at all —
 it is here because it needs the same hook, on the same routes, before the same
@@ -46,10 +61,11 @@ two places to keep one answer.
 """
 
 import json
+import uuid
 
 from django.http import JsonResponse, QueryDict
 
-# The fields on an issue PATCH that are THE PLAN rather than the work.
+# The fields on an issue write that are THE PLAN rather than the work.
 #
 # `IssueViewSet.partial_update` carries everything: a state change, a rename, a
 # priority, a description, a label — and a date. Refusing the whole handler
@@ -87,10 +103,19 @@ PLAN_FIELDS = frozenset(
 # `IssueEffortEndpoint` needs — an estimate is the plan, an actual is not — and a
 # middleware cannot see the difference between two branches of one view.
 GUARDED = {
+    # --- the app API (`/api/`), session-authenticated: the middleware answers.
     # The gantt bar drag and resize. Writes dates and nothing else.
     ("IssueBulkUpdateDateEndpoint", "POST"): None,
     # The date pickers, the parent picker, and every other property edit.
     ("IssueViewSet", "PATCH"): PLAN_FIELDS,
+    # `put: update` is routed on the same URL as the PATCH and runs the same
+    # serializer, so a PUT carrying a date was the PATCH guard with the method
+    # changed.
+    ("IssueViewSet", "PUT"): PLAN_FIELDS,
+    # Creating an item that ARRIVES dated, parented, estimated or in a sprint is
+    # writing the plan. An undated one is still anybody's to add: the body rule
+    # keeps that true, and `CREATES` below keeps it true for the create modal.
+    ("IssueViewSet", "POST"): PLAN_FIELDS,
     # "Add existing sub-issue" — bulk-writes `parent`.
     ("SubIssuesEndpoint", "POST"): None,
     # `create` and `remove_relation` are both POST on this class.
@@ -102,6 +127,65 @@ GUARDED = {
     # Module membership.
     ("ModuleIssueViewSet", "POST"): None,
     ("ModuleIssueViewSet", "DELETE"): None,
+    # --- the public API (`/api/v1/`), API-key authenticated: `refuse_plan_write`
+    # answers from `BaseAPIView.initial()`, because the caller is still anonymous
+    # when the middleware runs (see the module docstring). Same rules, same table.
+    ("IssueListCreateAPIEndpoint", "POST"): PLAN_FIELDS,
+    ("IssueDetailAPIEndpoint", "PATCH"): PLAN_FIELDS,
+    ("IssueRelationListCreateAPIEndpoint", "POST"): None,
+    ("CycleIssueListCreateAPIEndpoint", "POST"): None,
+    ("CycleIssueDetailAPIEndpoint", "DELETE"): None,
+    ("TransferCycleIssueAPIEndpoint", "POST"): None,
+    ("ModuleIssueListCreateAPIEndpoint", "POST"): None,
+    ("ModuleIssueDetailAPIEndpoint", "DELETE"): None,
+}
+
+# The routes that CREATE a work item. On these a plan field counts only when it
+# carries a value. The create modal posts its WHOLE form, nulls included
+# (`DEFAULT_WORK_ITEM_FORM_VALUES` has `start_date: null`, `parent_id: null`,
+# `module_ids: null` and the rest), so a keys-only rule would refuse every
+# member every new item on a governed project — the one thing both settings
+# promise to leave alone. On an UPDATE a null is a change (clearing a date moves
+# the plan), so there the keys decide, as they always have.
+CREATES = frozenset({("IssueViewSet", "POST"), ("IssueListCreateAPIEndpoint", "POST")})
+
+# Which work items a guarded request changes: what `allow_edit_others` is asked
+# about. `kwargs` names URL arguments that hold a work item id; `body` names
+# top-level body keys that hold one id, a list of ids, or a list of rows with an
+# `id` (the bar drag's `updates`). A key that is absent contributes nothing — a
+# viewset whose two actions read different keys lists both.
+#
+# REFUSE marks a route that touches every unfinished item of a sprint at once.
+# There is no list of ids to check, and "every item somebody else is holding"
+# is exactly what the switch says a member may not move; only the lead or an
+# admin may, and they are excused before this table is read.
+REFUSE = "refuse"
+TARGETS = {
+    ("IssueBulkUpdateDateEndpoint", "POST"): {"body": ("updates",)},
+    ("IssueViewSet", "PATCH"): {"kwargs": ("pk",)},
+    ("IssueViewSet", "PUT"): {"kwargs": ("pk",)},
+    # A create carrying a parent is a plan write on the parent; one without is a
+    # new item of the caller's own, and nobody else's item is touched.
+    ("IssueViewSet", "POST"): {"body": ("parent_id", "parent")},
+    ("SubIssuesEndpoint", "POST"): {"kwargs": ("issue_id",), "body": ("sub_issue_ids",)},
+    # `create` sends `issues`; `remove_relation` sends `related_issue`.
+    ("IssueRelationViewSet", "POST"): {"kwargs": ("issue_id",), "body": ("issues", "related_issue")},
+    ("CycleIssueViewSet", "POST"): {"body": ("issues",)},
+    ("CycleIssueViewSet", "DELETE"): {"kwargs": ("issue_id",)},
+    ("TransferCycleIssueEndpoint", "POST"): REFUSE,
+    # `create_module_issues` sends `issues`; `create_issue_modules` names the
+    # item in the URL and sends `modules`.
+    ("ModuleIssueViewSet", "POST"): {"kwargs": ("issue_id",), "body": ("issues",)},
+    ("ModuleIssueViewSet", "DELETE"): {"kwargs": ("issue_id",)},
+    # v1
+    ("IssueListCreateAPIEndpoint", "POST"): {"body": ("parent", "parent_id")},
+    ("IssueDetailAPIEndpoint", "PATCH"): {"kwargs": ("pk",)},
+    ("IssueRelationListCreateAPIEndpoint", "POST"): {"kwargs": ("issue_id",), "body": ("issues",)},
+    ("CycleIssueListCreateAPIEndpoint", "POST"): {"body": ("issues",)},
+    ("CycleIssueDetailAPIEndpoint", "DELETE"): {"kwargs": ("issue_id",)},
+    ("TransferCycleIssueAPIEndpoint", "POST"): REFUSE,
+    ("ModuleIssueListCreateAPIEndpoint", "POST"): {"body": ("issues",)},
+    ("ModuleIssueDetailAPIEndpoint", "DELETE"): {"kwargs": ("issue_id",)},
 }
 
 UNSAFE = frozenset({"POST", "PATCH", "PUT", "DELETE"})
@@ -120,12 +204,20 @@ EXTERNAL_SOURCE = "arribada-wiki"
 # are asset uploads rather than work items.
 _READABLE_TYPES = frozenset({"application/json", "application/x-www-form-urlencoded"})
 
+# The first sentence of the `allow_edit_others` refusal. A constant because the
+# tests assert on it, and a 403 whose wording drifts from its test is a 403
+# nobody can rely on reading the same way twice.
+OWN_ITEMS_LINE = (
+    "This project only lets a work item's own assignees change its dates, parent, "
+    "estimate, sprint and module membership"
+)
+
 
 def _declares_external_source(request):
     """Whether this request's body says `external_source: EXTERNAL_SOURCE`.
 
-    FAILS OPEN, unlike `_body_keys` below, and the asymmetry is deliberate.
-    `_body_keys` is consulted only after a project has opted IN to a restriction,
+    FAILS OPEN, unlike `_body_data` below, and the asymmetry is deliberate.
+    `_body_data` is consulted only after a project has opted IN to a restriction,
     so refusing an unreadable body costs one confused caller on one governed
     project. This runs on every write in the product, so treating "cannot read
     it" as "it is external" would refuse writes on every project that had not
@@ -161,16 +253,36 @@ def _declares_external_source(request):
     return QueryDict(body).get("external_source") == EXTERNAL_SOURCE
 
 
-def _body_keys(request):
-    """The top-level keys of the request body, or None when they cannot be read.
+def _flat(querydict):
+    return {key: values[0] if len(values) == 1 else values for key, values in querydict.lists()}
 
-    None means "cannot tell", and the caller treats that as a plan write —
-    FAIL CLOSED. It costs nothing in practice: the guard is only consulted on a
-    project that has opted in, and only for a caller who is neither its lead nor
-    a workspace admin, so the worst case is that somebody sending a body this
-    cannot parse is refused rather than 400'd. A permission that fails open on a
-    body it does not understand is a permission with a documented bypass.
+
+def _body_data(request):
+    """The request body as a dict, or None when it cannot be read.
+
+    None means "cannot tell", and the caller treats that as a plan write on
+    every item — FAIL CLOSED. It costs nothing in practice: this is only
+    consulted on a project that has opted in, and only for a caller who is
+    neither its lead nor a workspace admin, so the worst case is that somebody
+    sending a body this cannot parse is refused rather than 400'd. A permission
+    that fails open on a body it does not understand is a permission with a
+    documented bypass.
+
+    Two kinds of request arrive here. The middleware hands Django's own
+    `HttpRequest`, before any view exists, and the bytes are read and parsed
+    here. The v1 door hands DRF's `Request`, from inside the view's `initial()`:
+    by then DRF owns the stream, so it is asked for `.data` and the parsers the
+    view will read through are the ones that answer.
     """
+    if hasattr(request, "_request"):
+        try:
+            data = request.data
+        except Exception:
+            return None
+        if isinstance(data, QueryDict):
+            return _flat(data)
+        return dict(data) if isinstance(data, dict) else None
+
     content_type = (request.content_type or "").split(";")[0].strip().lower()
     try:
         body = request.body
@@ -179,17 +291,190 @@ def _body_keys(request):
         # happens on these routes; if it ever does, refuse rather than guess.
         return None
     if not body:
-        return set()
+        return {}
     if content_type == "application/json":
         try:
             data = json.loads(body.decode("utf-8", "replace"))
         except ValueError:
             return None
-        return set(data) if isinstance(data, dict) else None
+        return data if isinstance(data, dict) else None
     if content_type == "application/x-www-form-urlencoded":
         # Django only fills `request.POST` for POST; PATCH has to be parsed.
-        return set(QueryDict(body).keys())
+        return _flat(QueryDict(body))
     return None
+
+
+def _names_the_plan(data, rule, creating):
+    """Whether a body touches one of `rule`'s fields — by key, or by value on a create."""
+    named = set(data) & rule
+    if not creating:
+        return bool(named)
+    return any(data.get(key) not in (None, "", []) for key in named)
+
+
+def _ids_in(value):
+    """Work-item ids held by one body value, or None when its shape is not one we read."""
+    if value in (None, "", []):
+        return set()
+    if isinstance(value, (str, uuid.UUID)):
+        return {str(value)}
+    if isinstance(value, (list, tuple)):
+        ids = set()
+        for item in value:
+            if isinstance(item, dict):
+                item = item.get("id")
+            if item in (None, ""):
+                # A row with no id is a request the view would reject; refusing
+                # it here is the same answer, reached without guessing.
+                return None
+            ids.add(str(item))
+        return ids
+    return None
+
+
+def _targets(spec, data, view_kwargs):
+    """The ids of the work items a request changes, or None when they cannot be read."""
+    if spec == REFUSE:
+        return None
+    ids = set()
+    for name in spec.get("kwargs", ()):
+        value = view_kwargs.get(name)
+        if value not in (None, ""):
+            ids.add(str(value))
+    if spec.get("body"):
+        if data is None:
+            return None
+        for name in spec["body"]:
+            found = _ids_in(data.get(name))
+            if found is None:
+                return None
+            ids |= found
+    for value in ids:
+        try:
+            uuid.UUID(value)
+        except (TypeError, ValueError, AttributeError):
+            return None
+    return ids
+
+
+def _all_assigned(ids, user):
+    """Whether `user` is an assignee of EVERY one of `ids`.
+
+    The explicit join, not `issue.assignees`: the M2M goes through
+    `IssueAssignee`, which is soft-deleted, so a removed assignee would still
+    count. A work item that does not exist, or lives in another project, has no
+    row here and is refused — the view would have 404'd it, and a permission
+    answer must not depend on the row existing.
+    """
+    from plane.db.models import IssueAssignee
+
+    assigned = {
+        str(issue_id)
+        for issue_id in IssueAssignee.objects.filter(
+            issue_id__in=ids, assignee_id=user.id, deleted_at__isnull=True
+        ).values_list("issue_id", flat=True)
+    }
+    return ids <= assigned
+
+
+def _lead_only_refusal():
+    from .views import PLAN_LINE_EVERYONE, PLAN_LINE_LEAD
+
+    return {
+        "error": "Only the project lead can change the plan.",
+        "detail": (
+            f"This project is set so that only its lead (or a workspace admin) changes "
+            f"{PLAN_LINE_LEAD}. You can still {PLAN_LINE_EVERYONE}."
+        ),
+    }
+
+
+def _own_items_refusal(transfer=False):
+    if transfer:
+        tail = (
+            ". Moving a sprint's unfinished items moves every one of them at once, so that is "
+            "the lead's (or a workspace admin's) to do here."
+        )
+    else:
+        tail = (
+            ", and you are not assigned to every work item this request changes. Ask to be "
+            "assigned, or ask the lead (or a workspace admin), who may change any item."
+        )
+    return {"error": "Only a work item's own assignees can change it here.", "detail": OWN_ITEMS_LINE + tail}
+
+
+def plan_write_refusal(request, user, view_name, method, view_kwargs):
+    """The 403 body for a plan write `user` may not make, or None when the view may run.
+
+    ONE decision for both doors. The middleware wraps it in a `JsonResponse`;
+    the v1 hook raises it as a `PermissionDenied`. Everything that decides is
+    here, so the two cannot drift.
+
+    In order: is this one of `GUARDED`'s routes at all; has the project asked
+    for either rule (two one-row lookups, reached only on those routes); does the
+    body even name the plan (the PLAN_FIELDS rule, value-aware on a create); is
+    the caller the lead or a workspace admin, who both rules excuse; then
+    `lead_only_edits`, which refuses everyone else outright; then
+    `allow_edit_others`, which refuses unless every targeted item is the
+    caller's own.
+
+    `plan_edits_are_lead_only` and `_may_edit_plan` are asked BY NAME from
+    `views.py`, so the answer here and the answer the schedule endpoint reports
+    (`can_set_governance`, the arribada `_plan_guard`) are one answer.
+    """
+    key = (view_name, method)
+    rule = GUARDED.get(key, "unguarded")
+    if rule == "unguarded":
+        return None
+    project_id = view_kwargs.get("project_id")
+    if not project_id:
+        return None
+
+    from .models import ProjectSchedule
+    from .views import _may_edit_plan, plan_edits_are_lead_only
+
+    lead_only = plan_edits_are_lead_only(project_id)
+    # A project with no schedule row has never turned the switch off: the
+    # column's default is True, and a row that does not exist cannot say False.
+    own_only = ProjectSchedule.objects.filter(project_id=project_id, allow_edit_others=False).exists()
+    if not lead_only and not own_only:
+        return None
+
+    data = _body_data(request)
+    if rule is not None and data is not None and not _names_the_plan(data, rule, key in CREATES):
+        return None
+    if _may_edit_plan(user, project_id):
+        return None
+    if lead_only:
+        return _lead_only_refusal()
+
+    spec = TARGETS.get(key, REFUSE)
+    targets = _targets(spec, data, view_kwargs)
+    if targets is None:
+        return _own_items_refusal(transfer=(spec == REFUSE))
+    if targets and not _all_assigned(targets, user):
+        return _own_items_refusal()
+    return None
+
+
+def refuse_plan_write(request, view):
+    """The v1 door: the 403 body for this view's request, or None.
+
+    Called from `BaseAPIView.initial()` in `plane/api/views/base.py`, after
+    `super().initial()` has run `APIKeyAuthentication`, so `request.user` is the
+    key's owner. `request` is DRF's `Request`; `view` the instance, whose class
+    name and `kwargs` are what the table is keyed on.
+    """
+    if request.method not in UNSAFE:
+        return None
+    view_kwargs = getattr(view, "kwargs", None) or {}
+    if not view_kwargs.get("project_id"):
+        return None
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        # Not our refusal to make: `IsAuthenticated` has already answered 401.
+        return None
+    return plan_write_refusal(request, user, type(view).__name__, request.method, view_kwargs)
 
 
 class PlanEditGuardMiddleware:
@@ -199,17 +484,21 @@ class PlanEditGuardMiddleware:
        refused unless this project has opted in. Every routed write that names a
        project, because the integration drives the same API a person does and
        there is no list of routes to narrow it to.
-    2. `lead_only_edits` — an upstream PLAN write is refused unless the caller is
-       the lead or a workspace admin. Only the nine routed handlers in `GUARDED`.
+    2. The plan — `lead_only_edits` and `allow_edit_others` — an upstream PLAN
+       write is refused unless the caller may make it. Only the routed handlers
+       in `GUARDED`, and only those on `/api/`: the `/api/v1/` entries are
+       answered by `refuse_plan_write` from inside the view, because here their
+       caller is still anonymous.
 
     They are separate settings answering separate questions and neither implies
-    the other; see the model comments on both columns.
+    the other; see the model comments on the columns.
 
     COST on the writes that are neither. One `dict.get` on `view_kwargs`, then a
     content-type comparison, then a substring scan of the body — no parse, no
     query — for anything that is not JSON or form-encoded, and no read of the
     body at all for multipart. Query one is reached only by a body that actually
-    names `external_source`; query two only by one of the nine handlers.
+    names `external_source`; the plan's queries only by one of the handlers in
+    `GUARDED`.
     """
 
     def __init__(self, get_response):
@@ -282,41 +571,17 @@ class PlanEditGuardMiddleware:
             # Not our refusal to make. The view's own authentication answers 401,
             # and pre-empting it here would turn "you are not signed in" into
             # "you are not the lead", which is a worse thing to read and a worse
-            # thing to debug.
+            # thing to debug. (A v1 request with an API key lands here too, and
+            # is answered later by `refuse_plan_write`, once it has a user.)
             return None
 
         # THE PLAN QUESTION, about a person rather than a caller, and asked only
-        # of the nine upstream handlers in `GUARDED`. The dict lookup costs
+        # of the upstream handlers in `GUARDED`. The dict lookup inside costs
         # nothing on the writes that are not one of them.
         view_class = getattr(view_func, "cls", None) or getattr(view_func, "view_class", None)
         if view_class is None:
             return None
-        rule = GUARDED.get((view_class.__name__, request.method), "unguarded")
-        if rule == "unguarded":
+        body = plan_write_refusal(request, user, view_class.__name__, request.method, view_kwargs)
+        if body is None:
             return None
-
-        # Deferred to keep this module importable before the app registry is
-        # ready, and to keep ONE definition of who the lead is.
-        from .views import _may_edit_plan, plan_edits_are_lead_only
-
-        if not plan_edits_are_lead_only(project_id):
-            return None
-        if rule is not None:
-            keys = _body_keys(request)
-            if keys is not None and not (keys & rule):
-                return None
-        if _may_edit_plan(user, project_id):
-            return None
-
-        from .views import PLAN_LINE_EVERYONE, PLAN_LINE_LEAD
-
-        return JsonResponse(
-            {
-                "error": "Only the project lead can change the plan.",
-                "detail": (
-                    f"This project is set so that only its lead (or a workspace admin) changes "
-                    f"{PLAN_LINE_LEAD}. You can still {PLAN_LINE_EVERYONE}."
-                ),
-            },
-            status=403,
-        )
+        return JsonResponse(body, status=403)

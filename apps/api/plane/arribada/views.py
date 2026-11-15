@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import hmac
 import html
 import json
 import math
@@ -9,7 +10,7 @@ import os
 import re
 import uuid
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import IntegrityError, transaction
@@ -65,6 +66,7 @@ from .rate_presets import (
     preset_payload,
 )
 from .scheduling import (
+    add_working_days,
     build_edges,
     cascade,
     critical_path,
@@ -169,12 +171,26 @@ MONEY_ROLES = [ROLE.ADMIN, ROLE.MEMBER]
 GANTT_RELATION_TYPES = ["finish_before", "start_before", "blocked_by", "finish_after", "start_after"]
 
 
+# State groups in which the work is over, one way or the other. A finished
+# item's dates are a record of what happened; nothing that plans may rewrite them.
+FINISHED_STATE_GROUPS = ("completed", "cancelled")
+
+
 def _project_graph(project_id, slug):
-    """(issues-by-id dict of dates, list of relation dicts) for a project."""
+    """(issues-by-id dict of dates, list of relation dicts) for a project.
+
+    Each issue also carries `finished`: whether its state group says the work
+    is over. The reflow leaves those dates alone and still cascades FROM them;
+    the float and critical-path readers ignore the key.
+    """
     issues = {
-        str(i["id"]): {"start": i["start_date"], "target": i["target_date"]}
+        str(i["id"]): {
+            "start": i["start_date"],
+            "target": i["target_date"],
+            "finished": i["state__group"] in FINISHED_STATE_GROUPS,
+        }
         for i in Issue.issue_objects.filter(project_id=project_id, workspace__slug=slug).values(
-            "id", "start_date", "target_date"
+            "id", "start_date", "target_date", "state__group"
         )
     }
     relations = list(
@@ -646,7 +662,9 @@ class PortfolioEndpoint(BaseAPIView):
         projects = _visible_projects(request, slug)
         if not include_archived:
             projects = projects.filter(archived_at__isnull=True)
-        projects = projects.values("id", "name", "identifier", "logo_props", "archived_at")
+        projects = projects.values(
+            "id", "name", "identifier", "logo_props", "archived_at", "project_lead_id"
+        )
 
         project_ids = [p["id"] for p in projects]
 
@@ -655,12 +673,32 @@ class PortfolioEndpoint(BaseAPIView):
             for s in ProjectSchedule.objects.filter(project_id__in=project_ids)
         }
 
-        # Baseline roll-up: the latest committed target across a project's issues, so
-        # the UI can show drift (current derived target vs the frozen baseline).
+        # Baseline roll-up: the last committed target in each project's NEWEST
+        # baseline, so the UI can show drift (current derived target vs the
+        # frozen one).
+        #
+        # Read from `BaselineEntry`, not `IssueBaseline`. The per-issue row is
+        # the old single-snapshot model; versioned baselines (`ProjectBaseline`
+        # + `BaselineEntry`, models.py) replaced it and nothing writes it any
+        # more, so this aggregate read a table that stopped moving the day they
+        # shipped, and the portfolio showed no drift for anything frozen since.
+        # The newest baseline per project, because that is the one the timeline
+        # draws by default — and one query for the page, not one per project:
+        # the correlated subquery picks each entry's own project's newest.
+        from django.db.models import Subquery
+
+        newest = (
+            ProjectBaseline.objects.filter(project_id=OuterRef("baseline__project_id"))
+            .order_by("-captured_at", "-id")
+            .values("id")[:1]
+        )
         baselines = {
-            b["issue__project_id"]: b["bmax"]
-            for b in IssueBaseline.objects.filter(issue__project_id__in=project_ids)
-            .values("issue__project_id")
+            b["baseline__project_id"]: b["bmax"]
+            for b in BaselineEntry.objects.filter(
+                baseline__project_id__in=project_ids, baseline_id=Subquery(newest)
+            )
+            .order_by()
+            .values("baseline__project_id")
             .annotate(bmax=Max("target_date"))
         }
 
@@ -680,12 +718,30 @@ class PortfolioEndpoint(BaseAPIView):
             )
         }
 
+        # Whether THIS CALLER may change each plan, and whether each project
+        # lets people move bars that are not theirs: the same two answers the
+        # schedule GET gives as `can_edit_plan` and `allow_edit_others`, so the
+        # board can draw a control the server will serve and hide one it would
+        # refuse. The predicate is `_may_edit_plan`'s, by name —
+        # `not lead_only_edits or lead or workspace admin` — and it is batched:
+        # the three facts it needs are one query each across every project on
+        # the page, not three per row. `_is_project_lead`'s admin-of-a-
+        # leaderless-project branch is inside `is_admin` here.
+        user_id = request.user.id
+        is_admin = _is_workspace_admin(request.user, slug)
+        roster_lead_of = set(
+            ProjectTeamMember.objects.filter(
+                project_id__in=project_ids, member_id=user_id, is_lead=True
+            ).values_list("project_id", flat=True)
+        )
+
         payload = []
         for p in projects:
             s = schedules.get(p["id"])
             r = rollup.get(p["id"], {})
             total = r.get("item_count", 0)
             with_dates = r.get("dated_count", 0)
+            is_lead = p["project_lead_id"] == user_id or p["id"] in roster_lead_of
             payload.append(
                 {
                     "id": str(p["id"]),
@@ -702,6 +758,12 @@ class PortfolioEndpoint(BaseAPIView):
                     # all, every bar here was draggable including the frozen ones.
                     # The schedule row is already loaded above; this costs nothing.
                     "timeline_locked": bool(s.timeline_locked) if s else False,
+                    # About the caller, not the row: see the note above the loop.
+                    "can_edit_plan": (not (s and s.lead_only_edits)) or is_lead or is_admin,
+                    # About the row. True when no schedule row exists: that is the
+                    # column's default, and a project nobody has configured has
+                    # not asked for the restriction.
+                    "allow_edit_others": bool(s.allow_edit_others) if s else True,
                     # derived: computed from the work items, read-only
                     "derived_start_date": r.get("derived_start_date"),
                     "derived_target_date": r.get("derived_target_date"),
@@ -937,7 +999,16 @@ class WorkspaceDeliverablesEndpoint(BaseAPIView):
     def get(self, request, slug):
         visible = _visible_projects(request, slug)
         rows = (
-            IssueMilestone.objects.filter(issue__project__in=visible)
+            # `issue` is a plain FK join and applies no manager, so a deleted
+            # work item's deliverable kept being "due next" on the Home widget
+            # for as long as the row existed — which is forever, since a soft
+            # delete deletes nothing. Archived projects are left out the way the
+            # portfolio leaves them out: nothing is due on a shelved project.
+            IssueMilestone.objects.filter(
+                issue__project__in=visible,
+                issue__deleted_at__isnull=True,
+                issue__project__archived_at__isnull=True,
+            )
             .values(
                 "issue_id",
                 "kind",
@@ -1047,7 +1118,11 @@ class ProjectMilestonesEndpoint(BaseAPIView):
         # ids would have to fetch every item to render a list of deliverables, and
         # a funder report is exactly that list — with the dates, since a deliverable
         # with no date is not something anybody can be held to.
-        rows = IssueMilestone.objects.filter(issue__project_id=project_id).values(
+        # `issue__deleted_at`: the join applies no manager, and a deleted work
+        # item's milestone otherwise stays on the chart and in the funder list.
+        rows = IssueMilestone.objects.filter(
+            issue__project_id=project_id, issue__deleted_at__isnull=True
+        ).values(
             "issue_id",
             "kind",
             "label",
@@ -1369,9 +1444,19 @@ class ProjectAutoScheduleEndpoint(BaseAPIView):
         # docstring there for why a delivery is not simply a predecessor.
         floors = _delivery_floors(project_id)
 
-        changed = cascade(issues, relations, earliest_starts=floors)
+        # Completed and cancelled items are FIXED: never re-dated, still
+        # predecessors with the dates they really ran on. The reflow used to move
+        # them like any other row, so a test finished in March behind a
+        # predecessor that slipped to May was re-dated to June, and the funder
+        # report then said work that had happened had not.
+        fixed = {issue_id for issue_id, v in issues.items() if v.get("finished")}
+        changed = cascade(issues, relations, earliest_starts=floors, fixed=fixed)
         moved = []
         for iid, dates in changed.items():
+            # `cascade` does not return a fixed node; this is the second lock on
+            # the same door, so a change to the engine cannot reopen it here.
+            if iid in fixed:
+                continue
             # .update() bypasses per-issue activity/webhooks — intentional for a bulk reflow
             Issue.objects.filter(id=iid).update(start_date=dates["start"], target_date=dates["target"])
             moved.append(
@@ -1769,6 +1854,20 @@ class ProjectTemplateCloneEndpoint(BaseAPIView):
 
         if not name or not identifier:
             return Response({"error": "name and identifier are required"}, status=status.HTTP_400_BAD_REQUEST)
+        # Bounded like every other plan date, BEFORE anything is written. The
+        # kickoff is the anchor every cloned date is shifted to, so a kickoff of
+        # 9999-12-31 planted one poisoned row per template item in a single
+        # request — the date bomb, multiplied — and the old parse accepted any
+        # year `date()` does. Refused out loud rather than quietly ignored: a
+        # clone that silently kept the template's dates is a plan nobody asked for.
+        kickoff_day = None
+        if kickoff:
+            kickoff_day = _parse_date(str(kickoff))
+            if kickoff_day is None:
+                return Response(
+                    {"error": "kickoff_date must be a date between 1970 and fifty years from now"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         workspace = Workspace.objects.filter(slug=slug).first()
         if not workspace:
@@ -1811,19 +1910,22 @@ class ProjectTemplateCloneEndpoint(BaseAPIView):
                 Issue.issue_objects.filter(project=template, deleted_at__isnull=True).order_by("sort_order", "created_at")
             )
             shift_days = None
-            if kickoff:
+            if kickoff_day:
                 starts = [i.start_date for i in tmpl_issues if i.start_date]
                 targets = [i.target_date for i in tmpl_issues if i.target_date]
                 anchor = min(starts) if starts else (min(targets) if targets else None)
                 if anchor:
-                    try:
-                        parts = [int(x) for x in str(kickoff)[:10].split("-")]
-                        shift_days = (date(parts[0], parts[1], parts[2]) - anchor).days
-                    except (ValueError, TypeError, IndexError):
-                        shift_days = None
+                    shift_days = (kickoff_day - anchor).days
 
             def _shift(d):
-                return d + timedelta(days=shift_days) if (d and shift_days is not None) else d
+                if not d or shift_days is None:
+                    return d
+                # A template row planted before the date bounds existed can sit at
+                # the end of the calendar; shifting it must not raise the clone.
+                try:
+                    return d + timedelta(days=shift_days)
+                except OverflowError:
+                    return d
 
             # Clone the work items (Issue.save() assigns fresh sequence_id/sort_order).
             issue_map = {}
@@ -2566,7 +2668,10 @@ class HubProjectsEndpoint(BaseAPIView):
         secret = os.environ.get("HUB_LINKS_SECRET")
         if not secret:
             return Response({"error": "not_configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        if request.headers.get("X-Hub-Secret") != secret:
+        # Constant-time, like `wiki_projects._secret_given`: `!=` on a secret
+        # returns at the first differing byte, which is a timing oracle.
+        given = request.headers.get("X-Hub-Secret") or ""
+        if not hmac.compare_digest(given.encode(), secret.encode()):
             return Response({"error": "unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         projects = list(
@@ -2636,7 +2741,10 @@ class TeamSyncEndpoint(BaseAPIView):
         secret = os.environ.get("HUB_LINKS_SECRET")
         if not secret:
             return Response({"error": "not_configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        if request.headers.get("X-Hub-Secret") != secret:
+        # Constant-time, like `wiki_projects._secret_given`: `!=` on a secret
+        # returns at the first differing byte, which is a timing oracle.
+        given = request.headers.get("X-Hub-Secret") or ""
+        if not hmac.compare_digest(given.encode(), secret.encode()):
             return Response({"error": "unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
         entries = request.data.get("entries")
@@ -2803,9 +2911,15 @@ class ProjectFoldersEndpoint(BaseAPIView):
         folders = ProjectFolder.objects.filter(workspace__slug=slug).values(
             "id", "name", "parent_id", "sort_order"
         )
-        items = ProjectFolderItem.objects.filter(folder__workspace__slug=slug).values(
-            "folder_id", "project_id", "sort_order"
-        )
+        # Only projects the caller can see, and only live ones. The item row is a
+        # plain FK join and applies no manager, so a soft-deleted project's id
+        # stayed in its folder for good, and the ids of projects the caller is
+        # not a member of went out too — the sidebar was handed ids it could not
+        # resolve, and a folder's count said three where two projects showed.
+        visible = _visible_projects(request, slug).values("id")
+        items = ProjectFolderItem.objects.filter(
+            folder__workspace__slug=slug, project_id__in=visible
+        ).values("folder_id", "project_id", "sort_order")
         by_folder = defaultdict(list)
         for it in sorted(items, key=lambda x: x["sort_order"]):
             by_folder[str(it["folder_id"])].append(str(it["project_id"]))
@@ -3134,6 +3248,55 @@ class ProjectScheduleEndpoint(BaseAPIView):
                 )
             currency = wanted
 
+        # CHANGING THE CURRENCY CONVERTS THE AMOUNT. It used to just relabel
+        # it: switching a €793,764 budget to GBP made it £793,764 — about a
+        # 17% raise from a dropdown, applied to the ceiling every other
+        # figure on the Finance page is read against, with nothing on screen
+        # to say it had happened.
+        #
+        # Only when the amount is not itself part of this request. The
+        # allocation form sends both, and there the number in the box is what
+        # the human means; converting on top of it would double-apply the
+        # rate. This branch is the API caller, and the client's own dropdown,
+        # which change the currency alone.
+        #
+        # Decided HERE, before the serializer writes the dates beside it, for
+        # the same reason the amount and the currency are validated above: a
+        # refusal must leave the row exactly as it was. And it IS a refusal
+        # when the pair cannot reach one of the two currencies. The amount used
+        # to be kept and the currency written anyway, so CHF 100,000 became
+        # £100,000 — the relabelling this branch exists to prevent, reached
+        # through the one path it did not cover. A figure in the wrong currency
+        # is worse than a 400; the caller sets the amount in the new currency.
+        moved = None
+        if (
+            currency is not None
+            and "budget_amount" not in payload
+            and schedule.budget_amount is not None
+        ):
+            stored_ccy = (schedule.budget_currency or "").strip().upper()
+            if stored_ccy and stored_ccy != currency:
+                moved = _convert_money(
+                    float(schedule.budget_amount),
+                    stored_ccy,
+                    currency,
+                    _currency_settings(slug)["eur_gbp_rate"],
+                )
+                if moved is None:
+                    return Response(
+                        {
+                            "budget_currency": (
+                                f"This cannot convert {stored_ccy} to {currency}; "
+                                "set the amount in the new currency instead."
+                            ),
+                            "detail": (
+                                "Only EUR and GBP convert. Send budget_amount together with "
+                                "budget_currency to restate the allocation in the new currency."
+                            ),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
         serializer = ProjectScheduleSerializer(schedule, data=payload, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -3143,38 +3306,10 @@ class ProjectScheduleEndpoint(BaseAPIView):
             if "budget_amount" in payload:
                 schedule.budget_amount = amount
             if currency is not None:
-                # CHANGING THE CURRENCY CONVERTS THE AMOUNT. It used to just relabel
-                # it: switching a €793,764 budget to GBP made it £793,764 — about a
-                # 17% raise from a dropdown, applied to the ceiling every other
-                # figure on the Finance page is read against, with nothing on screen
-                # to say it had happened.
-                #
-                # Only when the amount is not itself part of this request. The
-                # allocation form sends both, and there the number in the box is what
-                # the human means; converting on top of it would double-apply the
-                # rate. This branch is the API caller, and the client's own dropdown,
-                # which change the currency alone.
-                stored_ccy = (schedule.budget_currency or "").strip().upper()
-                if (
-                    "budget_amount" not in payload
-                    and schedule.budget_amount is not None
-                    and stored_ccy
-                    and stored_ccy != currency
-                ):
-                    moved = _convert_money(
-                        float(schedule.budget_amount),
-                        stored_ccy,
-                        currency,
-                        _currency_settings(slug)["eur_gbp_rate"],
-                    )
-                    # None when the pair cannot reach one of the two. The amount then
-                    # stays exactly as recorded rather than being silently relabelled
-                    # — a figure in the wrong currency is worse than one this cannot
-                    # convert, and the budget view names the mismatch either way.
-                    if moved is not None:
-                        schedule.budget_amount = round(moved, 2)
-                        if "budget_amount" not in money:
-                            money.append("budget_amount")
+                if moved is not None:
+                    schedule.budget_amount = round(moved, 2)
+                    if "budget_amount" not in money:
+                        money.append("budget_amount")
                 schedule.budget_currency = currency
             schedule.save(update_fields=[*money, "updated_at"])
         # Re-serialized rather than returned from `serializer.data`, which was
@@ -3320,18 +3455,39 @@ class ProjectTeamEndpoint(BaseAPIView):
                 row = ProjectTeamMember(project_id=project_id, source=ProjectTeamMember.MANUAL)
             # Read before the payload is written over it. `resolved` reuses these very
             # objects, so asking afterwards would be asking the payload about itself.
-            if c["is_lead"] != (str(row.id) in current_leads):
+            was_lead = str(row.id) in current_leads
+            if c["is_lead"] != was_lead:
                 lead_changed = True
-            row.name = c["name"]
-            row.email = c["email"]
-            row.roles = c["roles"]
-            row.is_lead = c["is_lead"]
             # An unusable member_id falls back to the address rather than dropping the
             # link entirely — the address is the more durable of the two.
             member_id = c["member_id"] if c["member_id"] in allowed_members else ""
             if not member_id and c["email"] in by_email:
                 member_id = str(by_email[c["email"]].id)
-            row.member_id = member_id or None
+            member_id = member_id or None
+            # WHO THE LEAD ROW POINTS AT is the lead flag by another name.
+            #
+            # `_is_project_lead` asks for a roster row with `is_lead` AND
+            # `member_id == caller`. So re-pointing an EXISTING lead row's account
+            # at oneself — or its address, which is what the account is resolved
+            # from when no member_id is sent — made the caller the lead without
+            # the flag ever changing, and the guard below watched only the flag.
+            # Any project member could do it in one PUT, after which governance,
+            # allocation, expenses and procurement all answered to them.
+            #
+            # Compared against what the row holds NOW, before the payload is
+            # written over it, on any row that is or becomes the lead. An
+            # ordinary member editing the lead's roles sends the same account
+            # and the same address, and still passes.
+            if (c["is_lead"] or was_lead) and (
+                member_id != (str(row.member_id) if row.member_id else None)
+                or c["email"] != (row.email or "").strip().lower()
+            ):
+                lead_changed = True
+            row.name = c["name"]
+            row.email = c["email"]
+            row.roles = c["roles"]
+            row.is_lead = c["is_lead"]
+            row.member_id = member_id
             resolved.append(row)
             keep.add(str(row.id))
 
@@ -3790,6 +3946,29 @@ class ProjectOverviewEndpoint(BaseAPIView):
         )
 
 
+def _ai_base_url_is_safe(url):
+    """Whether the planning assistant may be pointed at `url` with the workspace key.
+
+    https:// anywhere; http:// only to the host itself (localhost, 127.0.0.1),
+    where a developer runs a local model and nothing crosses a wire. Everything
+    else — a bare hostname, ftp://, http:// to a LAN address — is refused, because
+    `ai.py` sends the key in a header to whatever this says.
+    """
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    if scheme == "https":
+        return True
+    return scheme == "http" and host in {"localhost", "127.0.0.1"}
+
+
 class WorkspaceAiSettingsEndpoint(BaseAPIView):
     """Which LLM the planning assistant uses. The key is write-only: reads report
     whether one exists and where it came from, never what it is."""
@@ -3836,7 +4015,22 @@ class WorkspaceAiSettingsEndpoint(BaseAPIView):
         if "model" in request.data:
             row.model = (request.data.get("model") or "").strip()
         if "base_url" in request.data:
-            row.base_url = (request.data.get("base_url") or "").strip()
+            base_url = (request.data.get("base_url") or "").strip()
+            # `ai.py` POSTs the workspace's private key to whatever is stored here.
+            # Anything but TLS hands that key to every hop on the way, so a plain
+            # http:// URL is refused — except the two loopback names, which never
+            # leave the host and are how a developer points this at a local model.
+            if base_url and not _ai_base_url_is_safe(base_url):
+                return Response(
+                    {
+                        "error": (
+                            "The base URL must start with https:// "
+                            "(http:// is allowed only for localhost / 127.0.0.1)."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row.base_url = base_url
         # "custom" has no default endpoint, so a blank base URL would let the OpenAI
         # SDK fall back to api.openai.com and post this workspace's private key there.
         # Checked on the resulting row, so clearing the URL of a custom row fails too.
@@ -5268,6 +5462,7 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
     def post(self, request, slug, project_id):
         from plane.bgtasks.issue_activities_task import issue_activity
         from plane.db.models import Cycle, CycleIssue, Module, ModuleIssue
+        from plane.utils.timezone_converter import convert_to_utc
         from .blueprints import TRACKS
 
         project = _visible_projects(request, slug).filter(id=project_id).first()
@@ -5457,15 +5652,25 @@ class ProjectSetupApplyEndpoint(BaseAPIView):
                     name = str(sprint.get("name") or f"Sprint {index}").strip()[:255]
                     cycle = Cycle.objects.filter(project_id=project_id, name=name).first()
                     if not cycle:
-                        # Cycle stores datetimes where everything else here stores dates;
-                        # naive values would land as a warning and a wrong day near midnight.
+                        # Cycle stores instants where everything else here stores
+                        # days, and the instant has to be the PROJECT's midnight.
+                        # `timezone.make_aware` reads the active zone, which
+                        # `TimezoneMixin` set to the CALLER's; upstream's own cycle
+                        # create goes through `convert_to_utc` with the project's
+                        # zone, and `cycle_day` reads the stored instant back in
+                        # that same zone. Built the other way, a London project
+                        # set up by a UTC user in summer had its sprint end a day
+                        # late on the Overview and Finance tables — one sprint,
+                        # two end dates, and the wrong one in the cost annex.
                         cycle = Cycle.objects.create(
                             name=name,
                             project=project,
                             workspace_id=project.workspace_id,
                             owned_by=request.user,
-                            start_date=timezone.make_aware(datetime.combine(start, time.min)),
-                            end_date=timezone.make_aware(datetime.combine(end, time.max)),
+                            start_date=convert_to_utc(
+                                date=str(start), project_id=project_id, is_start_date=True
+                            ),
+                            end_date=convert_to_utc(date=str(end), project_id=project_id),
                             created_by=request.user,
                         )
                         cycles_created += 1
@@ -5587,6 +5792,35 @@ def _holidays_for(slug, country=None, start=None, end=None):
     if start and end:
         days |= set(holidays_for(country or DEFAULT_COUNTRY, start, end))
     return days
+
+
+def _finite_number(value, lo, hi):
+    """`value` as a float, clamped into [lo, hi]. ValueError on NaN or infinity.
+
+    `max(0, min(10**9, float("nan")))` is 10**9: every comparison against NaN is
+    False, so `min` keeps its first argument and `max` keeps the cap. A body
+    carrying `"amount": "nan"` therefore became a billion-unit expense line, and
+    `"inf"` the same. Both are refused here, through the `ValueError` the
+    callers' existing 400 branches already catch for text.
+    """
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("not a finite number")
+    return max(lo, min(hi, number))
+
+
+def _percent(numerator, denominator):
+    """`numerator` as a whole-number share of `denominator`, half rounded UP.
+
+    Python's `round()` is banker's rounding — `round(12.5) == 12` and
+    `round(13.5) == 14` — which is the right choice for a column of figures that
+    must not drift and the wrong one for a percentage a funder reads once: 12.5%
+    committed is "13%" to every human and every spreadsheet, and the two were
+    disagreeing. None when there is nothing to divide by.
+    """
+    if not denominator:
+        return None
+    return int(math.floor(100.0 * numerator / denominator + 0.5))
 
 
 def _rate_map(slug):
@@ -5816,6 +6050,16 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
             return Response({"error": "rates must be a list"}, status=status.HTTP_400_BAD_REQUEST)
 
         saved = []
+        # Roles whose row was deleted because the rate sent for them was zero.
+        # A rate of 0 is not a price, it is "this discipline has no rate" — and
+        # stored as 0 it costed every hour of that discipline at nothing while
+        # the row's existence said a rate had been set. Reported, so the client
+        # can take the row off the card rather than redraw it at 0.
+        removed = []
+        # Roles whose numbers could not be read at all (text, NaN, infinity).
+        # Skipped rather than stored, as before, and now named rather than
+        # silently dropped from the response.
+        rejected = []
         for entry in rows[:100]:
             if not isinstance(entry, dict):
                 continue
@@ -5823,9 +6067,14 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
             if not role:
                 continue
             try:
-                hourly = max(0, min(100000, float(entry.get("hourly_rate") or 0)))
-                per_day = max(0.5, min(24, float(entry.get("hours_per_day") or 7)))
+                hourly = _finite_number(entry.get("hourly_rate") or 0, 0, 100000)
+                per_day = _finite_number(entry.get("hours_per_day") or 7, 0.5, 24)
             except (TypeError, ValueError):
+                rejected.append(role)
+                continue
+            if hourly <= 0:
+                WorkspaceRoleRate.objects.filter(workspace=workspace, role=role).delete()
+                removed.append(role)
                 continue
             row, _ = WorkspaceRoleRate.objects.update_or_create(
                 workspace=workspace,
@@ -5844,7 +6093,7 @@ class WorkspaceRoleRatesEndpoint(BaseAPIView):
                     "currency": row.currency,
                 }
             )
-        return Response({"rates": saved}, status=status.HTTP_200_OK)
+        return Response({"rates": saved, "removed": removed, "rejected": rejected}, status=status.HTTP_200_OK)
 
 
 def _currency_settings(slug):
@@ -6001,12 +6250,60 @@ def _is_project_lead(user, project_id):
     return _is_admin_of_leaderless_project(user, project_id)
 
 
-def _is_admin_of_leaderless_project(user, project_id):
-    """A workspace admin, on a project nobody leads. See `_is_project_lead`."""
-    project = Project.objects.filter(id=project_id).values("workspace_id", "project_lead_id").first()
-    if not project or project["project_lead_id"]:
+def _project_has_a_lead_who_can_act(project_id, workspace_id, project_lead_id):
+    """Whether somebody who could actually press Approve owns this budget.
+
+    "Has a lead" used to mean "the lead column is set, or a roster row is
+    flagged" — and both of those are true of a lead who cannot act. A roster row
+    with `member_id=None` is a NAME: the model allows it on purpose, because most
+    of the team has no Plane account, and on production today MARLIN and COMM
+    each have exactly that — one roster lead, no account, no `project_lead`. A
+    `project_lead` who has been deactivated from the workspace, or taken off the
+    project, is the same shape with a different history. In every one of these
+    the answer to "who approves this purchase" was "the lead", the lead could
+    not log in, and the admin fallback was refused because a lead existed. Nobody
+    could approve a purchase, write an expense line, set the allocation or change
+    governance on those projects.
+
+    So a lead counts only if they can act: an ACTIVE workspace member who is
+    either an active member of this project or a workspace admin (admins pass
+    `allow_permission` on any project they are on, and are the people who would
+    be repairing this). Anyone else named as lead is a name, and the project is
+    leaderless for the purpose of the fallback.
+    """
+    candidates = set(
+        ProjectTeamMember.objects.filter(
+            project_id=project_id, is_lead=True, member_id__isnull=False
+        ).values_list("member_id", flat=True)
+    )
+    if project_lead_id:
+        candidates.add(project_lead_id)
+    if not candidates:
         return False
-    if ProjectTeamMember.objects.filter(project_id=project_id, is_lead=True).exists():
+    active = dict(
+        WorkspaceMember.objects.filter(
+            workspace_id=workspace_id, member_id__in=candidates, is_active=True
+        ).values_list("member_id", "role")
+    )
+    if not active:
+        return False
+    on_project = set(
+        ProjectMember.objects.filter(
+            project_id=project_id, member_id__in=active.keys(), is_active=True
+        ).values_list("member_id", flat=True)
+    )
+    return any(
+        member_id in on_project or role == ROLE.ADMIN.value for member_id, role in active.items()
+    )
+
+
+def _is_admin_of_leaderless_project(user, project_id):
+    """A workspace admin, on a project nobody who can act leads. See
+    `_is_project_lead` and `_project_has_a_lead_who_can_act`."""
+    project = Project.objects.filter(id=project_id).values("workspace_id", "project_lead_id").first()
+    if not project:
+        return False
+    if _project_has_a_lead_who_can_act(project_id, project["workspace_id"], project["project_lead_id"]):
         return False
     return WorkspaceMember.objects.filter(
         workspace_id=project["workspace_id"], member_id=user.id, is_active=True, role=ROLE.ADMIN.value
@@ -6194,8 +6491,10 @@ class ProjectExpensesEndpoint(BaseAPIView):
         if not label:
             return Response({"error": "A label is required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
-            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
+            # `_finite_number`, not a bare clamp: "nan" and "inf" parse as floats
+            # and the clamp turned both into the cap, a billion-unit line.
+            amount = _finite_number(request.data.get("amount") or 0, 0, 10**9)
+            quantity = _finite_number(request.data.get("quantity") or 1, 0, 100000)
         except (TypeError, ValueError):
             return Response({"error": "Amount and quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -6254,7 +6553,7 @@ class ProjectExpenseDetailEndpoint(BaseAPIView):
         for field, cap in (("amount", 10**9), ("quantity", 100000)):
             if field in request.data:
                 try:
-                    setattr(row, field, max(0, min(cap, float(request.data.get(field) or 0))))
+                    setattr(row, field, _finite_number(request.data.get(field) or 0, 0, cap))
                 except (TypeError, ValueError):
                     return Response({"error": f"{field} must be a number"}, status=status.HTTP_400_BAD_REQUEST)
         if "category" in request.data:
@@ -6598,7 +6897,7 @@ def _budget_display(wanted, settings, allocated, allocation_currency, labour_tot
         "allocation": None if allocation is None else round(allocation, 2),
         "committed": round(committed, 2),
         "remaining": None if allocation is None else round(allocation - committed, 2),
-        "percent": None if not allocation else round(100 * committed / allocation),
+        "percent": _percent(committed, allocation),
         "labour_total": round(labour_total, 2),
         "expenses_planned": round(planned, 2),
         "expenses_actual": round(actual, 2),
@@ -6801,12 +7100,24 @@ class ProjectBudgetEndpoint(BaseAPIView):
         # Only actual spend, and only rows carrying a date: a planned line has no
         # month because it is an intention, and putting it on a rhythm chart would
         # report money as spent that nobody has spent.
+        #
+        # CONVERTED into `basis_currency`, like every sibling figure. This loop
+        # used to add `row.total` raw, so a £850 receipt landed in a euro month
+        # as 850 beside labour that HAD been converted — and `_spend_rhythm`
+        # then derived `rate`, `sustainable`, `exhausted_on` and `over_rate`
+        # from that sum. A currency the pair cannot reach is left out and named
+        # in `rhythm.unconvertible`, exactly as the sprint loop below does.
         expense_by_month = {}
+        rhythm_unconvertible = set()
         for row in expenses:
             if row.planned or not row.incurred_on:
                 continue
+            value = _convert_money(float(row.total), row.currency, basis_currency, eur_gbp)
+            if value is None:
+                rhythm_unconvertible.add((row.currency or "?").strip().upper())
+                continue
             key = f"{row.incurred_on.year}-{row.incurred_on.month:02d}"
-            expense_by_month[key] = expense_by_month.get(key, 0.0) + float(row.total)
+            expense_by_month[key] = expense_by_month.get(key, 0.0) + value
 
         # Labour belongs on the same timeline. A task that finished last month IS
         # money the project spent, whether or not anybody typed an expense line —
@@ -6986,9 +7297,7 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     "remaining": None
                     if allocated is None or basis_mismatch
                     else round(allocated - committed, 2),
-                    "percent": None
-                    if not allocated or basis_mismatch
-                    else round(100 * committed / allocated),
+                    "percent": None if basis_mismatch else _percent(committed, allocated),
                     # True when `committed` could not be expressed in the
                     # allocation's own currency, so `remaining` and `percent` are
                     # withheld above and the client has to say why rather than
@@ -7032,7 +7341,11 @@ class ProjectBudgetEndpoint(BaseAPIView):
                     committed,
                     schedule_row.target_date if schedule_row else None,
                     basis_currency,
-                    sorted(labour_unconvertible),
+                    # Both halves of the timeline name what they could not place.
+                    sorted(labour_unconvertible | rhythm_unconvertible),
+                    # The caller's day, so `rate` is a burn and not a forecast:
+                    # `labour_by_month` carries task end dates in the future.
+                    today=timezone.localdate(),
                 ),
                 # Cost per sprint. A cycle is the unit a project manager commits
                 # to and reports on, and until now the only time axis on this page
@@ -7204,8 +7517,10 @@ class ProjectProcurementEndpoint(BaseAPIView):
         if not label:
             return Response({"error": "Say what you need"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            amount = max(0, min(10**9, float(request.data.get("amount") or 0)))
-            quantity = max(0, min(100000, float(request.data.get("quantity") or 1)))
+            # `_finite_number`, not a bare clamp: "nan" and "inf" parse as floats
+            # and the clamp turned both into the cap, a billion-unit line.
+            amount = _finite_number(request.data.get("amount") or 0, 0, 10**9)
+            quantity = _finite_number(request.data.get("quantity") or 1, 0, 100000)
         except (TypeError, ValueError):
             return Response({"error": "Amount and quantity must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
         if amount <= 0:
@@ -7360,6 +7675,19 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
                         # feature exists to stop. Guarded on the link for the
                         # same reason the write paths guard it.
                         replaces_labour=row.replaces_labour and bool(row.issue_id),
+                        # The day the money was committed. The line used to be
+                        # created with no date at all, so every approved purchase
+                        # was "undated" on the curve and in the ledger. The caller
+                        # may say which day (a backdated approval); the request
+                        # may already know (a delivery recorded before the
+                        # paperwork); otherwise it is the day of the decision —
+                        # the caller's day, see the note on `localdate()` above.
+                        incurred_on=(
+                            _parse_date(request.data.get("incurred_on"))
+                            or row.received_on
+                            or row.ordered_on
+                            or timezone.localdate()
+                        ),
                         created_by=request.user,
                     )
                     row.expense = expense
@@ -7454,8 +7782,15 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
             return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
         is_lead = _is_project_lead(request.user, project_id)
-        own_and_pending = row.requested_by_id == request.user.id and row.status == ProcurementRequest.PENDING
-        if not (is_lead or own_and_pending):
+
+        def may_withdraw(current):
+            """The requester while it is still pending; the lead, always."""
+            return is_lead or (
+                current.requested_by_id == request.user.id
+                and current.status == ProcurementRequest.PENDING
+            )
+
+        if not may_withdraw(row):
             return Response(
                 {"error": "You can only withdraw your own request while it is still pending."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -7473,13 +7808,32 @@ class ProjectProcurementDecisionEndpoint(BaseAPIView):
             )
             if not locked:
                 return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
-            # Deleting an approved request must not leave its money behind.
+            # Asked AGAIN, of the locked row. The check above read the row before
+            # the lock, so a requester whose request was approved a moment ago
+            # passed it on a "pending" that no longer held — and then deleted
+            # the approved line from underneath the lead.
+            if not may_withdraw(locked):
+                return Response(
+                    {"error": "You can only withdraw your own request while it is still pending."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # What happens to the money depends on how far the purchase got.
+            # Approved and not yet ordered: the line is a commitment this
+            # withdrawal takes back, so it goes with the request. Ordered or
+            # received: a supplier holds an order and the money has left, or is
+            # about to, whether or not this row survives — so the line stays on
+            # the sheet and only the link to it goes. The OneToOne lives on the
+            # request; deleting the request is what clears it.
+            expense_kept = False
             if locked.expense_id:
-                # Scope the delete by project_id so it can't remove another
-                # project's expense line, consistent with the rest of this file.
-                ProjectExpense.objects.filter(id=locked.expense_id, project_id=project_id).delete()
+                if locked.status in (ProcurementRequest.ORDERED, ProcurementRequest.RECEIVED):
+                    expense_kept = True
+                else:
+                    # Scope the delete by project_id so it can't remove another
+                    # project's expense line, consistent with the rest of this file.
+                    ProjectExpense.objects.filter(id=locked.expense_id, project_id=project_id).delete()
             locked.delete()
-        return Response({"deleted": True}, status=status.HTTP_200_OK)
+        return Response({"deleted": True, "expense_kept": expense_kept}, status=status.HTTP_200_OK)
 
 
 # ---------------------------------------------------------------------------
@@ -8594,15 +8948,17 @@ def _suggest_dates_from_effort(project_id, issue_id, days, issue):
 
 
 def _add_working_days(start, count):
-    """`count` working days from `start`, forwards or backwards, weekends skipped."""
-    current = start
-    step = 1 if count >= 0 else -1
-    remaining = abs(count)
-    while remaining > 0:
-        current += timedelta(days=step)
-        if current.weekday() < 5:
-            remaining -= 1
-    return current
+    """`count` working days from `start`, forwards or backwards, weekends skipped.
+
+    Arithmetic, not a walk — `scheduling.add_working_days`, which has the exact
+    semantics of the loop that used to be here. The loop took one step per
+    calendar day between `start` and the answer, which was a forty-second
+    response for a start in 2500 and an `OverflowError` past `date.max`: the
+    undated-gap screen reads its default start from the project window, and the
+    window's serializer accepted 9999-12-31. The serializer is bounded now too;
+    this is the lock that holds for a row already in the database.
+    """
+    return add_working_days(start, count)
 
 
 class IssueFixedCostEndpoint(BaseAPIView):
@@ -8772,6 +9128,9 @@ class GithubSyncNowEndpoint(BaseAPIView):
                 "captured": result.get("captured", 0),
                 "filed": result.get("filed", 0),
                 "queued": result.get("queued", 0),
+                # Items the run would once have moved to the repo's new owner
+                # and now leaves where they are; a person moves them on purpose.
+                "relocation_refused": result.get("relocation_refused", []),
                 "dismissed_skipped": result.get("dismissed_skipped", 0),
                 # What the run CLOSED. A state change on somebody's board is the
                 # outcome most worth being able to see, and summarising it away
@@ -8900,26 +9259,38 @@ def _cost_by_cycle(project_id, labour_by_cycle, expense_by_cycle, currency, unco
     # several of.
     project = Project.objects.filter(id=project_id).only("timezone").first()
 
-    # Grouped, not one query per cycle.
+    # Grouped, not one query per cycle — and counted from the JOIN TABLE, not
+    # through the issue's multi-valued relation.
     #
-    # `issue_cycle__deleted_at__isnull=True` makes this a LEFT JOIN, so an item in
-    # no sprint comes back under a null key rather than not at all. That is the
-    # count wanted, and it is why this does not subtract: an item may sit in two
-    # cycles, so the group totals can exceed the project's item count and a
-    # subtraction would report the unsprinted figure as negative.
+    # `_costed_issues(...).filter(issue_cycle__deleted_at__isnull=True)` read as
+    # a LEFT JOIN with a null key for unsprinted items, and it was one — for an
+    # item that had NEVER been in a sprint. An item REMOVED from a sprint has a
+    # join row with `deleted_at` set; the filter dropped that row, the item came
+    # back under no key at all, and its money — computed through
+    # `CycleIssue.objects`, which hides deleted rows — landed under "Not in any
+    # sprint" while its count did not. "0 items · €4,000", on production.
+    #
+    # So: live join rows grouped by cycle, and the unsprinted bucket is every
+    # costed item with no live join row to a live cycle. An item may still sit
+    # in two cycles and count in both, so the group totals can exceed the
+    # project's item count — which is why this never subtracts.
+    costed = _costed_issues(project_id)
+    live_joins = CycleIssue.objects.filter(issue__in=costed, deleted_at__isnull=True)
     grouped = {
-        r["issue_cycle__cycle_id"]: r["n"]
-        for r in _costed_issues(project_id)
-        .filter(issue_cycle__deleted_at__isnull=True)
-        .values("issue_cycle__cycle_id")
-        .annotate(n=Count("id", distinct=True))
+        r["cycle_id"]: r["n"]
+        for r in live_joins.values("cycle_id").annotate(n=Count("issue_id", distinct=True))
     }
     live_cycles = {row["id"] for row in rows}
     items_by_cycle = {key: n for key, n in grouped.items() if key in live_cycles}
-    # The null key, plus anything claimed by a cycle that no longer exists — a
-    # soft-deleted cycle leaves its join rows behind, and an item whose only
-    # sprint has been deleted is, for every purpose this chart has, unsprinted.
-    loose_items = sum(n for key, n in grouped.items() if key not in live_cycles)
+    # Never in a sprint, taken out of every sprint, or claimed only by a cycle
+    # that no longer exists — a soft-deleted cycle leaves its join rows behind,
+    # and an item whose only sprint has been deleted is, for every purpose this
+    # chart has, unsprinted.
+    if live_cycles:
+        placed = live_joins.filter(cycle_id__in=live_cycles).values("issue_id")
+        loose_items = costed.exclude(id__in=placed).count()
+    else:
+        loose_items = costed.count()
 
     def fold(bucket):
         """Money against a cycle nobody can see any more belongs to nobody.
@@ -9000,8 +9371,17 @@ def _spend_rhythm(
     target_date,
     currency,
     unconvertible,
+    today=None,
 ):
     """Monthly cost, the rate that would still fit, and when the money runs out.
+
+    `today` is the caller's day. With it, `rate` is taken only from months up
+    to and including the current one — `labour_by_month` is keyed on task END
+    dates, and a plan has those in the future, so without it the "current
+    rate" was the mean of three months that had not happened yet and
+    `exhausted_on` extrapolated the plan rather than the burn. Future months
+    stay in `months` for the chart. None keeps every month in the rate (the
+    pure tests, and any caller with no calendar to speak of).
 
     This is the only part of the budget view that turns a figure into a decision.
     "60% spent" is healthy at month eight of twelve and a crisis at month three,
@@ -9054,9 +9434,18 @@ def _spend_rhythm(
             if m > 12:
                 y, m = y + 1, 1
 
-    spent_months = [row["amount"] for row in months if row["amount"] > 0]
+    # The rate reads only months that have happened (see the docstring on
+    # `today`); the chart keeps the rest.
+    cutoff = f"{today.year}-{today.month:02d}" if today is not None else None
+    spent_months = [
+        row["amount"]
+        for row in months
+        if row["amount"] > 0 and (cutoff is None or row["month"] <= cutoff)
+    ]
     recent = spent_months[-3:]
     rate = round(sum(recent) / len(recent), 2) if recent else None
+    if today is None:
+        today = timezone.localdate()
 
     remaining = None if allocated is None else allocated - committed
 
@@ -9065,7 +9454,6 @@ def _spend_rhythm(
     # money that exists.
     months_left = None
     if target_date:
-        today = timezone.localdate()
         months_left = max(0, (target_date.year - today.year) * 12 + (target_date.month - today.month))
 
     sustainable = None
@@ -9075,7 +9463,6 @@ def _spend_rhythm(
     exhausted_on = None
     if remaining is not None and rate and rate > 0 and remaining > 0:
         months_of_runway = int(remaining // rate)
-        today = timezone.localdate()
         # `date()` refuses a year past 9999, and this arithmetic reaches one
         # easily. `rate` is the mean of the last three months WITH spend, so a
         # single €1 test line after a quiet stretch is a rate of €1 — against
@@ -9510,13 +9897,26 @@ def _apply_issue_order(project_id, issue_ids):
         str(i): i
         for i in Issue.issue_objects.filter(project_id=project_id).values_list("id", flat=True)
     }
+    # One UPDATE per id was two thousand round trips on a full freeze — every
+    # drag on a sorted or grouped timeline freezes first, so that was the cost of
+    # every drag. One batched statement per five hundred rows instead. The last
+    # mention of a repeated id wins, as it did when each was its own UPDATE.
+    orders = {}
     applied = 0
     for index, issue_id in enumerate(issue_ids or []):
         real = known.get(str(issue_id))
         if not real:
             continue
-        Issue.objects.filter(id=real).update(sort_order=(index + 1) * ORDER_STEP)
+        orders[real] = (index + 1) * ORDER_STEP
         applied += 1
+    if orders:
+        # Unsaved instances carrying only the pk and the one column; bulk_update
+        # writes the named fields and calls no save(), so nothing else is touched.
+        Issue.objects.bulk_update(
+            [Issue(id=real, sort_order=order) for real, order in orders.items()],
+            ["sort_order"],
+            batch_size=500,
+        )
     return applied
 
 
@@ -10022,7 +10422,9 @@ class IssueChecklistEndpoint(BaseAPIView):
             return Response({"error": "Work item not found in this project"}, status=status.HTTP_404_NOT_FOUND)
 
         rows = (
-            IssueChecklistItem.objects.filter(owner_id=issue_id)
+            # A deleted member is a line pointing at nothing the reader can open.
+            # The FK cascades only on a hard delete, and Plane never hard-deletes.
+            IssueChecklistItem.objects.filter(owner_id=issue_id, member__deleted_at__isnull=True)
             .select_related("member", "member__state", "member__project")
             .order_by("sort_order")
         )
@@ -10150,7 +10552,15 @@ class ProjectChecklistSummaryEndpoint(BaseAPIView):
         # tallied them here, so the work — and the transferred payload — grew with
         # the number of checklist ENTRIES while the answer is one pair per owner.
         rows = (
-            IssueChecklistItem.objects.filter(owner__project_id=project_id)
+            # Neither end may be a deleted work item: a deleted member counted
+            # against its owner's total forever (never done, since its state is
+            # whatever it was), and a deleted owner kept a summary nobody could
+            # open. Soft deletes leave both rows in place, so the join has to ask.
+            IssueChecklistItem.objects.filter(
+                owner__project_id=project_id,
+                owner__deleted_at__isnull=True,
+                member__deleted_at__isnull=True,
+            )
             # `.order_by()` before `.values()`, or the model's default ordering on
             # `sort_order` joins the GROUP BY and every line becomes its own group —
             # the aggregate would return one row per membership again, silently.

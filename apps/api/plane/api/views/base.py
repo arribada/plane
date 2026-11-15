@@ -18,7 +18,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.generics import GenericAPIView
 
 # Module imports
@@ -53,6 +53,22 @@ class BaseAPIView(TimezoneMixin, GenericAPIView, ReadReplicaControlMixin, BasePa
     permission_classes = [IsAuthenticated]
 
     use_read_replica = False
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # ARRIBADA FIX: `lead_only_edits` and `allow_edit_others` were inert on
+        # /api/v1/. The plan-guard middleware (plane.arribada.plan_guard) runs in
+        # `process_view`, before `APIKeyAuthentication` — which DRF runs inside
+        # this very `initial()` — has named the caller, so an API-key request
+        # reached it as AnonymousUser and the guard correctly stood aside. Any
+        # member can mint a personal API key, so that was a documented bypass of
+        # a project setting. Asked here instead, once the caller is known; one
+        # table in plan_guard drives both doors.
+        from plane.arribada.plan_guard import refuse_plan_write
+
+        refusal = refuse_plan_write(request, self)
+        if refusal is not None:
+            raise PermissionDenied(detail=refusal)
 
     def filter_queryset(self, queryset):
         for backend in list(self.filter_backends):

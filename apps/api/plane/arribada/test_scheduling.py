@@ -106,3 +106,48 @@ def test_topo_order_is_not_quadratic():
     assert len(order) == n
     assert in_cycle == []
     assert elapsed < 2.0, f"{elapsed:.1f}s for {n} nodes — the list scan is back"
+
+
+# --- finished work is a record, not a plan -----------------------------------
+
+
+def test_a_fixed_item_is_never_moved():
+    """B violates its link to A and would be pushed; told it is finished, it stays."""
+    issues, rels = _graph()
+    assert "B" in cascade(issues, rels), "the fixture no longer exercises the push"
+
+    changed = cascade(issues, rels, fixed={"B", "C"})
+    assert "B" not in changed
+    assert "C" not in changed
+
+
+def test_a_fixed_item_still_pushes_what_waits_on_it():
+    """A finished predecessor constrains with its RECORDED dates.
+
+    A 3–7 Aug, B 5–7 Aug (finished, overlapping A — which happens: the link was
+    drawn after the work was done), C 6–10 Aug after B. B stays where it was, and
+    C cascades from B's real finish on the 7th, not from where B would have been
+    pushed to had it been movable (the 10th–12th, which would have put C on the 13th).
+    """
+    issues = {
+        "A": {"start": D(2026, 8, 3), "target": D(2026, 8, 7)},
+        "B": {"start": D(2026, 8, 5), "target": D(2026, 8, 7)},
+        "C": {"start": D(2026, 8, 6), "target": D(2026, 8, 10)},
+    }
+    rels = [
+        {"issue_id": "A", "related_issue_id": "B", "relation_type": "finish_before"},
+        {"issue_id": "B", "related_issue_id": "C", "relation_type": "finish_before"},
+    ]
+    movable = cascade(issues, rels)
+    assert movable["B"]["start"] == D(2026, 8, 10)
+    assert movable["C"]["start"] == D(2026, 8, 13)
+
+    changed = cascade(issues, rels, fixed=frozenset({"B"}))
+    assert set(changed) == {"C"}
+    assert changed["C"] == {"start": D(2026, 8, 10), "target": D(2026, 8, 12)}
+
+
+def test_fixed_ids_are_matched_as_strings():
+    """The endpoint hands uuids over as whatever the ORM returned."""
+    issues, rels = _graph()
+    assert "B" not in cascade(issues, rels, fixed=[b"B".decode()])

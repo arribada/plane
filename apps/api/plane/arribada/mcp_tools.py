@@ -797,6 +797,34 @@ def _plan_write_guard(ctx, project, offered):
         )
 
 
+def _own_items_guard(ctx, project, offered, issue_ids):
+    """`allow_edit_others` off: an agent writes the plan only of items its user is on.
+
+    The fourth product answer, mirrored from `plan_guard.py` so the middleware and
+    this tool refuse the same person for the same reason. `issue_ids` is the item
+    being updated, or the parent a new item is being filed under; a lead or a
+    workspace admin is excused by `_may_edit_plan`, exactly as in the gantt.
+    """
+    if not issue_ids:
+        return
+    from .models import ProjectSchedule
+    from .plan_guard import OWN_ITEMS_LINE, _all_assigned
+    from .views import _may_edit_plan
+
+    row = ProjectSchedule.objects.filter(project_id=project.id).values_list("allow_edit_others", flat=True).first()
+    if row is None or row:
+        return
+    if _may_edit_plan(ctx.user, project.id):
+        return
+    if _all_assigned({str(i) for i in issue_ids}, ctx.user):
+        return
+    names = ", ".join(sorted(offered))
+    raise ToolError(
+        f"{OWN_ITEMS_LINE}, and {ctx.user.email} is not assigned to it. Refused fields: {names}. "
+        "Ask to be assigned, or ask the lead (or a workspace admin), who may change any item."
+    )
+
+
 def _parse_date(name, raw):
     if raw in (None, ""):
         return None
@@ -1026,6 +1054,11 @@ def t_create_work_item(ctx, args):
     if offered:
         _plan_write_guard(ctx, project, offered)
         plan = _resolve_plan(ctx, project, offered)
+        # A new item is nobody's yet; filing it UNDER somebody else's item is a
+        # plan write on that parent.
+        parent = plan["fields"].get("parent")
+        if parent is not None:
+            _own_items_guard(ctx, project, offered, [parent.id])
 
     state = (
         State.objects.filter(project_id=project.id, default=True).first()
@@ -1093,6 +1126,7 @@ def t_update_work_item(ctx, args):
     plan = None
     if offered:
         _plan_write_guard(ctx, project, offered)
+        _own_items_guard(ctx, project, offered, [issue.id])
         plan = _resolve_plan(ctx, project, offered, issue=issue)
 
     changed = {}

@@ -74,3 +74,32 @@ class ProjectScheduleSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+    # The project window is bounded the way every other plan date is.
+    #
+    # `_parse_date` refuses a work-item date outside [1970, now + 50 years], and
+    # it does so because one row dated 9999-12-31 made two calendar walks raise
+    # `OverflowError` on every request after it — a permanent 500 with no way
+    # back from inside the product. This serializer took the project's own
+    # `start_date` straight from DRF's DateField, which accepts any year the
+    # `date` type does, and the undated-gap screen then walked from that start.
+    # Same bound, same reason, asked here so the next view that pipes a body
+    # through this serializer cannot reopen it.
+    #
+    # Imported inside the method: views.py imports this module at load, so a
+    # module-level import back would be a cycle. The bound stays defined once.
+    @staticmethod
+    def _within_plan_window(value):
+        from .views import PLAN_DATE_FLOOR, _plan_date_ceiling
+
+        return PLAN_DATE_FLOOR <= value <= _plan_date_ceiling()
+
+    def validate_start_date(self, value):
+        if value and not self._within_plan_window(value):
+            raise serializers.ValidationError("Start date is outside the plannable window.")
+        return value
+
+    def validate_target_date(self, value):
+        if value and not self._within_plan_window(value):
+            raise serializers.ValidationError("Target date is outside the plannable window.")
+        return value

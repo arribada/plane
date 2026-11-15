@@ -184,3 +184,39 @@ def test_a_folder_from_another_workspace_is_refused(folder_world):
 
     assert response.status_code == 404
     assert _folder_of(folder_world) is None
+
+
+# --- and what the listing keeps to itself -------------------------------------
+
+
+def test_the_listing_does_not_name_projects_the_caller_cannot_see_or_that_are_gone(folder_world):
+    """`ProjectFolderItem.project` is a plain FK join: no manager, no membership.
+    A soft-deleted project's id stayed in its folder for good, and the ids of
+    projects the caller is not on went out too — a sidebar handed ids it cannot
+    resolve, and a folder count of three where two projects show."""
+    from datetime import datetime, timezone as dt_timezone
+
+    _assign(folder_world, folder_world["tracker"])
+    workspace = folder_world["tracker"].workspace
+
+    # A sibling project in the same workspace the caller has no seat on.
+    other = Project.objects.create(
+        name="Not mine", workspace=workspace, created_by=workspace.owner, identifier="NMN"
+    )
+    ProjectFolderItem.objects.create(folder=folder_world["tracker"], project=other, sort_order=2)
+
+    # And one the caller IS on, filed, then deleted.
+    gone = Project.objects.create(
+        name="Deleted since", workspace=workspace, created_by=workspace.owner, identifier="GNE"
+    )
+    ProjectMember.objects.create(
+        project=gone, workspace=workspace, member=workspace.owner, role=ROLE.ADMIN.value
+    )
+    ProjectFolderItem.objects.create(folder=folder_world["tracker"], project=gone, sort_order=3)
+    Project.objects.filter(id=gone.id).update(deleted_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc))
+
+    body = {f["id"]: f for f in folder_world["client"].get(folder_world["list_url"]).data}
+
+    assert body[str(folder_world["tracker"].id)]["project_ids"] == [str(folder_world["project"].id)], (
+        "the folder listing names projects the caller cannot see, or that no longer exist"
+    )

@@ -500,3 +500,98 @@ def test_a_guest_cannot_read_any_of_it(money_project):
         kwargs={"slug": money_project["slug"], "project_id": money_project["project_id"]},
     )
     assert client.get(url).status_code == 403
+
+
+# --- the rhythm chart converts before it adds ---------------------------------
+#
+# `expense_by_month` added `row.total` raw while `labour_by_month` and every
+# sibling figure went through `_convert_money`. A £850 receipt landed in a euro
+# month as 850 beside converted labour, and `_spend_rhythm` derived `rate`,
+# `sustainable`, `exhausted_on` and `over_rate` from that sum.
+
+
+def test_the_rhythm_converts_an_expense_into_the_basis_before_adding_it(money_project):
+    WorkspaceCurrencySettings.objects.create(
+        workspace=money_project["workspace"], eur_gbp_rate="0.85", display_currency="EUR"
+    )
+    allocate(money_project, amount=50000, currency="EUR")
+    ProjectExpense.objects.create(
+        project=money_project["project"], label="Boards", amount=850, currency="GBP",
+        planned=False, incurred_on=MONDAY,
+    )
+    ProjectExpense.objects.create(
+        project=money_project["project"], label="Sensors", amount=100, currency="USD",
+        planned=False, incurred_on=MONDAY,
+    )
+
+    rhythm = budget(money_project)["rhythm"]
+    assert rhythm["currency"] == "EUR"
+    august = next(m for m in rhythm["months"] if m["month"] == "2026-08")
+    assert august["expense"] == 1000.0, (
+        "a sterling receipt was added to a euro month unconverted (850 / 0.85 is EUR 1,000)"
+    )
+    assert "USD" in rhythm["unconvertible"], (
+        "a currency the pair cannot reach left the rhythm chart without being named"
+    )
+
+
+# --- a currency the pair cannot reach is refused, not relabelled -------------
+
+
+def test_switching_from_an_unreachable_currency_is_refused_rather_than_relabelled(
+    money_project, lead_client
+):
+    """CHF 100,000 became £100,000: `_convert_money` answered None, the amount was
+    kept, and the currency was written anyway."""
+    allocate(money_project, amount=100000, currency="CHF")
+    response = lead_client.patch(schedule_url(money_project), {"budget_currency": "GBP"}, format="json")
+    assert response.status_code == 400, response.data
+    assert "budget_currency" in response.data
+    row = ProjectSchedule.objects.get(project=money_project["project"])
+    assert (row.budget_currency, float(row.budget_amount)) == ("CHF", 100000.0), (
+        "a refused currency switch still rewrote the row"
+    )
+
+
+def test_restating_the_amount_in_the_new_currency_is_the_way_through(money_project, lead_client):
+    allocate(money_project, amount=100000, currency="CHF")
+    response = lead_client.patch(
+        schedule_url(money_project), {"budget_currency": "GBP", "budget_amount": 88000}, format="json"
+    )
+    assert response.status_code == 200, response.data
+    row = ProjectSchedule.objects.get(project=money_project["project"])
+    assert (row.budget_currency, float(row.budget_amount)) == ("GBP", 88000.0)
+
+
+# --- a percentage is rounded the way a reader rounds it ----------------------
+
+
+def test_half_a_percent_rounds_up(money_project):
+    """`round(12.5)` is 12 in Python (banker's rounding). 12.5% committed is
+    13% to every human and every spreadsheet."""
+    allocate(money_project, amount=8000, currency="GBP")
+    rate(money_project, hourly=100, hours=10)
+    issue = work_item(money_project, "Radio")
+    IssueEffort.objects.create(issue=issue, days=1)
+
+    payload = budget(money_project)
+    assert payload["allocation"]["committed"] == 1000.0
+    assert payload["allocation"]["percent"] == 13
+    assert payload["display"]["percent"] == 13
+
+
+# --- "nan" is not an amount --------------------------------------------------
+
+
+def test_a_nan_amount_is_refused_rather_than_stored_as_the_cap(money_project, lead_client):
+    """`max(0, min(10**9, float("nan")))` is 10**9: NaN compares False to
+    everything, so the clamp handed back its ceiling and the sheet gained a
+    billion-pound line."""
+    url = reverse(
+        "arribada-project-expenses",
+        kwargs={"slug": money_project["slug"], "project_id": money_project["project_id"]},
+    )
+    for bad in ("nan", "inf", "-inf"):
+        response = lead_client.post(url, {"label": "Boards", "amount": bad}, format="json")
+        assert response.status_code == 400, (bad, response.data)
+    assert not ProjectExpense.objects.filter(project=money_project["project"]).exists()

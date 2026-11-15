@@ -102,3 +102,40 @@ def test_the_rate_is_the_last_three_months_with_spend_not_the_last_three_months(
         "2026-05",
         "2026-06",
     ]
+
+
+# --- the rate is a burn, not a forecast -------------------------------------
+#
+# `labour_by_month` is keyed on task END dates, and a plan has those in the
+# future. Without `today` the "current rate" was the mean of three months that
+# had not happened yet, and `exhausted_on` extrapolated the plan.
+
+
+@freeze_time(NOW)
+def test_the_rate_reads_only_months_that_have_happened():
+    planned = {
+        "2026-09": 300.0,
+        "2026-10": 600.0,
+        "2027-01": 9000.0,
+        "2027-02": 9000.0,
+        "2027-03": 9000.0,
+    }
+    out = _spend_rhythm({}, planned, 20_000.0, 10_000.0, None, "EUR", [], today=date(2026, 10, 25))
+    assert out["rate"] == 450.0, "the current rate was taken from months in the future"
+    # The chart still shows the plan; only the rate stops reading it.
+    assert len(out["months"]) == 7
+    assert out["months"][-1]["month"] == "2027-03"
+    # 10,000 left at 450 a month is 22 months from October 2026.
+    assert out["exhausted_on"] == "2028-08-01"
+
+
+@freeze_time(NOW)
+def test_the_current_month_counts_as_having_happened():
+    out = _spend_rhythm({"2026-10": 500.0}, {}, None, 0.0, None, "EUR", [], today=date(2026, 10, 25))
+    assert out["rate"] == 500.0
+
+
+def test_without_a_day_every_month_is_read_as_before():
+    """`today=None` is the pure callers' contract: no calendar, no cut-off."""
+    out = rhythm({"2026-01": 300.0, "2027-05": 600.0, "2027-06": 900.0})
+    assert out["rate"] == 600.0

@@ -617,3 +617,94 @@ def test_the_lead_appoints_the_lead(money_world, settings):
     )
     assert response.status_code == 200, response.content
     assert ProjectTeamMember.objects.get(project=project, email="member@plane.so").is_lead
+
+
+# --- a lead who cannot act is not a lead -------------------------------------
+#
+# `_is_admin_of_leaderless_project` refused the fallback whenever the lead column
+# was set or ANY roster row was flagged `is_lead` — including a roster lead with
+# no Plane account (`member_id=None`, which the model allows on purpose) and a
+# `project_lead` deactivated from the workspace. Measured on production: MARLIN
+# and COMM each had one roster lead with no account and no `project_lead`, so
+# nobody could approve a purchase, write an expense, set the allocation or change
+# governance there. A lead counts only if they can act.
+#
+# `money_project` (conftest): `owner` is the workspace admin, `lead` and `member`
+# are ordinary members; nobody is the lead until a test says so.
+
+
+def _allocation_url(world):
+    return reverse(
+        "arribada-project-schedule",
+        kwargs={"slug": world["slug"], "project_id": world["project_id"]},
+    )
+
+
+def _decision_url(world):
+    from plane.arribada.models import ProcurementRequest
+
+    row = ProcurementRequest.objects.create(
+        project=world["project"],
+        requested_by=world["users"]["member"],
+        label="10 boards",
+        amount=250,
+        quantity=10,
+        currency="GBP",
+    )
+    return reverse(
+        "arribada-project-procurement-decision",
+        kwargs={"slug": world["slug"], "project_id": world["project_id"], "request_id": str(row.id)},
+    )
+
+
+def _money_writes(world, caller):
+    """(set the allocation, decide a request) as status codes."""
+    client = world["clients"][caller]
+    allocation = client.patch(_allocation_url(world), {"budget_amount": 1000}, format="json").status_code
+    decision = client.post(_decision_url(world), {"decision": "approved"}, format="json").status_code
+    return allocation, decision
+
+
+def test_a_roster_lead_with_no_account_leaves_the_project_leaderless_for_the_admin(money_project):
+    """The production shape: a name on the roster, nobody behind it."""
+    ProjectTeamMember.objects.create(
+        project=money_project["project"], name="Somebody Offline", email="", member=None, is_lead=True
+    )
+    assert _money_writes(money_project, "owner") == (200, 200), (
+        "a workspace admin was refused the money on a project whose only lead has no account"
+    )
+    assert _money_writes(money_project, "member") == (403, 403)
+
+
+@pytest.mark.parametrize("how", ["deactivated_in_workspace", "taken_off_the_project"])
+def test_a_project_lead_who_cannot_act_leaves_the_project_leaderless_for_the_admin(money_project, how):
+    project = money_project["project"]
+    gone = money_project["users"]["lead"]
+    project.project_lead = gone
+    project.save(update_fields=["project_lead"])
+    if how == "deactivated_in_workspace":
+        WorkspaceMember.objects.filter(workspace=money_project["workspace"], member=gone).update(is_active=False)
+    else:
+        ProjectMember.objects.filter(project=project, member=gone).update(is_active=False)
+
+    assert _money_writes(money_project, "owner") == (200, 200), (
+        f"a workspace admin was refused the money on a project whose lead is {how}"
+    )
+    assert _money_writes(money_project, "member") == (403, 403)
+
+
+def test_a_lead_who_can_act_still_keeps_the_admin_out(money_project):
+    """The existing rule, which the fallback must not widen: admin is a permission
+    level and owning a budget is a job."""
+    ProjectTeamMember.objects.create(
+        project=money_project["project"],
+        name="Lead",
+        email="lead@arribada.test",
+        member=money_project["users"]["lead"],
+        is_lead=True,
+    )
+    assert _money_writes(money_project, "owner") == (403, 403), (
+        "a workspace admin approved spending on a project that has a lead who can act"
+    )
+    assert _money_writes(money_project, "member") == (403, 403)
+    assert _money_writes(money_project, "lead") == (200, 200)

@@ -47,7 +47,16 @@ class Command(BaseCommand):
         parser.add_argument("--project", help="Restrict to one project id.")
 
     def handle(self, *args, **options):
-        requests = ProcurementRequest.objects.filter(status__in=[ProcurementRequest.APPROVED])
+        # Every status an approval leads to: a request that has since been marked
+        # ordered or received still owns its expense line, and a duplicate of it
+        # is still an orphan.
+        requests = ProcurementRequest.objects.filter(
+            status__in=[
+                ProcurementRequest.APPROVED,
+                ProcurementRequest.ORDERED,
+                ProcurementRequest.RECEIVED,
+            ]
+        )
         expenses = ProjectExpense.objects.all()
         if options.get("project"):
             requests = requests.filter(project_id=options["project"])

@@ -157,3 +157,39 @@ def test_deleting_one_baseline_leaves_the_others_alone(planned):
     assert client.delete(baseline_url(planned), {"id": january["id"]}, format="json").status_code == 200
     remaining = client.get(baseline_url(planned)).json()
     assert [b["id"] for b in remaining["baselines"]] == [march["id"]]
+
+
+# --- what the portfolio reads off the newest one ------------------------------
+
+
+def portfolio_row(world):
+    url = reverse("arribada-portfolio", kwargs={"slug": world["slug"]})
+    response = world["clients"]["owner"].get(url)
+    assert response.status_code == 200, response.data
+    return next(row for row in response.data if row["id"] == world["project_id"])
+
+
+def test_the_portfolio_drift_reads_the_newest_baseline(planned):
+    """`baseline_target_date` aggregated `IssueBaseline`, the single-snapshot row
+    that versioned baselines replaced — and that nothing writes any more. So
+    every project frozen since showed no drift at all, and the drift column is
+    the one thing the portfolio exists to show a funder. It reads the entries of
+    each project's NEWEST baseline now, which is what the timeline draws."""
+    client = planned["clients"]["owner"]
+    assert portfolio_row(planned)["baseline_target_date"] is None
+
+    january = client.post(baseline_url(planned), {"name": "January"}, format="json").json()
+    Issue.objects.filter(id=planned["second"].id).update(
+        start_date=date(2027, 4, 5), target_date=date(2027, 4, 9)
+    )
+    march = client.post(baseline_url(planned), {"name": "March"}, format="json").json()
+    ProjectBaseline.objects.filter(id=january["id"]).update(captured_at=date_time(2027, 1, 15))
+    ProjectBaseline.objects.filter(id=march["id"]).update(captured_at=date_time(2027, 3, 15))
+
+    assert str(portfolio_row(planned)["baseline_target_date"]) == "2027-04-09", (
+        "the portfolio's baseline drift is dead: it reads a table nothing writes"
+    )
+
+    # Which one is newest is a fact about `captured_at`, not about insertion order.
+    ProjectBaseline.objects.filter(id=january["id"]).update(captured_at=date_time(2027, 5, 1))
+    assert str(portfolio_row(planned)["baseline_target_date"]) == "2027-03-12"

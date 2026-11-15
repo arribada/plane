@@ -232,3 +232,70 @@ def test_the_overview_page_reports_the_project_day(elsewhere):
     cycle = response.data["cycles"][0]
     assert str(cycle["start_date"]) == "2026-03-02"
     assert str(cycle["end_date"]) == "2026-03-27"
+
+
+# --- and the one surface that was WRITING it wrong ----------------------------
+
+
+def _apply_one_sprint(world, project):
+    """The setup wizard's apply, with one task in one sprint, as the owner.
+
+    The owner's account is in UTC (the model default), which is the caller zone
+    `make_aware` was building the instant in.
+    """
+    assert world["users"]["owner"].user_timezone == "UTC"
+    url = reverse(
+        "arribada-project-setup-apply",
+        kwargs={"slug": world["slug"], "project_id": str(project.id)},
+    )
+    response = world["clients"]["owner"].post(
+        url,
+        {
+            "tasks": [
+                {
+                    "key": "fw.bringup",
+                    "name": "Radio bring-up",
+                    "track": "firmware",
+                    "role": "firmware",
+                    "days": 3,
+                    "sprint": 1,
+                    "start_date": "2026-03-02",
+                    "target_date": "2026-03-04",
+                }
+            ],
+            "sprints": [
+                {"index": 1, "name": "Sprint 1", "start_date": "2026-03-02", "end_date": "2026-03-13"}
+            ],
+        },
+        format="json",
+    )
+    assert response.status_code in (200, 201), response.data
+    return Cycle.objects.get(project=project, name="Sprint 1")
+
+
+def test_a_wizard_sprint_ends_on_the_day_that_was_typed_in_the_projects_zone(elsewhere):
+    """`ProjectSetupApplyEndpoint` built the two instants with `make_aware`, which
+    reads the ACTIVE zone — the caller's, set by the request mixin — where
+    upstream's cycle create and this fork's `cycle_day` both use the PROJECT's.
+    For an Auckland project and a UTC caller the end instant landed at 23:59 UTC,
+    which is past noon on the NEXT day in Auckland: the sprint ended a day late
+    on the Overview and Finance tables."""
+    project = elsewhere["project_in"](AUCKLAND, "WIZ")
+    cycle = _apply_one_sprint(elsewhere, project)
+
+    assert cycle_day(cycle, project) == datetime(2026, 3, 2).date()
+    assert cycle_day(cycle, project, "end_date") == datetime(2026, 3, 13).date(), (
+        "the sprint was stamped at the caller's midnight, not the project's"
+    )
+
+
+def test_a_wizard_sprint_starts_on_the_day_that_was_typed_in_the_projects_zone(elsewhere):
+    """The mirror image, west of Greenwich: the caller's midnight is still the
+    previous evening in Los Angeles, so it was the START that walked back a day."""
+    project = elsewhere["project_in"](LOS_ANGELES, "WZL")
+    cycle = _apply_one_sprint(elsewhere, project)
+
+    assert cycle_day(cycle, project) == datetime(2026, 3, 2).date(), (
+        "the sprint was stamped at the caller's midnight, not the project's"
+    )
+    assert cycle_day(cycle, project, "end_date") == datetime(2026, 3, 13).date()

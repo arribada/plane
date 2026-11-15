@@ -358,3 +358,164 @@ def test_budget_answers_with_a_poisoned_row_in_the_project(money_project):
 
     assert response.status_code == 200, response.data
     assert elapsed < 5.0, f"{elapsed:.1f}s — the walk is back"
+
+
+# ── the door: the project window ─────────────────────────────────────────────
+# `ProjectScheduleSerializer` took `start_date` straight from DRF's DateField,
+# which accepts any year `date` does, and the undated-gap screen then walked the
+# calendar from it. Same bound as `_parse_date`, asked in the serializer.
+
+
+def _schedule_url(world):
+    return reverse(
+        "arribada-project-schedule",
+        kwargs={"slug": world["slug"], "project_id": world["project_id"]},
+    )
+
+
+@pytest.mark.django_db
+@freeze_time(NOW)
+def test_the_project_window_refuses_the_bomb(money_project):
+    world = money_project
+    for field in ("start_date", "target_date"):
+        response = world["clients"]["owner"].patch(
+            _schedule_url(world), {field: "9999-12-31"}, format="json"
+        )
+        assert response.status_code == 400, (field, response.data)
+        assert field in response.data
+    assert not ProjectSchedule.objects.filter(
+        project_id=world["project_id"], target_date=DOOMSDAY
+    ).exists()
+    assert not ProjectSchedule.objects.filter(
+        project_id=world["project_id"], start_date=DOOMSDAY
+    ).exists()
+
+
+@pytest.mark.django_db
+@freeze_time(NOW)
+def test_the_project_window_still_takes_a_real_plan(money_project):
+    world = money_project
+    response = world["clients"]["owner"].patch(
+        _schedule_url(world), {"start_date": "2026-08-03", "target_date": "2029-12-31"}, format="json"
+    )
+    assert response.status_code == 200, response.data
+    row = ProjectSchedule.objects.get(project_id=world["project_id"])
+    assert (row.start_date, row.target_date) == (MONDAY, date(2029, 12, 31))
+
+
+@pytest.mark.django_db
+def test_the_undated_gap_survives_a_window_already_planted_at_the_end_of_time(money_project):
+    """A window written before the serializer was bounded. The GET read its
+    default start from the window and walked forward from 9999-12-31 by the
+    item's effort: `OverflowError`, and a 500 on the one screen that would have
+    shown the row to fix."""
+    from plane.arribada.models import IssueEffort
+
+    world = money_project
+    ProjectSchedule.objects.create(project_id=world["project_id"])
+    ProjectSchedule.objects.filter(project_id=world["project_id"]).update(start_date=DOOMSDAY)
+    undated = Issue.objects.create(
+        name="Undated", project=world["project"], workspace=world["workspace"], state=world["state"]
+    )
+    IssueEffort.objects.create(issue=undated, days=3)
+
+    response = world["clients"]["member"].get(_undated_gap_url(world))
+
+    assert response.status_code == 200, response.data
+    assert response.data["items"][0]["id"] == str(undated.id)
+
+
+# ── the door: a template clone's kickoff ─────────────────────────────────────
+
+
+def _clone_url(world):
+    return reverse(
+        "arribada-project-clone",
+        kwargs={"slug": world["slug"], "project_id": world["project_id"]},
+    )
+
+
+def _template_item(world):
+    return Issue.objects.create(
+        name="Template item",
+        project=world["project"],
+        workspace=world["workspace"],
+        state=world["state"],
+        start_date=MONDAY,
+        target_date=FRIDAY,
+        created_by=world["users"]["owner"],
+    )
+
+
+@pytest.mark.django_db
+@freeze_time(NOW)
+def test_a_clone_kickoff_refuses_the_bomb(money_project):
+    """The kickoff is the anchor every cloned date is shifted to, so one bad
+    kickoff planted a poisoned row per template item. Refused before anything is
+    created — no half-made project holding a now-taken identifier."""
+    from plane.db.models import Project
+
+    world = money_project
+    _template_item(world)
+    response = world["clients"]["owner"].post(
+        _clone_url(world),
+        {"name": "Cloned", "identifier": "CLN", "kickoff_date": "9999-12-31"},
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert not Project.objects.filter(identifier="CLN").exists()
+    assert not Issue.objects.filter(target_date__year__gt=2100).exists()
+
+
+@pytest.mark.django_db
+@freeze_time(NOW)
+def test_a_clone_kickoff_still_shifts_the_plan(money_project):
+    from plane.db.models import Project
+
+    world = money_project
+    _template_item(world)
+    response = world["clients"]["owner"].post(
+        _clone_url(world),
+        {"name": "Cloned", "identifier": "CLN", "kickoff_date": "2027-01-04"},
+        format="json",
+    )
+
+    assert response.status_code in (200, 201), response.data
+    cloned = Project.objects.get(identifier="CLN")
+    copy = Issue.objects.get(project=cloned, name="Template item")
+    assert (copy.start_date, copy.target_date) == (date(2027, 1, 4), date(2027, 1, 8))
+
+
+# ── the arithmetic behind the undated-gap suggestion ─────────────────────────
+
+
+def _step_working_days(start, count):
+    """The loop `_add_working_days` used to be, kept here as the oracle."""
+    current = start
+    step = 1 if count >= 0 else -1
+    remaining = abs(count)
+    while remaining > 0:
+        current += timedelta(days=step)
+        if current.weekday() < 5:
+            remaining -= 1
+    return current
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 4, 5, 6, 9, 10, 23, -1, -2, -5, -6, -11])
+@pytest.mark.parametrize("offset", range(7))
+def test_add_working_days_matches_the_loop_it_replaced(offset, count):
+    """Every weekday start, both directions, across whole and partial weeks."""
+    from plane.arribada.views import _add_working_days
+
+    day = MONDAY + timedelta(days=offset)
+    assert _add_working_days(day, count) == _step_working_days(day, count)
+
+
+def test_add_working_days_survives_the_ends_of_the_calendar():
+    """Where the loop raised. Clamped, like every other primitive in scheduling.py."""
+    from plane.arribada.views import _add_working_days
+
+    assert _add_working_days(DOOMSDAY, 5) == DOOMSDAY
+    assert _add_working_days(date.min, -5) == date.min
+    assert _add_working_days(DOOMSDAY, 0) == DOOMSDAY

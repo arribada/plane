@@ -41,6 +41,7 @@ import secrets
 from datetime import timedelta
 from urllib.parse import quote, urlencode, urlparse
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.html import escape
 
@@ -83,9 +84,19 @@ def base_url(request):
 
     Built from the forwarded headers rather than from `WEB_URL`, because the
     issuer a client validates is the host it actually typed. Nginx sets
-    `X-Forwarded-Proto: https` and passes `Host` through; `request.get_host()`
-    honours `USE_X_FORWARDED_HOST` and the ALLOWED_HOSTS check, so a spoofed
-    Host header cannot move the issuer to somebody else's domain.
+    `X-Forwarded-Proto: https` and passes `Host` through, and `request.get_host()`
+    honours `USE_X_FORWARDED_HOST`.
+
+    What this does NOT do is pin the issuer. `get_host()` checks the Host header
+    against ALLOWED_HOSTS, and this deployment leaves that at its default of `*`
+    (`settings/common.py`), so a request that reaches Django with a forged Host
+    header is answered with metadata naming that host as the issuer. The proxy
+    is what stands in front of it: Caddy only routes a request here for the
+    hostnames it serves. And nothing here acts on the value — no token is
+    minted, no code is bound and no redirect is issued on the strength of the
+    issuer string; a forged one yields metadata that points the forger's own
+    client at the forger's own host. Pinning ALLOWED_HOSTS would close the gap
+    for real, and that is a deploy setting, not this module's.
     """
     scheme = request.META.get("HTTP_X_FORWARDED_PROTO") or ("https" if request.is_secure() else "http")
     return f"{scheme}://{request.get_host()}"
@@ -314,16 +325,26 @@ def rotate(refresh, client):
     if old.client_id != client.id:
         return None
 
-    claimed = MCPToken.objects.filter(pk=old.pk, revoked_at__isnull=True).update(
-        revoked_at=timezone.now()
-    )
-    if claimed != 1:
-        return None
-    # The grant travels whole through a rotation: a refresh that silently dropped
-    # the plan would look, to the agent, like a project that stopped accepting it.
-    return issue_tokens(
-        old.user, old.workspace, client, old.scope, old.allow_money, name=old.name, plan=old.allow_plan
-    )
+    # The revocation and the mint are ONE step. The old row is claimed by a
+    # conditional UPDATE so two concurrent exchanges have exactly one winner, and
+    # the new row is minted inside the same transaction so a failure in
+    # `issue_tokens` — a dropped connection, a constraint — rolls the claim back.
+    # Done as two statements with no transaction around them, that failure left
+    # the old refresh token revoked and nothing in its place: the client's only
+    # credential dead with no successor, and a person re-authorising the
+    # connector to get it back.
+    with transaction.atomic():
+        claimed = MCPToken.objects.filter(pk=old.pk, revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+        if claimed != 1:
+            return None
+        # The grant travels whole through a rotation: a refresh that silently
+        # dropped the plan would look, to the agent, like a project that stopped
+        # accepting it.
+        return issue_tokens(
+            old.user, old.workspace, client, old.scope, old.allow_money, name=old.name, plan=old.allow_plan
+        )
 
 
 # ---------------------------------------------------------------------------

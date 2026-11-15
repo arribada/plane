@@ -207,3 +207,38 @@ def test_saving_keeps_as_many_items_as_freezing_does(money_project):
     row = ProjectIssueOrder.objects.get(project=world["project"], name="Everything")
     assert list(row.issue_ids) == ids
     assert ORDER_CAP >= 2000
+
+
+# --- what a freeze costs ------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_applying_an_order_is_one_statement_not_one_per_item(money_project):
+    """One UPDATE per id was two thousand round trips on a full freeze — and
+    every drag on a sorted or grouped timeline freezes first, so that was the
+    cost of every drag. Batched now: the statement count must not grow with
+    the rows, and the numbers written must be exactly what the loop wrote."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    world = money_project
+    items = _items(world, 40)
+    sequence = list(reversed(items))
+
+    with CaptureQueriesContext(connection) as captured:
+        response = world["clients"]["member"].post(
+            _apply_url(world), {"issue_ids": [str(i.id) for i in sequence]}, format="json"
+        )
+    assert response.status_code == 200, response.data
+    assert response.data["applied"] == 40
+
+    updates = [
+        q["sql"]
+        for q in captured.captured_queries
+        if q["sql"].lstrip().upper().startswith("UPDATE") and "sort_order" in q["sql"]
+    ]
+    assert len(updates) == 1, f"{len(updates)} UPDATE statements for 40 rows: the per-id loop is back"
+
+    for index, issue in enumerate(sequence):
+        issue.refresh_from_db()
+        assert issue.sort_order == (index + 1) * ORDER_STEP

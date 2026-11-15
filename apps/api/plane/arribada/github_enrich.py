@@ -23,14 +23,23 @@ missing one is visible on the Overview and the wrong one is not.
 
 import re
 
-# GitHub label -> the discipline vocabulary this fork uses. Substring matches on
-# a normalised label, so "area/firmware" and "Firmware :fire:" both land.
+# GitHub label -> the discipline vocabulary this fork uses. Matched on WHOLE
+# TOKENS of the normalised label (anything that is not a letter or a digit
+# splits), so "area/firmware" and "Firmware :fire:" both land. It used to be a
+# substring match, and a substring of a label is not what the label says:
+# "cadence" read as cad, "docker" as doc, "updated" as data and "latest" as
+# test — a wrong discipline each time, quietly costing the wrong rate. The
+# price of whole tokens is that nothing is stemmed, so the variants a team
+# actually types are spelled out here rather than guessed at.
 LABEL_DISCIPLINE_HINTS = [
     ("firmware", "embedded firmware"),
     ("embedded", "embedded firmware"),
     ("hardware", "hardware engineer"),
     ("pcb", "hardware engineer"),
     ("electronic", "hardware engineer"),
+    ("electronics", "hardware engineer"),
+    ("mechanical", "mechanical"),
+    ("mechanics", "mechanical"),
     ("mechanic", "mechanical"),
     ("enclosure", "mechanical"),
     ("cad", "mechanical"),
@@ -39,17 +48,25 @@ LABEL_DISCIPLINE_HINTS = [
     ("frontend", "software"),
     ("app", "software"),
     ("test", "qa / test"),
+    ("tests", "qa / test"),
+    ("testing", "qa / test"),
     ("qa", "qa / test"),
     ("field", "field ops"),
     ("deploy", "field ops"),
+    ("deployment", "field ops"),
     ("data", "data / science"),
     ("analysis", "data / science"),
     ("doc", "project manager"),
+    ("docs", "project manager"),
+    ("documentation", "project manager"),
     ("admin", "project manager"),
 ]
 
 # GitHub label -> Plane priority. Ordered: the first match wins, so "p0" beats a
-# generic "bug" on an issue carrying both.
+# generic "bug" on an issue carrying both. Whole tokens, like the disciplines:
+# "p10" is not p1, "debug" is not a bug, "highlight" is not high and "workflow"
+# is not low — every one of those used to set a priority on an issue whose
+# labels said nothing about priority at all.
 LABEL_PRIORITY_HINTS = [
     ("p0", "urgent"),
     ("critical", "urgent"),
@@ -67,6 +84,19 @@ LABEL_PRIORITY_HINTS = [
 
 def _normalise(value):
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _has_token(needle, text):
+    """Whether `needle` appears in `text` as whole tokens, never as a substring.
+
+    Both sides are normalised, so tokens are single-space separated and a padded
+    containment check is an exact whole-token match. A multi-word needle ("nice
+    to have") has to appear as that run of tokens, in that order.
+    """
+    needle = _normalise(needle)
+    if not needle or not text:
+        return False
+    return f" {needle} " in f" {text} "
 
 
 def discipline_from_labels(labels, allowed):
@@ -88,7 +118,7 @@ def discipline_from_labels(labels, allowed):
     for raw in labels or []:
         text = _normalise(raw)
         for needle, discipline in LABEL_DISCIPLINE_HINTS:
-            if needle in text and _normalise(discipline) in by_key:
+            if _has_token(needle, text) and _normalise(discipline) in by_key:
                 return by_key[_normalise(discipline)]
     return None
 
@@ -98,7 +128,7 @@ def priority_from_labels(labels):
     texts = [_normalise(raw) for raw in (labels or [])]
     for needle, priority in LABEL_PRIORITY_HINTS:
         for text in texts:
-            if needle in text:
+            if _has_token(needle, text):
                 return priority
     return None
 

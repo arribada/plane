@@ -159,3 +159,46 @@ def test_the_query_count_does_not_grow_with_the_rows(money_project):
     small = _count(3)
     large = _count(20)
     assert large <= small, f"the endpoint costs more per row: {small} queries for 3, {large} for 23"
+
+
+# --- whether the caller may move the bar --------------------------------------
+#
+# `can_edit_plan` is the schedule GET's answer, computed for the caller per
+# project; `allow_edit_others` is the project's own flag. Without them the board
+# drew every bar draggable and learned about `lead_only_edits` from a 403.
+
+
+def _portfolio(world, caller):
+    response = world["clients"][caller].get(reverse("arribada-portfolio", kwargs={"slug": world["slug"]}))
+    assert response.status_code == 200, response.data
+    return next(r for r in response.data if r["id"] == world["project_id"])
+
+
+@pytest.mark.django_db
+def test_a_project_with_no_schedule_row_is_open_to_everyone(money_project):
+    row = _portfolio(money_project, "member")
+    assert (row["can_edit_plan"], row["allow_edit_others"]) == (True, True)
+
+
+@pytest.mark.django_db
+def test_a_lead_only_plan_is_the_leads_and_the_admins_to_edit(money_project):
+    from plane.arribada.models import ProjectSchedule, ProjectTeamMember
+
+    ProjectSchedule.objects.create(
+        project=money_project["project"], lead_only_edits=True, allow_edit_others=False
+    )
+    ProjectTeamMember.objects.create(
+        project=money_project["project"],
+        name="Lead",
+        email="lead@arribada.test",
+        member=money_project["users"]["lead"],
+        is_lead=True,
+    )
+
+    assert _portfolio(money_project, "lead")["can_edit_plan"] is True
+    assert _portfolio(money_project, "member")["can_edit_plan"] is False, (
+        "a member on a lead-only project was told they may move the bar; the server will 403"
+    )
+    # `_may_edit_plan` admits a workspace admin: a plan needs a repair path.
+    assert _portfolio(money_project, "owner")["can_edit_plan"] is True
+    assert _portfolio(money_project, "member")["allow_edit_others"] is False

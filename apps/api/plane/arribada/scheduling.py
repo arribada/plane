@@ -42,9 +42,23 @@ _EDGE = {
 }
 
 
-def build_edges(relations):
-    """relations: iterable of {issue_id, related_issue_id, relation_type} ->
-    list of (pred_id, succ_id, kind), skipping unknown/self relations."""
+def edges_with_lag(relations):
+    """relations: iterable of {issue_id, related_issue_id, relation_type[, lag]} ->
+    list of (pred_id, succ_id, kind, lag), skipping unknown/self relations.
+
+    `lag` is working days the successor must wait beyond what the link itself
+    demands, and it is OPTIONAL: a stored `IssueRelation` has no such column, so
+    every relation `_project_graph` builds reads as zero and nothing there moves.
+    The setup planner's object-form links (`blueprints.parse_link`) are the one
+    source that carries one, and the float figures it computes have to honour it
+    or a mandatory five-day gap reads as five days of slack.
+
+    A negative lag — a lead, where the successor may start BEFORE the link would
+    otherwise allow — is read as zero here. The float pass can only bound a date
+    later, so a lead would have to loosen a bound, and treating it as zero
+    reports LESS float than there really is, which is the safe side of wrong for
+    a figure that says "how far can this slip".
+    """
     edges = []
     for r in relations:
         spec = _EDGE.get(r["relation_type"])
@@ -54,8 +68,18 @@ def build_edges(relations):
         succ = r["related_issue_id"] if spec[1] == "related" else r["issue_id"]
         if pred == succ:
             continue
-        edges.append((str(pred), str(succ), spec[2]))
+        try:
+            lag = max(0, int(r.get("lag") or 0))
+        except (TypeError, ValueError):
+            lag = 0
+        edges.append((str(pred), str(succ), spec[2], lag))
     return edges
+
+
+def build_edges(relations):
+    """relations: iterable of {issue_id, related_issue_id, relation_type} ->
+    list of (pred_id, succ_id, kind), skipping unknown/self relations."""
+    return [(p, s, k) for p, s, k, _lag in edges_with_lag(relations)]
 
 
 def _topo_order(node_ids, edges):
@@ -175,6 +199,28 @@ def minus_working_days(day, n):
     return cursor
 
 
+def add_working_days(day, count):
+    """`count` working days from `day`, forwards or backwards, weekends skipped.
+
+    The signed form of the two above, with the exact semantics of the loop it
+    replaces in views.py (`_add_working_days`): `day` itself is never counted or
+    normalised, the walk starts at the next (or previous) calendar day, and only
+    Mon–Fri days are counted. So a Friday plus one is Monday, a Saturday plus
+    zero is that Saturday, and a Monday minus one is the Friday before.
+
+    Arithmetic rather than a walk, for the reason `weekdays_between` gives: the
+    loop version took `current += timedelta(days=1)` once per day between here
+    and wherever the input pointed, which for a row dated 9999-12-31 is an
+    `OverflowError` and for one dated 2500 is a forty-second response. Clamped at
+    the ends of the calendar by `_shift`, so no input can raise.
+    """
+    if count > 0:
+        return plus_working_days(_shift(day, 1), count - 1)
+    if count < 0:
+        return minus_working_days(day, -count)
+    return day
+
+
 def _working_span(start, target):
     """Working days a task occupies, inclusive. One day is one, not zero."""
     if target < start:
@@ -187,7 +233,7 @@ def _target_after(start, working_days):
     return plus_working_days(start, max(1, working_days) - 1)
 
 
-def cascade(issues, relations, earliest_starts=None):
+def cascade(issues, relations, earliest_starts=None, fixed=frozenset()):
     """Forward pass. issues: {id: {"start": date|None, "target": date|None}}.
     Returns {id: {"start": date, "target": date}} for issues whose dates MOVED.
     Only pushes later, never earlier; preserves each issue's duration. Weekend-aware:
@@ -202,7 +248,16 @@ def cascade(issues, relations, earliest_starts=None):
     delivery is not a predecessor: it has no duration, nothing depends on it in
     turn, and it must not appear in the critical-path walk or in the float
     figures, where it would be read as work somebody has to do. Passing None —
-    which every existing caller does — leaves the behaviour exactly as it was."""
+    which every existing caller does — leaves the behaviour exactly as it was.
+
+    `fixed` is a set of issue ids whose dates are NEVER moved — work that is
+    completed or cancelled. A finished task's dates are a record of what
+    happened, not a plan, and the reflow used to rewrite them like any other
+    row: a bench test done in March, sitting after a predecessor that slipped to
+    May, was re-dated to June, and the funder report then said the test had not
+    happened yet. A fixed node still acts as a predecessor with its RECORDED
+    dates, so whatever waits on it cascades from where it really finished.
+    """
     dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
     edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
     order, _cycles = _topo_order(list(dated.keys()), edges)
@@ -212,9 +267,15 @@ def cascade(issues, relations, earliest_starts=None):
         preds[s].append((p, k))
 
     floors = earliest_starts or {}
+    pinned = {str(i) for i in (fixed or ())}
     cur = {i: {"start": v["start"], "target": v["target"]} for i, v in dated.items()}
     changed = {}
     for node in order:
+        # Checked before the constraints are even gathered: a finished item has
+        # nothing to say about whether its predecessors moved. Its own entry in
+        # `cur` stays as recorded, which is what its successors read.
+        if node in pinned:
+            continue
         constraints = []
         for p, kind in preds[node]:
             if kind == "FS":
@@ -386,16 +447,37 @@ def slack_for_issues(issues, relations):
     Float against the dependency graph, not against people: a task with four days
     of graph slack whose owner is busy for those four days cannot really move. That
     is the standard definition and the honest thing to label it as.
+
+    THE TWO LINK KINDS BOUND DIFFERENT ENDS, and the backward pass has to know
+    which. A finish-to-start link bounds the predecessor's FINISH: it must end
+    before the successor's latest start. A start-to-start link (`start_before`,
+    `start_after`) bounds only the predecessor's START — the successor waits for
+    it to begin, not to end — so its latest finish is that start plus its own
+    duration, and the days it keeps working after the successor has begun are
+    not a slip. The pass used to bound every predecessor's finish as if every
+    link were FS, which on "A 1–18 Sep, B start_after A, B 2 Sep–30 Oct" put A
+    on the critical path with zero float: A's latest finish was pinned to 1 Sep,
+    the day before B's latest start, when the only thing B asks of A is that A
+    starts by the 2nd. A can slip a day. It is not critical, and a reader who
+    reorganised a sprint around it was moved by a figure that was wrong.
+
+    `free` follows the same rule per edge: for FS it is the gap between this
+    finish and the successor's start, for SS the gap between the two starts.
+    And both honour a `lag` on the relation (see `edges_with_lag`), the only
+    thing the setup planner's "five days after" links carry that a stored
+    relation does not.
     """
     dated = {i: v for i, v in issues.items() if v.get("start") and v.get("target")}
     if not dated:
         return {}
 
-    edges = [(p, s, k) for (p, s, k) in build_edges(relations) if p in dated and s in dated]
+    edges = [
+        (p, s, k, lag) for (p, s, k, lag) in edges_with_lag(relations) if p in dated and s in dated
+    ]
     sequenced = bool(edges)
     successors = defaultdict(list)
-    for pred, succ, _kind in edges:
-        successors[pred].append(succ)
+    for pred, succ, kind, lag in edges:
+        successors[pred].append((succ, kind, lag))
 
     horizon = max(v["target"] for v in dated.values())
 
@@ -409,6 +491,11 @@ def slack_for_issues(issues, relations):
     def last_working_day_before(day):
         return _previous_working_day(_shift(day, -1))
 
+    def duration(node):
+        # The task's own length in working days, preserved while it slides right.
+        span = dated[node]
+        return max(1, working_days(span["start"], span["target"]))
+
     # Latest each task may finish, walked backwards from the horizon. Memoised with
     # the horizon written first, so a dependency loop terminates instead of
     # recursing forever — the caller already reports the loop separately.
@@ -418,32 +505,43 @@ def slack_for_issues(issues, relations):
         if node in latest:
             return latest[node]
         latest[node] = horizon
-        children = successors.get(node) or []
-        if not children:
-            return horizon
         bound = horizon
-        for child in children:
+        for child, kind, lag in successors.get(node) or []:
             if child not in dated:
                 continue
-            bound = min(bound, last_working_day_before(latest_start(child)))
+            # The latest the child may start, less the gap the link insists on.
+            child_start = minus_working_days(latest_start(child), lag)
+            if kind == "SS":
+                # Only this task's START is bound. Its latest finish is that
+                # start plus its own duration — and still never past the
+                # horizon, which `bound` began at.
+                bound = min(bound, _target_after(child_start, duration(node)))
+            else:
+                bound = min(bound, last_working_day_before(child_start))
         latest[node] = bound
         return bound
 
     def latest_start(node):
-        finish = latest_finish(node)
-        span = dated[node]
-        # Preserve the task's own duration in working days while sliding it right.
-        duration = max(1, working_days(span["start"], span["target"]))
-        return minus_working_days(finish, duration - 1)
+        return minus_working_days(latest_finish(node), duration(node) - 1)
 
     out = {}
     for node, span in dated.items():
-        children = [c for c in (successors.get(node) or []) if c in dated]
-        if children:
-            earliest_child = min(dated[c]["start"] for c in children)
-            free = max(0, working_days(span["target"], last_working_day_before(earliest_child)) - 1)
-        else:
-            free = max(0, working_days(span["target"], horizon) - 1)
+        # The project's last day is a successor of every task's FINISH. For a
+        # task with only FS children it is never the tightest term, since each
+        # child starts before the horizon — which is why the old code could
+        # consult it only for leaves. For a task with an SS child it can be: the
+        # child bounds this START, and a long task may be free to start later
+        # than it is free to finish. One list, the horizon always in it.
+        frees = [working_days(span["target"], horizon) - 1]
+        for child, kind, lag in successors.get(node) or []:
+            if child not in dated:
+                continue
+            child_start = minus_working_days(dated[child]["start"], lag)
+            if kind == "SS":
+                frees.append(working_days(span["start"], child_start) - 1)
+            else:
+                frees.append(working_days(span["target"], last_working_day_before(child_start)) - 1)
+        free = max(0, min(frees))
 
         total = max(0, working_days(span["target"], latest_finish(node)) - 1)
         total = max(free, total)

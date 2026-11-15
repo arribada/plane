@@ -15,6 +15,92 @@ session can continue without re-deriving anything.
 
 ## Where things stand
 
+> **2026-11-15, measured on the running system: backend `.151`, frontend `.151`.**
+>
+> |                                    | Image                                                 | Id             | Commit       |
+> | ---------------------------------- | ----------------------------------------------------- | -------------- | ------------ |
+> | backend (api, worker, beat-worker) | `arribada/plane-backend:v1.3.1-arribada.151`          | `bcd0d7bc1874` | `6c34e217a1` |
+> | frontend                           | `ghcr.io/arribada/plane-frontend:v1.3.1-arribada.151` | `daff3601d5a7` | `6c34e217a1` |
+>
+> Ids from `docker inspect` on the CONTAINERS; OCI revision labels match. Frontend from CI run
+> `43733676739` (dispatch, `build_web: true`). **No migration** (latest `plane.arribada` migration
+> is still `0047`); a pre-deploy dump was taken anyway: `C:/Program Files/Git/opt/backups/archive/plane-db-predeploy-151-2026-11-15_161358.sql.gz` (`gzip -t` clean, completion
+> marker present). Rollback: backend `.150` (`b00da3f9598a`), frontend `.149` (`a523eb3680eb`),
+> both on the disk; `plane_proxy` untouched (no route changed).
+>
+> **What `.151` is: the full-fork review of 2026-11-15 (Geoffrey: "une review en profondeur
+> pour qu'il n'y ait plus de bugs et que tout soit prêt pour l'équipe").** Six read-only
+> reviewers (money, planning, integrations/MCP, gantt/portfolio, finance screens, home/nav/i18n)
+> over the whole fork, then six fixers by file ownership. Three commits: `39c31f3` (api),
+> `aa85a21` (web), `6c34e21` (ci + ARRIBADA.md). The commit messages list every defect; the
+> ones that matter most to the team:
+>
+> - **Any project member could make themselves the lead** by re-pointing the lead's roster row
+>   (member_id or email) through the team PUT — then approve purchases and change governance.
+> - **`lead_only_edits` was bypassed** by `IssueViewSet` PUT and by the public API v1 (every
+>   member can mint an API key); **`allow_edit_others` was never enforced by the server.** One
+>   decision function (`plan_write_refusal`, `plan_guard.py`) now answers the middleware on
+>   `/api/` and a hook in `plane/api/views/base.py` on `/api/v1/`, for both switches; the MCP
+>   plan guard mirrors `allow_edit_others`.
+> - **MARLIN and COMM were leaderless in a way nobody could repair from the UI**: a roster lead
+>   with no Plane account blocked the admin fallback, so nobody could approve a purchase, write
+>   an expense, set the allocation or change governance there. A lead now counts only if they
+>   can act (active member of the project, or an admin).
+> - **Every expense was undated** (no screen ever set `incurred_on`), so the spend curve and the
+>   monthly rhythm drew zero non-labour spend on every project; the rhythm also added raw,
+>   unconverted expense amounts to converted labour, and its "current rate" was the mean of
+>   three FUTURE planned months.
+> - In the gantt, **drag-to-nest, dependency linking, undo and the portfolio drag ignored the
+>   timeline lock and lead-only edits**; the picture export drew every bar flat.
+> - A **failed read rendered as good news** on My tasks ("Nothing assigned to you"), the
+>   checklist ("Nothing on it yet", cached for the session), evidence links, the project
+>   spotlight, the GitHub digest and the sidebar folders.
+> - GitHub sync **relocated an auto-filed item across projects keeping the old `sequence_id`**
+>   (two items answering to one reference) and fetched repos of archived projects into the
+>   triage queue; label hints matched substrings (`workflow` → low priority).
+> - The worker logged **"Received unregistered task" 2,516 times in three days** for upstream's
+>   `process_logs` (never imported by the worker); its 30 MB log rotation kept under two days.
+>
+> Verified: backend **979 collected, 979 passed** (746 before) on a local throwaway Postgres
+> (recipe in the memory note `project_plane_local_backend_tests`), web **875 passed under both
+> CI zones** (745 before), typecheck clean, oxlint clean on every touched file; floors
+> re-measured with the workflow's own commands (875 / 979), never incremented. Production
+> measured BEFORE the deploy: 0 API 5xx in 72 h from fork code, beat healthy (all five tasks on
+> schedule, scope snapshots daily), migrations through `0047`, 0 invalid indexes, connector
+> OAuth used daily (127 calls), `/.well-known/oauth-authorization-server` and `mcp/health`
+> answering through the public domain. Real-data probes through the connector (budget on
+> NATAV/REWLD/STUG/MARLIN, critical path on AVSM/PETRL/MARLIN, workload, deliverables, team)
+> returned consistent figures (labour + expense = committed; curve = rhythm = by-sprint).
+>
+> **Nobody has opened any of this in a browser.** Plane's UI cannot be authenticated headless;
+> every fix is proven by tests and by tracing. The gestures most worth a real mouse: the gantt
+> drag-to-nest on a locked plan (should refuse), the expense modal's "Incurred on" field, the
+> Reject reason box, the rates panel emptying a box.
+>
+> **Decided by nobody yet (product calls, written down, not built):**
+>
+> - _`timeline_locked` and `allow_add_items` are still UI-only on the server_ (every UI gesture
+>   honours them now; agents are refused by `mcp_tools.py`). Enforcing the lock for people too
+>   would bind the lead, as the MCP already does.
+> - _The critical path (`issue_ids`, the longest chain by summed duration) and `slack.critical`
+>   (zero total float) are two different answers_ and the gantt highlights the first: on AVSM
+>   today 20 items are "on the critical path" while 13 of them have weeks of float. Pinned by
+>   `test_the_chain_and_the_float_answer_two_different_questions`; the textbook definition is
+>   the zero-float one. Worth a decision before a lead reads the red bars as "attack these".
+> - _EUR default in a GBP organisation_: `WorkspaceCurrencySettings.display_currency` is EMPTY
+>   on production, so a project with no allocation (REWLD, MARLIN) reads its labour converted
+>   into EUR at 0.85 although every rate is sterling. One admin action fixes it (set the
+>   display currency to GBP in Finance settings); a code default was not changed.
+> - _Deadline-fitting in the setup wizard rewrites effort_ (client and server both scale
+>   catalogue days to the window, and the scaled days become `IssueEffort`), so a plan
+>   compressed to a funder's deadline costs LESS labour instead of flagging over-commitment.
+> - _Rates have no effective date_ (changing one re-prices history already sent to a funder);
+>   `ProjectExpense` has no `updated_by`; "Sync now" runs the whole workspace sync inline on
+>   the ASGI thread (tens of seconds, minutes when GitHub is slow); `/oauth/connections` is now
+>   linked from the account security page but the "Forty tests" era docs are the only guide.
+> - _ChirpStack's json log is 11 GB_ on the same disk (the platform's, not Plane's); nothing in
+>   `/etc/docker/daemon.json` rotates it because the container predates the config.
+
 > **2026-11-03, measured on the running system: backend `.150`, frontend `.149`.**
 >
 > |                                    | Image                                                 | Id             | Commit       |

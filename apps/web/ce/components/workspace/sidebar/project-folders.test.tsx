@@ -253,6 +253,68 @@ describe("SidebarProjectFolders writes", () => {
   });
 });
 
+/**
+ * A read that failed is not "no folders".
+ *
+ * The fetch ended `.catch(() => setFolders([]))`, and the empty state — a lone
+ * "New project folder" button — is what a 500 or a dropped connection drew. The
+ * two failure tests fail against pre-fix HEAD.
+ */
+describe("SidebarProjectFolders when the read failed", () => {
+  it("does not offer 'New project folder' as if there were none", async () => {
+    getFolders.mockRejectedValue({ status: 500, offline: false, error: "The database is away." });
+    render(<SidebarProjectFolders />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The database is away.");
+    expect(screen.queryByRole("button", { name: /New project folder/ })).not.toBeInTheDocument();
+  });
+
+  it("asks again on retry", async () => {
+    const user = userEvent.setup();
+    getFolders.mockRejectedValueOnce({ offline: true, status: undefined });
+    render(<SidebarProjectFolders />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/offline/i);
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("button", { name: /Tracker/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("still offers 'New project folder' when the server answered that there are none", async () => {
+    getFolders.mockResolvedValue([]);
+    render(<SidebarProjectFolders />);
+    expect(await screen.findByRole("button", { name: /New project folder/ })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The row actions were `opacity-0 group-hover:opacity-100` and nothing else:
+ * no hover on a touch screen, so a folder could not be renamed, filled or
+ * deleted from a phone, and a project could not be taken out of one. See
+ * checklist/panel.test.tsx for why a class-name assertion is allowed here —
+ * the class is the whole mechanism, and jsdom paints nothing.
+ */
+describe("SidebarProjectFolders row actions without a pointer", () => {
+  it("keeps the folder actions reachable on focus and on a coarse pointer", async () => {
+    render(<SidebarProjectFolders />);
+    const rename = (await screen.findAllByRole("button", { name: "Rename" }))[0] as HTMLElement;
+    const actions = rename.parentElement as HTMLElement;
+
+    expect(actions.className).toMatch(/\bfocus-within:opacity-100\b/);
+    expect(actions.className).toMatch(/\bpointer-coarse:opacity-100\b/);
+  });
+
+  it("keeps 'Remove from folder' reachable on focus and on a coarse pointer", async () => {
+    const user = userEvent.setup();
+    await openTracker(user);
+    const remove = screen.getAllByRole("button", { name: "Remove from folder" })[0] as HTMLElement;
+
+    expect(remove.className).toMatch(/\bfocus-visible:opacity-100\b/);
+    expect(remove.className).toMatch(/\bpointer-coarse:opacity-100\b/);
+  });
+});
+
 /** The decision itself, with no DOM in the way. */
 describe("resolveDrop", () => {
   // tracker ── turtles ── hawksbill;  ops (unrelated root)

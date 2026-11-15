@@ -31,20 +31,39 @@ export type GanttUndoEntry = {
 
 class GanttUndoStore {
   stack: GanttUndoEntry[] = [];
+  /**
+   * Whether the plan on screen may be written at all. False while the plan is
+   * locked, or lead-only and this is not the lead.
+   *
+   * An undo is a write — it puts dates back through the same endpoint a drag
+   * uses — so a stack that survives the lock is a way of rewriting a locked plan
+   * with one key. Flipping this to false empties the stack rather than hiding
+   * it: the moment the plan is unlocked again, "undo the thing from before the
+   * lock" is not a change anybody chose to make now.
+   */
+  editable = true;
 
   constructor() {
     makeObservable(this, {
       stack: observable.shallow,
+      editable: observable,
       canUndo: computed,
       lastLabel: computed,
       push: action,
       pop: action,
       clear: action,
+      setEditable: action,
     });
   }
 
   get canUndo(): boolean {
-    return this.stack.length > 0;
+    return this.editable && this.stack.length > 0;
+  }
+
+  /** The plan became editable, or stopped being. Locking clears the stack. */
+  setEditable(next: boolean): void {
+    this.editable = next;
+    if (!next) this.stack = [];
   }
 
   /** What the next Ctrl+Z would put back, so the control can say so before it is
@@ -55,6 +74,10 @@ class GanttUndoStore {
 
   push(entry: GanttUndoEntry): void {
     if (!entry.items || entry.items.length === 0) return;
+    // Nothing can have been written while the plan was not editable, so an
+    // entry arriving now is a race with the lock — and recording it would offer
+    // to undo it the moment the lock lifts.
+    if (!this.editable) return;
     this.stack.push(entry);
     if (this.stack.length > 50) this.stack.shift();
   }

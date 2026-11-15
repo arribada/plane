@@ -21,6 +21,7 @@ import {
   buildGanttWorkbook,
   cell,
   describeFilters,
+  markCriticalEdges,
   neutralise,
   provenance,
   workingDays,
@@ -80,6 +81,38 @@ describe("formula injection", () => {
     const csv = buildGanttCsv([item({ id: "1", label: "=1+1" })], META);
     expect(csv).toContain("'=1+1");
     expect(csv).not.toMatch(/,=1\+1/);
+  });
+});
+
+describe("markCriticalEdges", () => {
+  // The same rule the on-screen arrows use: a link is on the chain only when
+  // both of its ends are. The exporter used to be handed edges with no flag at
+  // all, so a chain ringed red on screen exported every link grey.
+  it("flags a link whose both ends are on the chain", () => {
+    expect(markCriticalEdges([{ from: "a", to: "b" }], new Set(["a", "b"]))).toEqual([
+      { from: "a", to: "b", critical: true },
+    ]);
+  });
+
+  it("leaves a link grey when either end has float", () => {
+    expect(markCriticalEdges([{ from: "a", to: "b" }], new Set(["a"]))).toEqual([
+      { from: "a", to: "b", critical: false },
+    ]);
+    expect(markCriticalEdges([{ from: "a", to: "b" }], new Set())).toEqual([{ from: "a", to: "b", critical: false }]);
+  });
+
+  it("reaches the picture: a critical link gets the red head, a plain one the grey", () => {
+    const rows = [
+      item({ id: "a", label: "A", critical: true }),
+      item({ id: "b", label: "B", critical: true, start: DAY("2026-08-10"), end: DAY("2026-08-12") }),
+    ];
+    const red = buildGanttSvg(rows, markCriticalEdges([{ from: "a", to: "b" }], new Set(["a", "b"])), {
+      title: "T",
+    });
+    expect(red).toContain('marker-end="url(#ahc)"');
+    const grey = buildGanttSvg(rows, markCriticalEdges([{ from: "a", to: "b" }], new Set()), { title: "T" });
+    expect(grey).toContain('marker-end="url(#ah)"');
+    expect(grey).not.toContain('marker-end="url(#ahc)"');
   });
 });
 

@@ -22,6 +22,7 @@ import { ganttLinking } from "@/plane-web/store/gantt-linking";
 import { invalidateProjectRelations } from "@/plane-web/components/gantt-chart/use-project-relations";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { isDragGesture, suppressNextClick } from "@/plane-web/components/gantt-chart/gesture";
+import { describeLinkFailure } from "../link-failure";
 
 type Props = {
   blockId: string;
@@ -75,14 +76,17 @@ export const DependencyHandle = observer(function DependencyHandle({ blockId, si
     // A dependency the server refused — a cycle, a cross-project link, a lost
     // connection — used to disappear without a word: the line the user had just
     // drawn was simply gone at the next refresh, with nothing to explain it.
+    //
+    // And then it said the wrong word: every rejection became "a loop, or the
+    // connection dropped", including the 403 a lead-only plan answers with.
+    // `plan_guard.py` sends its own sentence, and a person refused on
+    // permissions needs to hear THAT, not to check their wifi. See
+    // `link-failure.ts` for the two shapes a rejection arrives in.
     createCurrentRelation(target, "blocked_by", from)
       .then(refreshDerived)
-      .catch(() => {
-        setToast({
-          type: TOAST_TYPE.ERROR,
-          title: "Couldn't link these two",
-          message: "The dependency wasn't saved. It may create a loop, or the connection dropped.",
-        });
+      .catch((error: unknown) => {
+        const said = describeLinkFailure(error);
+        setToast({ type: TOAST_TYPE.ERROR, title: said.title, message: said.message });
       });
   };
 

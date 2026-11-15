@@ -96,6 +96,24 @@ const dateOrNull = (value: string) => (value.trim() ? value.trim() : null);
 const recorded = (rows: { currency: string; amount: number }[]) =>
   rows.map((t) => money(t.amount, t.currency)).join(" · ");
 
+/**
+ * What removing a decided purchase request takes with it, said before it goes.
+ *
+ * An approved request owns the expense line its approval wrote, and the server
+ * deletes the two together — so "the audit trail goes with it" was naming the
+ * paperwork and not the money. Once the purchase is ordered or received the
+ * server keeps the line (the parts exist, the invoice exists) and detaches it;
+ * that is the other thing a person should be told before pressing Remove.
+ */
+export const removalConfirmText = (r: TProcurementRequest): string => {
+  const line = r.expense_id ? `the ${money(r.total, r.currency)} expense line it created` : null;
+  if (line && r.status === "approved")
+    return `Remove the record of "${r.label}" and ${line}? Both go, and the audit trail with them. This cannot be undone.`;
+  if (line && (r.status === "ordered" || r.status === "received"))
+    return `Remove the record of "${r.label}"? ${line.charAt(0).toUpperCase()}${line.slice(1)} is kept on the sheet; only the request and its audit trail go.`;
+  return `Remove the record of "${r.label}"? The audit trail for it goes with it.`;
+};
+
 export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   const { workspaceSlug, projectId } = useParams();
   const service = useMemo(() => new ArribadaService(), []);
@@ -145,6 +163,11 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   // every row, so a second decision taken against the list being replaced is
   // acting on figures that are already stale.
   const [deciding, setDeciding] = useState<string | null>(null);
+  // The request whose refusal is being written, and the reason going with it.
+  // Reject used to fire on the click: the requester then learned "no" and
+  // nothing else, while the server had a `decision_note` nobody could fill.
+  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
   // The purchase whose order details are open for editing, and the draft in that
   // form. One at a time, like the decision above and for the same reason: saving
   // reloads the whole list, so a second form open over the old rows is editing
@@ -232,10 +255,15 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
 
   /** Re-read the budget in another currency. Nothing else on the page moves. */
   const switchDisplay = async (ccy: string) => {
+    // Pressed at once so the toggle answers the click, and put back if the read
+    // fails: a toggle reading GBP over euro figures is a wrong currency on every
+    // number on the page, said by the one control that is supposed to name it.
+    const before = displayCcy;
     setDisplayCcy(ccy);
     try {
       setBudget(await service.getBudget(slug, pid, ccy));
     } catch {
+      setDisplayCcy(before);
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't switch currency",
@@ -279,11 +307,16 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
   };
 
   const saveRates = async (next: TRoleRate[]) => {
+    // Optimistic, and put back on failure. Without the restore a refused save
+    // left the unsaved figures as the page's idea of the stored ones — so the
+    // panel, reopened, showed rates nobody had been allowed to record.
+    const before = rates;
     setRates(next);
     try {
       await service.saveRoleRates(slug, next);
       await load(displayCcy);
     } catch (error) {
+      setRates(before);
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't save the rates",
@@ -328,7 +361,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     }
   };
 
-  const decide = async (id: string, decision: "approved" | "rejected") => {
+  const decide = async (id: string, decision: "approved" | "rejected", note?: string) => {
     // Approving writes an expense line into the project. There was no in-flight
     // guard at all, so two clicks were two POSTs — and the server took its
     // idempotency decision from a copy of the request read before its own
@@ -338,7 +371,9 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
     if (deciding) return;
     setDeciding(id);
     try {
-      await service.decidePurchase(slug, pid, id, decision);
+      await service.decidePurchase(slug, pid, id, decision, note);
+      setRejecting(null);
+      setRejectNote("");
       await load(displayCcy);
     } catch {
       setToast({
@@ -680,7 +715,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               type="button"
               onClick={() => void saveAllocation()}
               disabled={saving}
-              className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save"}
             </button>
@@ -778,7 +813,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               <button
                 type="button"
                 onClick={() => setPanel(panel === "rates" ? null : "rates")}
-                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
+                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 text-secondary hover:bg-layer-1 md:px-2 md:py-0.5 md:text-11"
               >
                 <Coins className="size-3" />
                 Hourly rates
@@ -786,7 +821,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
               <button
                 type="button"
                 onClick={() => setPanel(panel === "calendar" ? null : "calendar")}
-                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
+                className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 text-secondary hover:bg-layer-1 md:px-2 md:py-0.5 md:text-11"
                 title="Days nobody works — they move every plan in the workspace"
               >
                 <CalendarOff className="size-3" />
@@ -798,7 +833,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                 <button
                   type="button"
                   onClick={() => setPanel(panel === "currency" ? null : "currency")}
-                  className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 md:px-2 md:py-0.5 md:text-11 text-secondary hover:bg-layer-1"
+                  className="flex items-center gap-1 rounded border border-subtle px-3 py-1 text-12 text-secondary hover:bg-layer-1 md:px-2 md:py-0.5 md:text-11"
                   title="The EUR/GBP rate every converted figure is read at"
                 >
                   <ArrowLeftRight className="size-3" />
@@ -939,7 +974,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     target 4px from Reject, and approving writes a line into the
                     project's expenses. */}
                 {canApprove ? (
-                  <span className="flex flex-col md:flex-row w-full md:w-auto flex-shrink-0 items-stretch md:items-center gap-3">
+                  <span className="flex w-full flex-shrink-0 flex-col items-stretch gap-3 md:w-auto md:flex-row md:items-center">
                     <button
                       type="button"
                       onClick={() => void decide(r.id, "approved")}
@@ -947,7 +982,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       // flight, and it SAYS so: a button that silently swallowed
                       // the second click would leave somebody pressing it harder.
                       disabled={!!deciding}
-                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex w-full items-center justify-center gap-1 rounded bg-success-primary px-4 py-2 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
                       // Keep the item in the accessible name ("Approve 10 Linkit boards"),
                       // not a bare "Approve purchase": it tells a screen-reader user WHICH
                       // purchase, and it is the name the approve test asserts on.
@@ -958,13 +993,21 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void decide(r.id, "rejected")}
+                      onClick={() => {
+                        if (rejecting === r.id) {
+                          setRejecting(null);
+                          return;
+                        }
+                        setRejecting(r.id);
+                        setRejectNote("");
+                      }}
                       disabled={!!deciding}
                       aria-label={`Reject ${r.label}`}
+                      aria-expanded={rejecting === r.id}
                       // Same box as Approve: the two sit 8px apart and one of them
                       // was a 20px target, which is how a thumb aiming at Reject
                       // approves a purchase instead.
-                      className="flex w-full md:w-auto items-center justify-center gap-1 rounded border border-subtle px-4 py-2 text-12 text-secondary hover:bg-layer-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex w-full items-center justify-center gap-1 rounded border border-subtle px-4 py-2 text-12 text-secondary hover:bg-layer-1 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
                     >
                       <X className="size-3" />
                       Reject
@@ -975,11 +1018,47 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     type="button"
                     onClick={() => void withdraw(r.id)}
                     disabled={!!deciding}
-                    className="flex-shrink-0 px-2 py-1 min-h-[40px] flex items-center text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex min-h-[40px] flex-shrink-0 items-center px-2 py-1 text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary disabled:cursor-not-allowed disabled:opacity-50"
                     title="Withdraw your request"
                   >
                     Withdraw
                   </button>
+                )}
+                {/* The reason, asked for before the no goes out. Optional: a
+                    refusal with no reason is still a decision, but the box is
+                    the only way the requester ever hears why. */}
+                {canApprove && rejecting === r.id && (
+                  <div className="flex w-full flex-col gap-2 rounded border border-subtle bg-layer-1 p-2">
+                    <label className="flex flex-col gap-0.5 text-10 text-tertiary">
+                      Reason
+                      <textarea
+                        value={rejectNote}
+                        onChange={(e) => setRejectNote(e.target.value)}
+                        rows={2}
+                        maxLength={2000}
+                        placeholder={`Optional — ${r.requested_by_name ?? "the requester"} reads this on the decided list`}
+                        aria-label={`Reason for rejecting ${r.label}`}
+                        className={cn(input, "w-full resize-y")}
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void decide(r.id, "rejected", rejectNote.trim())}
+                        disabled={!!deciding}
+                        className="rounded bg-danger-primary px-3 py-1.5 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deciding === r.id ? "Saving…" : "Confirm rejection"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRejecting(null)}
+                        className="px-2 py-1.5 text-12 text-tertiary hover:text-primary"
+                      >
+                        Keep it pending
+                      </button>
+                    </div>
+                  </div>
                 )}
               </li>
             ))}
@@ -1084,10 +1163,13 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             : ""}
                       </span>
                     )}
-                    {(r.justification || r.decision_note) && (
-                      <span className="w-full text-11 text-tertiary italic">
-                        {r.justification}
-                        {r.justification && r.decision_note && " — "}
+                    {r.justification && <span className="w-full text-11 text-tertiary italic">{r.justification}</span>}
+                    {/* Labelled, and on its own line: the reason for a refusal
+                        is the one sentence the requester opens this list for,
+                        and run into their own justification it read as theirs. */}
+                    {r.decision_note && (
+                      <span className="w-full text-11 text-secondary">
+                        <span className="text-tertiary">{r.status === "rejected" ? "Reason" : "Note"}: </span>
                         {r.decision_note}
                       </span>
                     )}
@@ -1115,7 +1197,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                     )}
                     {canTrack && tracking === r.id && (
                       <div className="flex w-full flex-wrap items-end gap-2 rounded border border-subtle bg-layer-1 p-2">
-                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex min-w-0 flex-1 flex-col gap-0.5 text-10 text-tertiary">
                           Order reference
                           <input
                             type="text"
@@ -1125,7 +1207,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             className={input}
                           />
                         </label>
-                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex min-w-0 flex-1 flex-col gap-0.5 text-10 text-tertiary">
                           Ordered on
                           <input
                             type="date"
@@ -1137,7 +1219,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                         {/* The one date the planner reads. Says so here rather than
                             in a help panel nobody opens — it is the difference
                             between a note and a thing that moves somebody's dates. */}
-                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex min-w-0 flex-1 flex-col gap-0.5 text-10 text-tertiary">
                           Expected
                           <input
                             type="date"
@@ -1147,7 +1229,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                             title="Date the supplier promised delivery — constrains task start dates when delivery scheduling is on."
                           />
                         </label>
-                        <label className="flex flex-1 min-w-0 flex-col gap-0.5 text-10 text-tertiary">
+                        <label className="flex min-w-0 flex-1 flex-col gap-0.5 text-10 text-tertiary">
                           Arrived
                           <input
                             type="date"
@@ -1160,7 +1242,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                           type="button"
                           disabled={trackSaving}
                           onClick={() => void saveTracking(r.id)}
-                          className="rounded bg-accent-primary px-2 py-1 text-11 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="rounded bg-accent-primary px-2 py-1 text-11 text-white disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {trackSaving ? "Saving…" : "Save"}
                         </button>
@@ -1182,13 +1264,10 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
                       <button
                         type="button"
                         onClick={() => {
-                          if (
-                            !window.confirm(`Remove the record of "${r.label}"? The audit trail for it goes with it.`)
-                          )
-                            return;
+                          if (!window.confirm(removalConfirmText(r))) return;
                           void withdraw(r.id);
                         }}
-                        className="flex-shrink-0 px-2 py-1 min-h-[40px] flex items-center text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary"
+                        className="flex min-h-[40px] flex-shrink-0 items-center px-2 py-1 text-11 text-tertiary hover:text-danger-primary focus-visible:text-danger-primary"
                       >
                         Remove
                       </button>
@@ -1255,7 +1334,7 @@ export const OverviewBudgetBlock = observer(function OverviewBudgetBlock() {
         ) : (
           <ul className="divide-y divide-subtle rounded-lg border border-subtle">
             {expenses.map((e) => (
-              <li key={e.id} className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-3 gap-y-1 px-3 py-1.5">
+              <li key={e.id} className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1.5 sm:gap-x-3">
                 <span
                   className="flex-shrink-0 rounded bg-layer-2 px-1.5 py-0.5 text-10 text-tertiary"
                   title={CATEGORY_LABEL[e.category]}
@@ -1526,9 +1605,12 @@ function RatesPanel({
           currency: ccyOf(role),
         };
       })
-      // A blank field means "no rate", which is not the same as zero: sending it
-      // would turn an honest gap into a discipline that costs nothing.
-      .filter((r) => r.hourly_rate > 0);
+      // A blank box on a role that never had a rate is not sent: it is an
+      // honest gap, and a row for it would be a discipline that costs nothing.
+      // A blank box on a role that HAS a stored rate is sent as zero, which the
+      // server reads as "remove it" — dropping the row instead left the old
+      // rate in place forever, under a sentence saying the opposite.
+      .filter((r) => r.hourly_rate > 0 || byRole.has(r.role));
     try {
       await onSave(next);
       // Only now are these figures a decision rather than a suggestion, so only
@@ -1583,7 +1665,8 @@ function RatesPanel({
             </p>
           ) : (
             <p className="mt-1 text-10 text-tertiary">
-              Greyed figures are indicative {hint?.label} averages, not values. An empty box stays empty when you save.
+              Greyed figures are indicative {hint?.label} averages, not values. Emptying a box removes that rate when
+              you save.
             </p>
           )}
         </div>
@@ -1643,7 +1726,7 @@ function RatesPanel({
         type="button"
         onClick={() => void commit()}
         disabled={busy || !canWrite}
-        className="mt-2 rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+        className="mt-2 rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? "Saving…" : "Save rates"}
       </button>
@@ -1714,7 +1797,7 @@ function CurrencyPanel({
             await onSave({ eur_gbp_rate: value, display_currency: preferred });
             setBusy(false);
           }}
-          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save"}
         </button>
@@ -1772,7 +1855,7 @@ function CalendarPanel({
             setDate("");
             setName("");
           }}
-          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded bg-accent-primary px-2.5 py-1 text-12 text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           Add
         </button>

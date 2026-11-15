@@ -36,7 +36,11 @@ import { getProjectFormValues } from "./utils";
 const arribadaService = new ArribadaService();
 const projectMemberService = new ProjectMemberService();
 
-const BUDGET_CURRENCIES = ["EUR", "USD", "GBP"];
+// Only what the server will hold a budget in: `DISPLAY_CURRENCIES` in
+// apps/api/plane/arribada/views.py. USD was offered here and refused there — and
+// refused before anything else in the same PATCH was written, so the status and
+// the dates went with it.
+const BUDGET_CURRENCIES = ["EUR", "GBP"];
 const TEAM_ROLES: { value: EUserPermissions; label: string }[] = [
   { value: EUserPermissions.ADMIN, label: "Admin" },
   { value: EUserPermissions.MEMBER, label: "Member" },
@@ -143,15 +147,26 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
         // so an extra that will not save must not fail the creation — but it must not be lost in
         // silence either, so a failure is surfaced as a warning that names what did not save.
         const failedExtras: string[] = [];
-        if (startDate || targetDate || lifecycleStatus !== "active" || budgetAmount) {
+        // Two requests, not one. The schedule endpoint validates the budget
+        // before it writes anything, so a refused budget in a combined PATCH
+        // also dropped the status and the dates — and the warning could only
+        // say "budget/dates", which does not tell anyone what to re-enter.
+        if (startDate || targetDate || lifecycleStatus !== "active") {
           await arribadaService
             .updateSchedule(workspaceSlug.toString(), res.id, {
               lifecycle_status: lifecycleStatus,
               ...(startDate ? { start_date: startDate } : {}),
               ...(targetDate ? { target_date: targetDate } : {}),
-              ...(budgetAmount ? { budget_amount: Number(budgetAmount), budget_currency: budgetCurrency } : {}),
             })
-            .catch(() => failedExtras.push(budgetAmount ? "budget/dates" : "dates/status"));
+            .catch(() => failedExtras.push("status/dates"));
+        }
+        if (budgetAmount) {
+          await arribadaService
+            .updateSchedule(workspaceSlug.toString(), res.id, {
+              budget_amount: Number(budgetAmount),
+              budget_currency: budgetCurrency,
+            })
+            .catch(() => failedExtras.push("budget"));
         }
         if (teamMemberIds.length > 0) {
           await projectMemberService
@@ -172,6 +187,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
           handleAddToFavorites(res.id);
         }
         handleNextStep(res.id);
+        return res;
       })
       .catch((err) => {
         try {
@@ -272,7 +288,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   value={startDate}
                   max={targetDate || undefined}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
+                  className="focus:border-accent-primary rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
                 />
               </label>
               <label className="flex items-center gap-2 text-13 text-secondary">
@@ -283,7 +299,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                   value={targetDate}
                   min={startDate || undefined}
                   onChange={(e) => setTargetDate(e.target.value)}
-                  className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
+                  className="focus:border-accent-primary rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
                 />
               </label>
             </div>
@@ -298,14 +314,14 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 value={budgetAmount}
                 onChange={(e) => setBudgetAmount(e.target.value)}
                 placeholder="Amount"
-                className="w-32 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
+                className="focus:border-accent-primary w-32 rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
               />
               <select
                 value={budgetCurrency}
                 aria-label="Budget currency"
                 title="Budget currency — the project lead can change it later in the budget view"
                 onChange={(e) => setBudgetCurrency(e.target.value)}
-                className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong"
+                className="focus:border-accent-primary rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
               >
                 {BUDGET_CURRENCIES.map((c) => (
                   <option key={c} value={c}>
@@ -334,7 +350,7 @@ export const CreateProjectForm = observer(function CreateProjectForm(props: TCre
                 aria-label={teamMemberIds.length === 0 ? "Member role — select members first" : "Member role"}
                 title={teamMemberIds.length === 0 ? "Select members first" : undefined}
                 className={cn(
-                  "rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary focus-visible:ring-2 focus-visible:ring-accent-strong disabled:cursor-not-allowed disabled:bg-layer-2",
+                  "focus:border-accent-primary rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent-strong disabled:cursor-not-allowed disabled:bg-layer-2",
                   teamMemberIds.length === 0 && "opacity-50"
                 )}
               >

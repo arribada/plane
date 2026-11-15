@@ -30,11 +30,18 @@ type TSyncResult = {
   closed_items?: number;
   skipped_no_workspace?: string[];
   skipped_partial_fetch?: string[];
+  /**
+   * Work items the sync would once have moved to a repo's new owner project and
+   * now leaves where they are. Each names the GitHub issue, the item, and the
+   * project that claimed it, so a person can move it deliberately.
+   */
+  relocation_refused?: { issue: string; item: string; claimed_by: string }[];
 };
 
 export const githubSyncToast = (result: TSyncResult): { type: TOAST_TYPE; title: string; message: string } => {
   const unplaceable = result.skipped_no_workspace ?? [];
   const partial = result.skipped_partial_fetch ?? [];
+  const stayed = result.relocation_refused ?? [];
   const closedRows = result.closed_rows ?? 0;
   const closedItems = result.closed_items ?? 0;
 
@@ -58,13 +65,21 @@ export const githubSyncToast = (result: TSyncResult): { type: TOAST_TYPE; title:
   if ((result.dismissed_skipped ?? 0) > 0) parts.push(`${result.dismissed_skipped} left dismissed`);
   if (partial.length > 0) parts.push(`could not read all of ${partial.join(", ")}`);
   if (unplaceable.length > 0) parts.push(`no workspace for ${unplaceable.join(", ")}`);
+  // An item whose repo now belongs to another project stays put rather than
+  // being renumbered into the new one; somebody has to decide where it lives.
+  if (stayed.length > 0)
+    parts.push(
+      `${stayed.length} item${stayed.length === 1 ? "" : "s"} left in place although the repo moved (${stayed
+        .map((s) => `${s.item} → ${s.claimed_by}`)
+        .join(", ")})`
+    );
 
   return {
     // A repo nothing could place is a real problem wearing a success toast, so
     // it is the one case where a completed run does not get to look green. A repo
     // whose list could not be read whole joins it: closures there went unnoticed,
     // and a green toast would say the opposite.
-    type: unplaceable.length > 0 || partial.length > 0 ? TOAST_TYPE.WARNING : TOAST_TYPE.SUCCESS,
+    type: unplaceable.length > 0 || partial.length > 0 || stayed.length > 0 ? TOAST_TYPE.WARNING : TOAST_TYPE.SUCCESS,
     title: headline,
     message: `${parts.join(" · ")}.`,
   };

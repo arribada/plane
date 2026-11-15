@@ -8,6 +8,7 @@
  * enough to need pale text — and none of it is about React.
  */
 import type { TIssue } from "@plane/types";
+import { localEpochDay, toEpochDay } from "./working-days";
 
 export type TBarLook = {
   /** The fill, as given. Never washed out: the veil that used to sit over every
@@ -60,16 +61,6 @@ const luminance = (hex: string): number => {
 /** The threshold where white text overtakes near-black against the same fill. */
 export const readableOn = (background: string): string => (luminance(background) > 0.42 ? "#111827" : "#ffffff");
 
-const DAY = 86_400_000;
-
-const midnight = (value: string | null | undefined): number | null => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-};
-
 export const barLook = (
   issue: TIssue | undefined | null,
   background: string,
@@ -78,10 +69,15 @@ export const barLook = (
 ): TBarLook => {
   const done = stateGroup === "completed";
   const cancelled = stateGroup === "cancelled";
-  const start = midnight(issue?.start_date);
-  const end = midnight(issue?.target_date);
-  const now = new Date(today);
-  now.setHours(0, 0, 0, 0);
+  // Epoch DAYS, not instants. This used to be `new Date(value)` — UTC midnight
+  // — followed by `setHours(0,0,0,0)`, a local getter: west of Greenwich that
+  // instant is the previous evening, so an item due today drew the overdue ring
+  // for every reader in the Americas and for nobody in Europe. A plan date is a
+  // calendar day and is compared with the reader's calendar day; neither side
+  // of that comparison has a timezone. See working-days.ts.
+  const start = toEpochDay(issue?.start_date);
+  const end = toEpochDay(issue?.target_date);
+  const now = localEpochDay(today);
 
   // No percentage here because the overlay already draws one: ProjectProgressEndpoint
   // computes it server-side (a parent's share of completed children, 0 or 100 for a
@@ -91,7 +87,7 @@ export const barLook = (
     text: readableOn(background),
     // Cancelled is not overdue either — nobody is waiting for it. The split of
     // `done` into two must not quietly turn every abandoned item red.
-    overdue: !done && !cancelled && end !== null && end < now.getTime(),
+    overdue: !done && !cancelled && end !== null && end < now,
     done,
     cancelled,
     // The bar steps aside for a diamond ONLY when a diamond is actually drawn — and the overlay
@@ -99,6 +95,6 @@ export const barLook = (
     // "marked" instead let a MARKED multi-day deliverable hide its bar with no diamond behind it,
     // so the row rendered blank. Same-day is the honest predicate: no invisible items, and the
     // bar-transparency and the diamond now agree.
-    milestone: start !== null && end !== null && Math.round((end - start) / DAY) === 0,
+    milestone: start !== null && end !== null && end === start,
   };
 };

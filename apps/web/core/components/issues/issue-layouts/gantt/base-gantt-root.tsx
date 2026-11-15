@@ -39,7 +39,7 @@ import { DependencyViolationBanner } from "@/plane-web/components/gantt-chart/vi
 import { CriticalPathBanner } from "@/plane-web/components/gantt-chart/critical-path-banner";
 import { chainSpan, criticalColor } from "@/plane-web/components/gantt-chart/critical-path";
 import { unsetColor } from "@/plane-web/components/gantt-chart/palette";
-import { describeFilters } from "@/plane-web/components/gantt-chart/export";
+import { describeFilters, markCriticalEdges } from "@/plane-web/components/gantt-chart/export";
 import type { TExportEdge, TExportMeta, TExportRow } from "@/plane-web/components/gantt-chart/export";
 import { groupKeyFromRowId, groupRowId, isGroupRowId } from "@/plane-web/components/gantt-chart/grouping";
 import { GROUP_BY_OPTIONS, buildGroups, flattenGroups } from "@/plane-web/components/gantt-chart/grouping";
@@ -79,7 +79,10 @@ import { useBulkOperationStatus } from "@/plane-web/hooks/use-bulk-operation-sta
 import { GanttLockButton } from "@/plane-web/components/gantt-chart/lock-button";
 import { usePlanLock } from "@/plane-web/components/gantt-chart/use-plan-lock";
 import { useProjectMilestones } from "@/plane-web/components/gantt-chart/use-project-milestones";
-import { invalidateProjectProgress } from "@/plane-web/components/gantt-chart/use-project-progress";
+import {
+  invalidateProjectProgress,
+  peekProjectProgress,
+} from "@/plane-web/components/gantt-chart/use-project-progress";
 import { invalidateProjectSlack } from "@/plane-web/components/gantt-chart/use-project-slack";
 import { useInitGanttBeforeChart } from "@/plane-web/components/gantt-chart/use-init-gantt";
 
@@ -439,6 +442,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       // when no baseline is shown, and the picture then says nothing about one
       // rather than inventing a comparison.
       const shownBase = shownBaseline(workspaceSlug?.toString(), projectId?.toString());
+      // ARRIBADA FIX: the fill inside each bar, from the same cache entry every
+      // bar on screen is reading. The picture documented `progress` and never
+      // set it, so a chart of part-shaded bars exported flat.
+      const progressOf = peekProjectProgress(workspaceSlug?.toString(), projectId?.toString());
       const parsed = (value: string | null | undefined) => {
         if (!value) return null;
         const date = new Date(value);
@@ -485,6 +492,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
           // palette.ts.
           done: ganttDisplay.showCompleted ? state?.group === "completed" : undefined,
           cancelled: ganttDisplay.showCompleted ? state?.group === "cancelled" : undefined,
+          progress: progressOf[id],
           // The frozen plan the ghosts are drawn against — present only when
           // ghosts were actually on screen. See baseline-shown.ts.
           baselineStart: parsed(shownBase?.entries[id]?.start),
@@ -522,9 +530,13 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       // the exported picture. A backwards `finish_after` is a plan that reads as
       // if the work happens in the opposite order, in the file that leaves the
       // building.
-      const exportEdges: TExportEdge[] = graph
-        .map(({ from, to }) => ({ from, to }))
-        .filter((edge) => visible.has(edge.from) && visible.has(edge.to));
+      //
+      // ARRIBADA FIX: flagged from the same critical set the rows and the
+      // on-screen arrows use. The `critical` flag was dropped here, so a chain
+      // ringed red on screen exported with every link grey.
+      const exportEdges: TExportEdge[] = markCriticalEdges(graph, slack.critical).filter(
+        (edge) => visible.has(edge.from) && visible.has(edge.to)
+      );
 
       const folded =
         (groupBy === "none" ? 0 : groups.filter((group) => collapsedGroups.has(group.key)).length) +
@@ -851,6 +863,11 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   /** Put back everything the last gesture moved — one entry can hold a whole
    *  pushed chain, and reverting part of it would leave a plan nobody chose. */
   const handleGanttUndo = useCallback(async () => {
+    // ARRIBADA FIX: an undo is a write through the same endpoint a drag uses.
+    // Checked only `canUndo` before, so Ctrl+Z rewrote a locked plan. The ref
+    // because the answer is decided further down this component and must be
+    // the one at the moment the key is pressed — see `canEditPlanRef`.
+    if (!canEditPlanRef.current) return;
     const entry = ganttUndo.pop();
     if (!entry || !updateIssue) return;
     const slug = workspaceSlug?.toString();
@@ -875,7 +892,10 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z")) return;
       const el = document.activeElement as HTMLElement | null;
       if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.isContentEditable) return;
-      if (!ganttUndo.canUndo) return;
+      // ARRIBADA FIX: not on a plan this reader may not change. `canUndo` is
+      // already false then (the store empties on lock), and the key must not be
+      // swallowed either way.
+      if (!canEditPlanRef.current || !ganttUndo.canUndo) return;
       e.preventDefault();
       void handleGanttUndo();
     };
@@ -909,6 +929,15 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
   // Adding is gated separately: a project can be open to edits and closed to new
   // items, which is the usual shape once a scope has been agreed with a funder.
   const canAddItems = isAllowed && planLock.allowAddItems;
+  // ARRIBADA FIX: the undo stack follows the permission. Locking empties it —
+  // a stack that survived the lock was a way of rewriting a locked plan with
+  // one key, and "undo the thing from before the lock" once it lifts is not a
+  // change anybody is choosing now. Restored on unmount so the next chart
+  // starts from its own answer rather than this one's.
+  useEffect(() => {
+    ganttUndo.setEditable(isAllowed);
+    return () => ganttUndo.setEditable(true);
+  }, [isAllowed]);
 
   /**
    * Whether this specific bar may be moved.
@@ -1001,6 +1030,17 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
             edges: graph,
             spans,
             notEditable: new Set(issuesIds.filter((id) => id !== origin.id && !canEditBlock(id))),
+            // ARRIBADA FIX: finished and cancelled work is a record, not a
+            // plan. The push used to carry it along with the chain — a slip
+            // upstream rewrote the dates of something already delivered.
+            finished: new Set(
+              issuesIds.filter((id) => {
+                if (id === origin.id) return false;
+                const stateId = getIssueById(id)?.state_id;
+                const group = stateId ? getStateById(stateId)?.group : undefined;
+                return group === "completed" || group === "cancelled";
+              })
+            ),
             floors: deliveryFloors,
             isHoliday: (iso: string) => !!holidays[iso],
           });
@@ -1057,6 +1097,7 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
       graph,
       issuesIds,
       getIssueById,
+      getStateById,
       canEditBlock,
       deliveryFloors,
       holidays,
@@ -1145,7 +1186,9 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
                           to push" are not the same picture at rest. */}
                         <PushDependentsToggle linkCount={graph.length} />
                         <BaselinePicker />
-                        <GanttUndoButton onUndo={handleGanttUndo} />
+                        {/* ARRIBADA FIX: not offered on a plan this reader may
+                          not change — an undo is a write. */}
+                        {isAllowed && <GanttUndoButton onUndo={handleGanttUndo} />}
                       </div>
                     </>
                   }
@@ -1178,7 +1221,12 @@ export const BaseGanttRoot = observer(function BaseGanttRoot(props: IBaseGanttRo
                   canLoadMoreBlocks={nextPageResults}
                   updateBlockDates={updateBlockDates}
                   showAllBlocks
-                  enableDependency
+                  // ARRIBADA FIX: a dependency is a plan write
+                  // (`IssueRelationViewSet` is in plan_guard's GUARDED), and
+                  // this was a bare `true` — every bar of a locked or lead-only
+                  // plan grew a link handle the server then refused. Per block,
+                  // the same answer as a bar's own move.
+                  enableDependency={canEditBlock}
                   isEpic={isEpic}
                 />
               </GanttGroupContext.Provider>

@@ -39,6 +39,14 @@ const ITEMS = [
   { id: "i-1", name: "Fit the saltwater switch", state_id: "s-1", start_date: "2026-08-03", target_date: "2026-08-07" },
 ];
 
+/**
+ * A figure as the annex prints it, in whatever locale the runner has — with the
+ * group separator reduced to a plain space, because testing-library's default
+ * normaliser does the same to the DOM side (a French narrow no-break space is
+ * `\s` too) and an un-normalised expectation never matches it.
+ */
+const grouped = (n: number) => n.toLocaleString().replace(/\s+/g, " ");
+
 beforeEach(() => {
   // `restoreMocks` only restores spies; a bare `vi.fn()` carries its call log
   // between tests, and half of what this file asserts is a call COUNT.
@@ -76,6 +84,52 @@ describe("the annex", () => {
     const onSettled = vi.fn();
     render(<OverviewPrintAnnex overview={null} armed onSettled={onSettled} />);
     await waitFor(() => expect(onSettled).toHaveBeenCalled());
+  });
+
+  it("prints the cost section as the funder report does: both halves, flagged, currency said once", async () => {
+    // It used to print labour in each rate's currency with no word about it,
+    // and categories as the converted `actual` alone — `planned` dropped and
+    // nothing marked "≈" — so the annex and the funder report disagreed.
+    getBudget.mockResolvedValue({
+      labour: {
+        by_role: [{ role: "firmware", days: 10, hours: 70, cost: 5600, currency: "GBP", rated: true }],
+        totals: [],
+        unrated_roles: [],
+      },
+      expenses: {
+        by_category: [{ category: "hardware", planned: 1200, actual: 300, currency: "EUR" }],
+        by_category_converted: true,
+        planned: [],
+        actual: [],
+        count: 1,
+      },
+    });
+    const view = render(<OverviewPrintAnnex overview={null} armed onSettled={vi.fn()} />);
+    await screen.findAllByText(ITEMS[0].name);
+
+    expect(screen.getByText(`10 d · ${grouped(5600)} GBP`)).toBeInTheDocument();
+    expect(screen.getByText(/currency its rate is recorded in/)).toBeInTheDocument();
+    expect(screen.getByText(/by category, in EUR/)).toBeInTheDocument();
+    expect(screen.getByText(`≈ ${grouped(1200)} budgeted · ≈ ${grouped(300)} spent`)).toBeInTheDocument();
+    expect(view.container.textContent).toContain("≈ marks a figure");
+  });
+
+  it("marks nothing as approximate when nothing was converted", async () => {
+    getBudget.mockResolvedValue({
+      labour: { by_role: [], totals: [], unrated_roles: [] },
+      expenses: {
+        by_category: [{ category: "hardware", planned: 1200, actual: 300, currency: "EUR" }],
+        by_category_converted: false,
+        planned: [],
+        actual: [],
+        count: 1,
+      },
+    });
+    const view = render(<OverviewPrintAnnex overview={null} armed onSettled={vi.fn()} />);
+    await screen.findAllByText(ITEMS[0].name);
+
+    expect(screen.getByText(`${grouped(1200)} budgeted · ${grouped(300)} spent`)).toBeInTheDocument();
+    expect(view.container.textContent).not.toContain("≈");
   });
 
   it("does not fetch again when it is armed a second time", async () => {

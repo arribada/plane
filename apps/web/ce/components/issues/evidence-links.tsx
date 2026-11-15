@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { BookText, FileText, Github, Link2, Plus, Trash2, X } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
-import { cn } from "@plane/utils";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -74,6 +74,10 @@ export const IssueEvidenceLinks = observer(function IssueEvidenceLinks({
   disabled,
 }: Props) {
   const [rows, setRows] = useState<TIssueArtifact[] | null>(null);
+  // Why the links could not be read. "Nothing linked yet" is a statement about
+  // the evidence, and a failed read used to make it — the catch set `[]`.
+  const [failure, setFailure] = useState<string | null>(null);
+  const [token, setToken] = useState(0);
   const [adding, setAdding] = useState(false);
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
@@ -81,19 +85,21 @@ export const IssueEvidenceLinks = observer(function IssueEvidenceLinks({
 
   useEffect(() => {
     let cancelled = false;
+    setRows(null);
+    setFailure(null);
     service
       .getIssueArtifacts(workspaceSlug, projectId, issueId)
       .then((found) => {
         if (!cancelled) setRows(found);
         return undefined;
       })
-      .catch(() => {
-        if (!cancelled) setRows([]);
+      .catch((error: unknown) => {
+        if (!cancelled) setFailure(apiErrorMessage(error, "The server did not answer."));
       });
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, issueId]);
+  }, [workspaceSlug, projectId, issueId, token]);
 
   const add = async () => {
     const trimmed = url.trim();
@@ -192,7 +198,14 @@ export const IssueEvidenceLinks = observer(function IssueEvidenceLinks({
         </div>
       )}
 
-      {rows === null ? (
+      {failure ? (
+        <p role="alert" className="flex flex-col items-start gap-1 text-11 text-danger-primary">
+          <span>Couldn&apos;t read the evidence links. {failure}</span>
+          <button type="button" onClick={() => setToken((n) => n + 1)} className="text-accent-primary hover:underline">
+            Try again
+          </button>
+        </p>
+      ) : rows === null ? (
         <div className="h-8 animate-pulse rounded bg-layer-1" />
       ) : rows.length === 0 ? (
         <p className="text-11 text-tertiary">
@@ -219,11 +232,13 @@ export const IssueEvidenceLinks = observer(function IssueEvidenceLinks({
                     type="button"
                     onClick={() => void remove(row.id, row.label || hostOf(row.url))}
                     aria-label={`Remove the link to ${row.label || hostOf(row.url)}`}
-                    className={cn(
-                      // p-2 -m-2 keeps the icon where it is and takes the target to ~44px.
-                      "-m-2 flex-shrink-0 p-2 text-tertiary opacity-0 transition-opacity",
-                      "group-hover:opacity-100 hover:text-danger-primary focus-visible:opacity-100"
-                    )}
+                    // Always drawn, never revealed on hover — the checklist's remove
+                    // button learned the same lesson. There is no hover on a touch
+                    // screen, and this is the only way a link comes off, so hiding
+                    // it behind a pointer removed the feature for anyone on a phone.
+                    // It stays quiet at text-tertiary and only colours on hover.
+                    // p-2 -m-2 keeps the icon where it is and takes the target to ~44px.
+                    className="-m-2 flex-shrink-0 p-2 text-tertiary hover:text-danger-primary"
                   >
                     <Trash2 className="size-3" />
                   </button>

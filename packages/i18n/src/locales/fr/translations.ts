@@ -28,6 +28,8 @@ export default {
     workload: "Charge de travail",
     github_triage: "Tri GitHub",
     request_expense: "Demander une dépense",
+    finance: "Finances",
+    disciplines: "Disciplines",
   },
   auth: {
     common: {

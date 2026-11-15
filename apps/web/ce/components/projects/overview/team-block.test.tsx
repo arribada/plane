@@ -25,10 +25,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OverviewTeamBlock } from "./team-block";
 import type { TTeamMember } from "@/plane-web/types/arribada";
 
-const { setProjectTeam, getProjectTeam, getWorkspaceDirectory, setToast } = vi.hoisted(() => ({
+const { setProjectTeam, getProjectTeam, getWorkspaceDirectory, getSchedule, setToast } = vi.hoisted(() => ({
   setProjectTeam: vi.fn(),
   getProjectTeam: vi.fn(),
   getWorkspaceDirectory: vi.fn(),
+  getSchedule: vi.fn(),
   setToast: vi.fn(),
 }));
 
@@ -45,6 +46,7 @@ vi.mock("@/plane-web/services/arribada.service", () => ({
     getProjectTeam = getProjectTeam;
     setProjectTeam = setProjectTeam;
     getWorkspaceDirectory = getWorkspaceDirectory;
+    getSchedule = getSchedule;
   },
 }));
 
@@ -93,8 +95,11 @@ beforeEach(() => {
   setProjectTeam.mockReset();
   getProjectTeam.mockReset();
   getWorkspaceDirectory.mockReset();
+  getSchedule.mockReset();
   setToast.mockReset();
   getWorkspaceDirectory.mockResolvedValue({ people: [] });
+  // The lead, unless a test says otherwise: the Lead chips are then enabled.
+  getSchedule.mockResolvedValue({ can_set_governance: true });
   getProjectTeam.mockResolvedValue({ roles_vocabulary: [], team: TEAM });
   setProjectTeam.mockResolvedValue({ roles_vocabulary: [], team: TEAM });
 });
@@ -157,5 +162,59 @@ describe("editing a project roster", () => {
     await save(user);
 
     expect(screen.getByDisplayValue("Grant")).toBeInTheDocument();
+  });
+});
+
+/** The Lead chips, one per row, in roster order. */
+const leadChips = () => screen.getAllByRole("button", { name: /^Lead$/ });
+
+describe("changing who leads", () => {
+  it("tells the person a refused lead change is about the lead, not a removal", async () => {
+    // The server 403s a lead change through the same guard as a removal, and
+    // the old handler read every 403 as a refused removal — sending somebody to
+    // put back a person they had never taken off.
+    setProjectTeam.mockRejectedValue({ status: 403, offline: false });
+    const user = userEvent.setup();
+    await openEditor(user);
+    await waitFor(() => expect(leadChips()[1]).toBeEnabled());
+
+    await user.click(leadChips()[1]);
+    await save(user);
+
+    await waitFor(() => expect(setToast).toHaveBeenCalled());
+    const title = setToast.mock.calls.at(-1)?.[0].title;
+    expect(title).toMatch(/change who leads/i);
+    expect(title).not.toMatch(/off the roster/i);
+  });
+
+  it("tells somebody with no write access that the roster is not theirs to edit", async () => {
+    // A guest's PUT is refused before the payload is read. No removal, no lead
+    // change: neither sentence about the lead applies.
+    setProjectTeam.mockRejectedValue({ status: 403, offline: false });
+    const user = userEvent.setup();
+    await openEditor(user);
+    await save(user);
+
+    await waitFor(() => expect(setToast).toHaveBeenCalled());
+    const title = setToast.mock.calls.at(-1)?.[0].title;
+    expect(title).toMatch(/can't change this roster/i);
+    expect(title).not.toMatch(/project lead/i);
+  });
+
+  it("does not offer the Lead chip to somebody the server would refuse", async () => {
+    getSchedule.mockResolvedValue({ can_set_governance: false });
+    const user = userEvent.setup();
+    await openEditor(user);
+
+    await waitFor(() => expect(getSchedule).toHaveBeenCalled());
+    for (const chip of leadChips()) expect(chip).toBeDisabled();
+  });
+
+  it("offers the Lead chip to the lead", async () => {
+    // Proved both ways: a chip that is always disabled would pass the test above.
+    const user = userEvent.setup();
+    await openEditor(user);
+
+    await waitFor(() => expect(leadChips()[0]).toBeEnabled());
   });
 });

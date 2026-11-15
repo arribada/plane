@@ -28,7 +28,7 @@ import { criticalColor } from "@/plane-web/components/gantt-chart/critical-path"
 import { ganttDisplay } from "@/plane-web/store/gantt-display";
 import type { TPortfolioColorBy } from "@/plane-web/types/arribada";
 import type { TPortfolioDateUpdate, TPortfolioDragContext } from "./drag-target";
-import { canMovePortfolioRow, describeRefusal, routePortfolioDrag } from "./drag-target";
+import { canMovePortfolioRow, describeDragFailure, describeRefusal, routePortfolioDrag } from "./drag-target";
 import { PortfolioBar } from "./bar";
 import { isSeriesDimension, PORTFOLIO_SUMMARY_COLOR } from "./color";
 import { usePortfolioColorScale } from "./use-portfolio-color";
@@ -93,6 +93,13 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
    * which is exactly why the gantt's `enable*` props accept a function. It used
    * to be passed a bare `true` for every row on the board, including the folder
    * bands and including projects whose plans are frozen.
+   *
+   * And the lock was the only gate it read. `can_edit_plan` (the server's own
+   * answer for this user, the same predicate as the 403) and
+   * `allow_edit_others` are the other two the per-project timeline applies, and
+   * without them a lead-only plan was drawn draggable here and snapped back.
+   * Both are read with `?? true` so a backend that has not been redeployed
+   * reads as permissive rather than as forbidden; the server still refuses.
    */
   const dragContext = useMemo<TPortfolioDragContext>(
     () => ({
@@ -103,8 +110,14 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
       },
       projectOf: (id) => portfolio.getRowProjectId(id),
       isProjectLocked: (projectId) => !!portfolio.getProject(projectId)?.timeline_locked,
+      canEditPlan: (projectId) => portfolio.getProject(projectId)?.can_edit_plan ?? true,
+      allowEditOthers: (projectId) => portfolio.getProject(projectId)?.allow_edit_others ?? true,
+      isAssignedToMe: (itemId) => {
+        const me = currentUser?.id;
+        return !!me && (portfolio.getItem(itemId)?.assignees ?? []).some((assignee) => assignee.id === me);
+      },
     }),
-    [portfolio]
+    [portfolio, currentUser?.id]
   );
 
   const canMoveRow = useCallback((blockId: string) => canMovePortfolioRow(blockId, dragContext), [dragContext]);
@@ -186,12 +199,15 @@ export const PortfolioTimelineRoot = observer(function PortfolioTimelineRoot() {
 
       try {
         await Promise.all(writes);
-      } catch {
+      } catch (error) {
         for (const undo of rollbacks) undo();
+        // The server's reason when it gave one — a lead-only plan answers 403
+        // with a sentence saying who may change it — rather than a generic
+        // "couldn't" that reads as a flaky network. See `describeDragFailure`.
         setToast({
           type: TOAST_TYPE.ERROR,
           title: "Couldn't move it",
-          message: "The dates were put back as they were.",
+          message: describeDragFailure(error),
         });
       }
     },

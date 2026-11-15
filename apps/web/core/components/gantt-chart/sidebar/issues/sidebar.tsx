@@ -10,6 +10,9 @@ import { observer } from "mobx-react";
 // ui
 import { GANTT_TIMELINE_TYPE } from "@plane/types";
 import type { IBlockUpdateData } from "@plane/types";
+// ARRIBADA FIX: a refused re-parent is said out loud rather than left to an
+// unhandled rejection.
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { Loader } from "@plane/ui";
 // components
 import RenderIfVisible from "@/components/core/render-if-visible-HOC";
@@ -30,7 +33,8 @@ import { handleOrderChange } from "../utils";
 import { IssuesSidebarBlock } from "./block";
 
 type Props = {
-  blockUpdateHandler: (block: any, payload: IBlockUpdateData) => void;
+  /** ARRIBADA FIX: may be async, so a re-parent can await it and catch a 403. */
+  blockUpdateHandler: (block: any, payload: IBlockUpdateData) => void | Promise<void>;
   canLoadMoreBlocks?: boolean;
   loadMoreBlocks?: () => void;
   ganttContainerRef: RefObject<HTMLDivElement>;
@@ -86,8 +90,33 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
   // ARRIBADA FIX: the prop has always been typed `boolean | (id) => boolean` at
   // the gantt's own root and was flattened to `boolean` on the way in here, so a
   // per-row answer read as "always true". Resolved once, at the row.
+  //
+  // It is also the plan permission. base-gantt-root passes `isAllowed` — Plane's
+  // role, the lock and `can_edit_plan` together — whatever the sort, so "may this
+  // row be reordered" and "may this reader change the plan" are one answer here.
+  // Every drag-started write below (reorder, band drop, nest, un-nest) is gated
+  // on it; the lock used to be bypassed by the band-drop and make-child paths,
+  // which were wired on grouping and nesting alone.
   const canReorder = (blockId: string) =>
     typeof enableReorder === "function" ? enableReorder(blockId) : enableReorder;
+
+  // ARRIBADA FIX: what a refused `parent_id` write says. `plan_guard.py` answers
+  // 403 with `detail` (who may change the plan, what is still open); the store
+  // rolls its optimistic update back, so the row has already snapped home and
+  // the sentence is the only sign anything was asked. Same shape as the band
+  // drop's `assignToGroup` in base-gantt-root.
+  const sayRefused = (error: unknown) => {
+    const refusal = error as { detail?: unknown; error?: unknown } | null | undefined;
+    const said = typeof refusal?.detail === "string" ? refusal.detail : refusal?.error;
+    setToast({
+      type: TOAST_TYPE.ERROR,
+      title: "The move did not stick",
+      message:
+        typeof said === "string" && said
+          ? said
+          : "The server refused the change, so the work item is back where it was.",
+    });
+  };
 
   useIntersectionObserver(
     ganttContainerRef,
@@ -132,12 +161,25 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     // parent (un-nest); the reverse joins a parent's children. Re-parent to the drop target's
     // parent (null = top level) first, then let handleOrderChange position it. Guarded against
     // cycles and no-op'd when the level is unchanged.
-    if (groups.subtasks.enabled && draggingBlockId && droppedBlockId) {
+    //
+    // ARRIBADA FIX: gated on the plan permission, and awaited inside a
+    // try/catch. This wrote `parent_id` for anybody whose drag reached here,
+    // and a 403 was an unhandled rejection: the row snapped back and nothing
+    // was said. A refused re-parent also stops the drop — positioning a row the
+    // server would not let move is a second write that would 403 the same way.
+    if (groups.subtasks.enabled && draggingBlockId && droppedBlockId && canReorder(draggingBlockId)) {
       const newParent = groups.subtasks.parentOf(droppedBlockId) ?? null;
       const curParent = groups.subtasks.parentOf(draggingBlockId) ?? null;
       if (newParent !== curParent && draggingBlockId !== newParent && !wouldCycle(draggingBlockId, newParent)) {
         const child = getBlockById(draggingBlockId);
-        if (child?.data) blockUpdateHandler(child.data, { parent_id: newParent } as unknown as IBlockUpdateData);
+        if (child?.data) {
+          try {
+            await blockUpdateHandler(child.data, { parent_id: newParent } as unknown as IBlockUpdateData);
+          } catch (error) {
+            sayRefused(error);
+            return;
+          }
+        }
       }
     }
     handleOrderChange(
@@ -161,6 +203,10 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
   // `parent_id` and nothing else, and the tree rebuilds itself from parent_id on
   // the next render (see subtasks.ts), so there is no local order to touch here.
   const handleMakeChild = async (draggingBlockId: string, parentBlockId: string) => {
+    // ARRIBADA FIX: the plan permission, asked again at the drop. The handler is
+    // only wired on allowed rows (see `onMakeChild` below), but the answer can
+    // change between the drag starting and ending.
+    if (!canReorder(draggingBlockId)) return;
     // Never let an item parent itself, and never re-parent onto one of its own descendants —
     // that would make a cycle that buildSubtaskTree only papers over by cutting an edge.
     if (draggingBlockId === parentBlockId || wouldCycle(draggingBlockId, parentBlockId)) return;
@@ -175,7 +221,15 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
     // spreads it straight through), so a `parent_id` here is applied exactly like
     // a `sort_order` there. Cast because IBlockUpdateData is the reorder/date
     // payload shape and does not name parent_id.
-    blockUpdateHandler(child.data, { parent_id: parentBlockId } as unknown as IBlockUpdateData);
+    //
+    // ARRIBADA FIX: awaited and caught. A 403 here used to be an unhandled
+    // rejection — the row snapped back and nothing was said.
+    try {
+      await blockUpdateHandler(child.data, { parent_id: parentBlockId } as unknown as IBlockUpdateData);
+    } catch (error) {
+      sayRefused(error);
+      return;
+    }
 
     setLandedId(draggingBlockId);
     if (landedTimer.current) window.clearTimeout(landedTimer.current);
@@ -236,10 +290,17 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                 <GanttDnDHOC
                   id={block.id}
                   isLastChild={index === blockIds.length - 1}
-                  // Draggable either to reorder, or — when the chart is grouped
-                  // by something a work item can actually belong to — to drop on
-                  // a band header and join it.
-                  isDragEnabled={canReorder(block.id) || !!groups.assign}
+                  // Draggable to reorder, and — when the chart is grouped by
+                  // something a work item can actually belong to — to drop on a
+                  // band header and join it. Both are plan edits.
+                  //
+                  // ARRIBADA FIX: this was `canReorder(id) || !!groups.assign`,
+                  // and `assign` is set by the GROUPING, not by any permission —
+                  // so grouping by sprint made every row of a locked plan
+                  // draggable, and the make-child band below then accepted the
+                  // drop. `enableReorder` is `isAllowed` whatever the sort (see
+                  // base-gantt-root), so it already covers the band-drop case.
+                  isDragEnabled={canReorder(block.id)}
                   isReorderTarget={canReorder(block.id)}
                   // ARRIBADA FIX: with sub-tasks nested, a row's order is decided
                   // among its own siblings — the tree is rebuilt from parent_id on
@@ -256,8 +317,12 @@ export const IssueGanttSidebar = observer(function IssueGanttSidebar(props: Prop
                   // screen and the extra centre-drop band would only get in the
                   // way of reordering. Passing undefined keeps the row on the
                   // pure-reorder path (getData stays 0/0, make-child blocked).
+                  //
+                  // ARRIBADA FIX: and only where this reader may change the
+                  // plan. Wired on nesting alone, a locked plan still lit every
+                  // row up as a drop target for a re-parent the server refuses.
                   onMakeChild={
-                    groups.subtasks.enabled ? (a, b) => void handleMakeChild(a, b) : undefined
+                    groups.subtasks.enabled && canReorder(block.id) ? (a, b) => void handleMakeChild(a, b) : undefined
                   }
                 >
                   {(isDragging: boolean) => (

@@ -21,20 +21,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 import { IssueBulkOperationsRoot } from "./root";
 
-const { setToast, removeIssue, updateIssue, bulkArchiveIssues, adoptIssues, clearSelection } = vi.hoisted(() => ({
-  setToast: vi.fn(),
-  removeIssue: vi.fn(),
-  updateIssue: vi.fn(),
-  bulkArchiveIssues: vi.fn(),
-  adoptIssues: vi.fn(),
-  clearSelection: vi.fn(),
-}));
+const { setToast, removeIssue, updateIssue, restoreLocally, bulkArchiveIssues, adoptIssues, clearSelection } =
+  vi.hoisted(() => ({
+    setToast: vi.fn(),
+    removeIssue: vi.fn(),
+    updateIssue: vi.fn(),
+    restoreLocally: vi.fn(),
+    bulkArchiveIssues: vi.fn(),
+    adoptIssues: vi.fn(),
+    clearSelection: vi.fn(),
+  }));
+
+type TRow = { id: string; name: string; project_id: string; sequence_id: number; priority: string };
 
 /** Three work items in one project, the way a board hands them over. */
-const ISSUES: Record<string, { id: string; name: string; project_id: string; sequence_id: number }> = {
-  "i-1": { id: "i-1", name: "Fit the saltwater switch", project_id: "gps", sequence_id: 11 },
-  "i-2": { id: "i-2", name: "Pot the enclosure", project_id: "gps", sequence_id: 12 },
-  "i-3": { id: "i-3", name: "Field trial, Príncipe", project_id: "gps", sequence_id: 13 },
+const ISSUES: Record<string, TRow> = {
+  "i-1": { id: "i-1", name: "Fit the saltwater switch", project_id: "gps", sequence_id: 11, priority: "low" },
+  "i-2": { id: "i-2", name: "Pot the enclosure", project_id: "gps", sequence_id: 12, priority: "low" },
+  "i-3": { id: "i-3", name: "Field trial, Príncipe", project_id: "gps", sequence_id: 13, priority: "low" },
 };
 
 vi.mock("@plane/propel/toast", () => ({ TOAST_TYPE: { ERROR: "error", SUCCESS: "success" }, setToast }));
@@ -58,6 +62,8 @@ vi.mock("@/hooks/store/use-issue-detail", () => ({
     updateIssue,
     removeIssue,
     issue: { getIssueById: (id: string) => ISSUES[id] },
+    // The local-only write the bar uses to put a rejected item back.
+    rootIssueStore: { issues: { updateIssue: restoreLocally } },
   }),
 }));
 vi.mock("@/services/issue/issue.service", () => ({
@@ -84,6 +90,7 @@ beforeEach(() => {
   // `restoreMocks` strips implementations but not call history, and half the
   // assertions here are about what was NOT reported.
   vi.clearAllMocks();
+  for (const row of Object.values(ISSUES)) row.priority = "low";
   removeIssue.mockResolvedValue(undefined);
   updateIssue.mockResolvedValue(undefined);
   bulkArchiveIssues.mockResolvedValue({});
@@ -182,6 +189,38 @@ describe("bulk priority", () => {
     const said = reported();
     expect(said).toContain("2 of 3");
     expect(said).toContain("GPS-13");
+  });
+
+  it("puts a rejected item's priority back on the board, and leaves the accepted ones alone", async () => {
+    // A store that applied the optimistic write and did not roll it back: the
+    // board shows "urgent" on an item the server still holds as "low".
+    const user = userEvent.setup();
+    updateIssue.mockImplementation((_ws: string, _pid: string, id: string, data: { priority: string }) => {
+      const row = ISSUES[id];
+      if (row) row.priority = data.priority;
+      return id === "i-3" ? Promise.reject({ status: 500, offline: false }) : Promise.resolve();
+    });
+    render(<IssueBulkOperationsRoot selectionHelpers={helpers} />);
+
+    await user.click(screen.getByRole("button", { name: /Priority/ }));
+    await user.click(screen.getByRole("button", { name: "Urgent" }));
+
+    expect(restoreLocally).toHaveBeenCalledWith("i-3", { priority: "low" });
+    expect(restoreLocally).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not touch an item the store already rolled back itself", async () => {
+    const user = userEvent.setup();
+    // Rejected, but the board still shows the old value: nothing to put back.
+    updateIssue.mockImplementation((_ws: string, _pid: string, id: string) =>
+      id === "i-3" ? Promise.reject({ status: 500, offline: false }) : Promise.resolve()
+    );
+    render(<IssueBulkOperationsRoot selectionHelpers={helpers} />);
+
+    await user.click(screen.getByRole("button", { name: /Priority/ }));
+    await user.click(screen.getByRole("button", { name: "Urgent" }));
+
+    expect(restoreLocally).not.toHaveBeenCalled();
   });
 });
 

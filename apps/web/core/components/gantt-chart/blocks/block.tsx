@@ -66,7 +66,10 @@ export const GanttChartBlock = observer(function GanttChartBlock(props: Props) {
   return (
     <div
       className={cn("relative z-[5]", {
-        "transition-all": !!isMoving && currentView === "week",
+        // ARRIBADA FIX: `transition-all` here animated marginLeft and width,
+        // which this element's style sets on every mousemove of a resize — so
+        // the bar lagged the cursor by the transition's duration. Colours only.
+        "transition-colors": !!isMoving && currentView === "week",
         "pointer-events-none": !isBlockVisibleOnChart,
       })}
       id={`gantt-block-${block.id}`}

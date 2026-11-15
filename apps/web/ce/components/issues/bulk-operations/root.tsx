@@ -115,6 +115,7 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     updateIssue,
     removeIssue,
     issue: { getIssueById },
+    rootIssueStore,
   } = useIssueDetail();
   const [busy, setBusy] = useState(false);
   const [prioOpen, setPrioOpen] = useState(false);
@@ -179,14 +180,26 @@ export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot
     // the batch was given, not the ones left over.
     const batch = [...ids];
     const labels = batch.map(labelFor);
+    // What each item showed BEFORE the write, so a rejected one can be put back.
+    const before = new Map(batch.map((id) => [id, getIssueById(id)?.priority]));
     try {
       // Optimistic store update — the list re-renders in place, no page reload.
       // allSettled so one failing item doesn't abort the batch or skip clearSelection.
       const outcomes = await Promise.allSettled(batch.map((id) => updateIssue(ws, pid, id, { priority })));
       clearSelection();
-      // The store update is optimistic, so a rejected item shows the NEW priority
-      // in the list while the server still holds the old one. Saying nothing here
-      // means the board and the database disagree and only one of them says so.
+      // The store update is optimistic. The project store rolls its own write
+      // back when the PATCH is refused, but this bar cannot see which store
+      // answered — so whatever a rejected item STILL shows is put back here, and
+      // the board never keeps a priority the server does not hold. Then say so:
+      // silence here means the board and the database disagree and only one of
+      // them says so.
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status !== "rejected") return;
+        const id = batch[index];
+        const previous = id ? before.get(id) : undefined;
+        if (id && previous !== undefined && getIssueById(id)?.priority !== previous)
+          rootIssueStore.issues.updateIssue(id, { priority: previous });
+      });
       reportBatch(`Set ${priority === "none" ? "no priority" : priority} on`, outcomes, labels);
     } finally {
       setBusy(false);

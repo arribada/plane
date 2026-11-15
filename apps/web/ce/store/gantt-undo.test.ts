@@ -21,7 +21,10 @@ const entry = (ids: string[], label?: string) => ({
 });
 
 describe("ganttUndo", () => {
-  beforeEach(() => ganttUndo.clear());
+  beforeEach(() => {
+    ganttUndo.setEditable(true);
+    ganttUndo.clear();
+  });
 
   it("has nothing to undo when nothing has happened", () => {
     expect(ganttUndo.canUndo).toBe(false);
@@ -56,5 +59,38 @@ describe("ganttUndo", () => {
     ganttUndo.push(entry(["a"]));
     ganttUndo.clear();
     expect(ganttUndo.canUndo).toBe(false);
+  });
+
+  it("locking clears the stack", () => {
+    // An undo is a write through the same endpoint a drag uses. A stack that
+    // survived the lock was a way of rewriting a locked plan with one key.
+    ganttUndo.push(entry(["a"], "the dates just set"));
+    expect(ganttUndo.canUndo).toBe(true);
+    ganttUndo.setEditable(false);
+    expect(ganttUndo.canUndo).toBe(false);
+    expect(ganttUndo.stack).toEqual([]);
+    expect(ganttUndo.lastLabel).toBeUndefined();
+  });
+
+  it("offers nothing from before the lock once the plan is unlocked again", () => {
+    ganttUndo.push(entry(["a"]));
+    ganttUndo.setEditable(false);
+    ganttUndo.setEditable(true);
+    expect(ganttUndo.canUndo).toBe(false);
+  });
+
+  it("records nothing while the plan is not editable", () => {
+    ganttUndo.setEditable(false);
+    ganttUndo.push(entry(["a"]));
+    expect(ganttUndo.stack).toEqual([]);
+    ganttUndo.setEditable(true);
+    expect(ganttUndo.canUndo).toBe(false);
+  });
+
+  it("records again once the plan is editable", () => {
+    ganttUndo.setEditable(false);
+    ganttUndo.setEditable(true);
+    ganttUndo.push(entry(["a"]));
+    expect(ganttUndo.canUndo).toBe(true);
   });
 });

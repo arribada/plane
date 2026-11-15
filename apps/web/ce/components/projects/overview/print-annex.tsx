@@ -28,7 +28,7 @@
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { renderFormattedDate } from "@plane/utils";
+import { cn, renderFormattedDate } from "@plane/utils";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TPortfolioItem, TProjectBudget, TProjectOverview } from "@/plane-web/types/arribada";
@@ -101,6 +101,14 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overvie
   const min = dated.length ? dated.reduce((a, b) => (a.start_date! < b.start_date! ? a : b)).start_date! : null;
   const max = dated.length ? dated.reduce((a, b) => (a.target_date! > b.target_date! ? a : b)).target_date! : null;
   const span = min && max ? Math.max(Date.parse(max) - Date.parse(min), 1) : 1;
+
+  const labourRows = budget?.labour?.by_role ?? [];
+  // Every category row is in ONE currency, the allocation's (see the type), so
+  // it is named once; `by_category_converted` says whether any line had to be
+  // converted to get there, which is what the "≈" marks.
+  const categoryRows = budget?.expenses?.by_category ?? [];
+  const categoryCcy = categoryRows[0]?.currency ?? "";
+  const categoryMark = budget?.expenses?.by_category_converted ? "≈ " : "";
 
   return (
     // Hidden on screen, printed on paper. The Overview is already dense enough
@@ -182,33 +190,67 @@ export const OverviewPrintAnnex = observer(function OverviewPrintAnnex({ overvie
         </section>
       )}
 
-      {(budget?.labour?.by_role?.length ?? 0) > 0 && (
+      {(labourRows.length > 0 || categoryRows.length > 0) && (
         <section className="mt-5">
           <h2 className="mb-1 text-13 font-semibold">What it costs</h2>
-          <ul className="space-y-0.5">
-            {budget!.labour.by_role.map((row) => (
-              <li key={row.role} className="flex items-baseline gap-2 text-10">
-                <span className="flex-1 truncate">{row.role}</span>
-                <span className="flex-shrink-0 text-tertiary tabular-nums">
-                  {row.days} d
-                  {/* An unrated discipline still shows its days. Printing a blank
-                      would hide work the project is doing. */}
-                  {row.rated ? ` · ${Math.round(row.cost).toLocaleString()} ${row.currency ?? ""}` : " · not costed"}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {(budget?.expenses?.by_category?.length ?? 0) > 0 && (
-            <ul className="mt-1 space-y-0.5 border-t border-subtle pt-1">
-              {budget!.expenses.by_category.map((row) => (
-                <li key={row.category} className="flex items-baseline gap-2 text-10">
-                  <span className="flex-1 truncate">{row.category}</span>
-                  <span className="flex-shrink-0 text-tertiary tabular-nums">
-                    {Math.round(row.actual).toLocaleString()} {row.currency}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          {labourRows.length > 0 && (
+            <>
+              {/* The currency, said once for the section rather than implied by
+                  each row. These rows are NOT converted — each discipline is in
+                  the currency its rate was recorded in — and they do not add up
+                  across currencies. The funder report converts; this does not,
+                  and the two used to disagree without either saying why. */}
+              <p className="mb-1 text-10 text-tertiary">
+                Human time, estimated from the dated work items. Each discipline is stated in the currency its rate is
+                recorded in; nothing here is converted.
+              </p>
+              <ul className="space-y-0.5">
+                {labourRows.map((row) => (
+                  <li key={row.role} className="flex items-baseline gap-2 text-10">
+                    <span className="flex-1 truncate">{row.role}</span>
+                    <span className="flex-shrink-0 text-tertiary tabular-nums">
+                      {row.days} d
+                      {/* An unrated discipline still shows its days. Printing a blank
+                          would hide work the project is doing. */}
+                      {row.rated
+                        ? ` · ${Math.round(row.cost).toLocaleString()} ${row.currency ?? ""}`
+                        : " · not costed"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {categoryRows.length > 0 && (
+            <>
+              {/* Both halves with their flag, as the funder report prints them.
+                  This used to print the converted `actual` alone, drop `planned`,
+                  and mark nothing as approximate — so the annex and the report
+                  gave two different answers to "what has this cost". */}
+              <p
+                className={cn(
+                  "mb-1 text-10 text-tertiary",
+                  labourRows.length > 0 && "mt-2 border-t border-subtle pt-1"
+                )}
+              >
+                Everything else, by category, in {categoryCcy}.{" "}
+                {categoryMark
+                  ? "≈ marks a figure that includes lines converted at the recorded rate."
+                  : "Nothing here is converted."}
+              </p>
+              <ul className="space-y-0.5">
+                {categoryRows.map((row) => (
+                  <li key={row.category} className="flex items-baseline gap-2 text-10">
+                    <span className="flex-1 truncate">{row.category}</span>
+                    <span className="flex-shrink-0 text-tertiary tabular-nums">
+                      {categoryMark}
+                      {Math.round(row.planned).toLocaleString()} budgeted · {categoryMark}
+                      {Math.round(row.actual).toLocaleString()} spent
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </section>
       )}

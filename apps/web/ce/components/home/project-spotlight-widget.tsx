@@ -12,14 +12,15 @@
  * Budget and spend are money, so they are permission-gated server-side: a reader without a
  * money role simply sees "not available", never a wrong number.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
-import { BarChart3, CheckCircle2, Coins, ListChecks, X } from "lucide-react";
+import { AlertTriangle, BarChart3, CheckCircle2, Coins, ListChecks, X } from "lucide-react";
 import { cn } from "@plane/utils";
 import type { TProjectAnalyticsCount } from "@plane/types";
 import { useProject } from "@/hooks/store/use-project";
 import { ProjectService } from "@/services/project";
+import { apiErrorMessage, apiErrorStatus } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TProjectBudget } from "@/plane-web/types/arribada";
 import { projectWidgetConfigKey } from "./project-widgets";
@@ -36,7 +37,10 @@ const readPref = (storageKey: string): { projectId: string | null; view: TView }
     const raw = window.localStorage.getItem(storageKey);
     if (raw) {
       const p = JSON.parse(raw);
-      return { projectId: p.projectId ?? null, view: (["tasks", "budget", "spend"] as const).includes(p.view) ? p.view : "tasks" };
+      return {
+        projectId: p.projectId ?? null,
+        view: (["tasks", "budget", "spend"] as const).includes(p.view) ? p.view : "tasks",
+      };
     }
   } catch {
     /* ignore */
@@ -65,6 +69,10 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
   const [budget, setBudget] = useState<TProjectBudget | null>(null);
   const [loading, setLoading] = useState(false);
   const [moneyDenied, setMoneyDenied] = useState(false);
+  // Why the current view could not be read — a 500, a dropped connection. Not
+  // a refusal: that is `moneyDenied`, and the two used to share one sentence.
+  const [failure, setFailure] = useState<string | null>(null);
+  const [token, setToken] = useState(0);
 
   const projects = useMemo(
     () => joinedProjectIds.map((id) => getProjectById(id)).filter((p): p is NonNullable<typeof p> => !!p),
@@ -85,31 +93,49 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
     }
   }, [storageKey, projectId, view]);
 
-  const load = useCallback(async () => {
-    if (!workspaceSlug || !projectId) return;
+  // Nothing ever reset these on a change of project, so switching from A to B
+  // while B's call failed left A's figures on screen under B's name.
+  useEffect(() => {
+    setCounts(null);
+    setBudget(null);
+  }, [projectId]);
+
+  // One effect rather than a callback plus an effect, so an answer that arrives
+  // after the reader has moved on (A's numbers landing under B) is dropped.
+  useEffect(() => {
+    if (!workspaceSlug || !projectId) return undefined;
     const slug = workspaceSlug.toString();
+    let cancelled = false;
     setLoading(true);
     setMoneyDenied(false);
-    try {
-      if (view === "tasks") {
-        const rows = await projectService.getProjectAnalyticsCount(slug, { project_ids: projectId });
-        setCounts(rows.find((r) => r.id === projectId) ?? rows[0] ?? null);
-      } else {
-        // Budget covers both the "budget" and "spend over time" views.
-        const b = await arribadaService.getBudget(slug, projectId);
-        setBudget(b);
+    setFailure(null);
+    const run = async () => {
+      try {
+        if (view === "tasks") {
+          const rows = await projectService.getProjectAnalyticsCount(slug, { project_ids: projectId });
+          if (!cancelled) setCounts(rows.find((r) => r.id === projectId) ?? rows[0] ?? null);
+        } else {
+          // Budget covers both the "budget" and "spend over time" views.
+          const b = await arribadaService.getBudget(slug, projectId);
+          if (!cancelled) setBudget(b);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // Money views are permission-gated, and a 403 is "not available to
+        // you". Anything else — a 500, a dropped connection — is a read that
+        // failed, and it used to wear the same sentence: a lead on bad wifi was
+        // told the budget was not theirs to see.
+        if (view !== "tasks" && apiErrorStatus(error) === 403) setMoneyDenied(true);
+        else setFailure(apiErrorMessage(error, "The server did not answer."));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch {
-      // Money views are permission-gated; a refusal is "not available", not an error to shout.
-      if (view !== "tasks") setMoneyDenied(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceSlug, projectId, view]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceSlug, projectId, view, token]);
 
   const selected = projectId ? getProjectById(projectId) : undefined;
   const display = budget?.display;
@@ -131,7 +157,7 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
           <select
             value={projectId ?? ""}
             onChange={(e) => setProjectId(e.target.value || null)}
-            className="rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none focus:border-accent-primary"
+            className="focus:border-accent-primary rounded border border-subtle bg-layer-1 px-2 py-1 text-12 text-primary outline-none"
           >
             {projects.length === 0 && <option value="">No project</option>}
             {projects.map((p) => (
@@ -180,8 +206,25 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
           <div className="h-8 animate-pulse rounded bg-layer-2" />
           <div className="h-8 animate-pulse rounded bg-layer-2" />
         </div>
+      ) : failure ? (
+        <div role="alert" className="flex flex-col items-start gap-1 py-3">
+          <p className="flex items-start gap-1.5 text-11 text-danger-primary">
+            <AlertTriangle className="mt-px size-3 shrink-0" />
+            <span>
+              <span className="font-medium">Couldn&apos;t load this.</span> {failure} Nothing here is a figure for{" "}
+              {selected?.name ?? "this project"}.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => setToken((n) => n + 1)}
+            className="text-11 text-accent-primary hover:underline"
+          >
+            Try again
+          </button>
+        </div>
       ) : view === "tasks" ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 sm:gap-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 md:grid-cols-3">
           <Stat label="Work items" value={counts?.total_issues ?? 0} />
           <Stat label="Completed" value={counts?.completed_issues ?? 0} icon={CheckCircle2} />
           <Stat
@@ -195,7 +238,7 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
         </p>
       ) : view === "budget" ? (
         <div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 sm:gap-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 md:grid-cols-3">
             <Stat label="Allocated" value={money(display?.allocation, display?.currency ?? "")} />
             <Stat label="Spent" value={money(display?.committed, display?.currency ?? "")} />
             <Stat label="Remaining" value={money(display?.remaining, display?.currency ?? "")} />
@@ -222,7 +265,11 @@ export const ProjectSpotlightWidget = observer(function ProjectSpotlightWidget({
           ) : (
             <div className="flex h-28 items-end gap-1">
               {months.map((m) => (
-                <div key={m.month} className="flex flex-1 flex-col items-center gap-1" title={`${m.month}: ${money(m.amount, budget?.rhythm?.currency ?? display?.currency ?? "")}`}>
+                <div
+                  key={m.month}
+                  className="flex flex-1 flex-col items-center gap-1"
+                  title={`${m.month}: ${money(m.amount, budget?.rhythm?.currency ?? display?.currency ?? "")}`}
+                >
                   <div
                     className="w-full rounded-t bg-accent-primary/70"
                     style={{ height: `${Math.max(2, (m.amount / maxMonth) * 100)}%` }}
@@ -245,7 +292,7 @@ function Stat({ label, value, icon: Icon }: { label: string; value: string | num
         {Icon && <Icon className="size-3" />}
         {label}
       </div>
-      <div className="mt-0.5 text-15 font-semibold text-primary tabular-nums">{value}</div>
+      <div className="text-15 mt-0.5 font-semibold text-primary tabular-nums">{value}</div>
     </div>
   );
 }

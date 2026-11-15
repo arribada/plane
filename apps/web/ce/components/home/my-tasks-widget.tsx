@@ -33,6 +33,7 @@ import { useUser } from "@/hooks/store/user";
 // straight from Home.
 import { CreateUpdateIssueModal } from "@/components/issues/issue-modal/modal";
 import { IssueService } from "@/services/issue/issue.service";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TMyWorkItem } from "@/plane-web/types/arribada";
 import { MyTasksCalendar } from "./my-tasks-calendar";
@@ -82,7 +83,7 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
         onClick={() => setOpen((v) => !v)}
         title={item.target_date ? `Due ${item.target_date}` : "Set due date"}
         className={cn(
-          "hover:bg-layer-1 flex items-center gap-1 rounded px-1 py-0.5 text-11",
+          "flex items-center gap-1 rounded px-1 py-0.5 text-11 hover:bg-layer-1",
           item.target_date ? "text-secondary" : "text-tertiary opacity-0 group-hover:opacity-100"
         )}
       >
@@ -106,13 +107,13 @@ const DueDateSetter = ({ item, onSet }: { item: TMyWorkItem; onSet: (v: string |
                   onSet(p.value);
                   setOpen(false);
                 }}
-                className="hover:bg-layer-1 flex justify-between rounded px-2 py-1 text-left text-12"
+                className="flex justify-between rounded px-2 py-1 text-left text-12 hover:bg-layer-1"
               >
                 <span>{p.label}</span>
                 <span className="text-tertiary">{renderFormattedDateWithoutYear(p.value)}</span>
               </button>
             ))}
-            <label className="hover:bg-layer-1 mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12">
+            <label className="mt-0.5 flex items-center gap-1 rounded px-2 py-1 text-12 hover:bg-layer-1">
               Pick…
               <input
                 type="date"
@@ -156,6 +157,10 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
   const service = useMemo(() => new ArribadaService(), []);
   const [items, setItems] = useState<TMyWorkItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // Why the list could not be read. "Nothing assigned to you. Enjoy the calm."
+  // is good news, and a 403, a 500 or a dropped connection used to land on it:
+  // the only load fell to `setItems([])` and the empty state said the rest.
+  const [failure, setFailure] = useState<string | null>(null);
   // ARRIBADA: a manual + automatic refresh, because editing a task from the peek (e.g. its
   // status) does not flow back into this list on its own.
   const [refreshing, setRefreshing] = useState(false);
@@ -187,9 +192,12 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       try {
         const r = await service.getMyWork(workspaceSlug.toString());
         setItems(r || []);
-      } catch {
-        // A failed refresh keeps the rows already on screen; only the first load falls to empty.
+        setFailure(null);
+      } catch (error) {
+        // A failed refresh keeps the rows already on screen; a failed first load
+        // keeps none — and in both cases the failure is said, never the calm.
         if (mode === "initial") setItems([]);
+        setFailure(apiErrorMessage(error, "The server did not answer."));
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -275,7 +283,10 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
       <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-primary">My tasks</h3>
-          <span className="bg-layer-2 text-xs rounded-full px-2 py-0.5 font-medium text-secondary">{total}</span>
+          {/* No "0" beside the title when the count is unknown rather than zero. */}
+          {(total > 0 || !failure) && (
+            <span className="text-xs rounded-full bg-layer-2 px-2 py-0.5 font-medium text-secondary">{total}</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* ARRIBADA: open the full create modal to add a task on any project from Home. */}
@@ -284,7 +295,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             onClick={() => setCreateOpen(true)}
             title="New work item"
             aria-label="New work item"
-            className="rounded p-1 pointer-coarse:p-2 text-secondary hover:text-primary"
+            className="rounded p-1 text-secondary hover:text-primary pointer-coarse:p-2"
           >
             <Plus className="size-3.5" />
           </button>
@@ -296,7 +307,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
             title="Refresh"
             aria-label="Refresh my tasks"
             disabled={refreshing}
-            className="rounded p-1 pointer-coarse:p-2 text-secondary hover:text-primary disabled:opacity-50"
+            className="rounded p-1 text-secondary hover:text-primary disabled:opacity-50 pointer-coarse:p-2"
           >
             <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
           </button>
@@ -339,11 +350,33 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
         </div>
       </div>
 
-      {total === 0 ? (
-        <div className="flex flex-col items-center gap-1.5 px-4 pt-2 pb-6 text-center">
-          <CheckCircle2 className="size-6 text-success-primary" />
-          <p className="text-sm text-secondary">Nothing assigned to you. Enjoy the calm.</p>
+      {/* A failed load may never borrow the empty state: that one is good news,
+          and this card knows nothing. Rows from an earlier load stay below it. */}
+      {failure && (
+        <div role="alert" className="flex flex-col items-start gap-1 px-4 pb-3">
+          <p className="text-xs flex items-start gap-1.5 text-danger-primary">
+            <AlertTriangle className="mt-px size-3 shrink-0" />
+            <span>
+              <span className="font-medium">Couldn&apos;t load your tasks.</span> {failure}
+              {total > 0 ? " What is shown may be out of date." : " Nothing here is a statement about your work."}
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => void load(total > 0 ? "refresh" : "initial")}
+            className="text-xs text-accent-primary hover:underline"
+          >
+            Try again
+          </button>
         </div>
+      )}
+      {total === 0 ? (
+        !failure && (
+          <div className="flex flex-col items-center gap-1.5 px-4 pt-2 pb-6 text-center">
+            <CheckCircle2 className="size-6 text-success-primary" />
+            <p className="text-sm text-secondary">Nothing assigned to you. Enjoy the calm.</p>
+          </div>
+        )
       ) : view === "calendar" ? (
         <MyTasksCalendar items={items} onOpenItem={openItem} onSetDue={setDue} />
       ) : (
@@ -361,7 +394,7 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                   {(expandedBuckets.has(b.label) ? b.items : b.items.slice(0, 6)).map((it) => (
                     <li
                       key={it.id}
-                      className="group hover:bg-layer-transparent-hover flex w-full items-center gap-2 rounded-md px-1.5 py-1"
+                      className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 hover:bg-layer-transparent-hover"
                     >
                       {/* The row opens the item, the due-date control does not — so the
                           clickable part is a real button and the control is its sibling,
@@ -372,7 +405,9 @@ export const MyTasksWidget = observer(function MyTasksWidget() {
                         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
                       >
                         <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[it.priority])} />
-                        <span title={it.name} className="text-sm truncate text-primary">{it.name}</span>
+                        <span title={it.name} className="text-sm truncate text-primary">
+                          {it.name}
+                        </span>
                       </button>
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <DueDateSetter item={it} onSet={(v) => setDue(it, v)} />

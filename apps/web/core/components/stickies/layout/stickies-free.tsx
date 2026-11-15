@@ -22,8 +22,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import { GripVertical } from "lucide-react";
+import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useSticky } from "@/hooks/use-stickies";
+// ARRIBADA FIX: a refused placement is said, not swallowed (see `commit`).
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { StickyNote } from "../sticky";
 import type { TStickyBox } from "./sticky-free-layout.helpers";
 import {
@@ -152,9 +155,16 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
         position_y: clamped.y,
         width: clamped.width,
         height: clamped.height,
-      }).catch(() => {
-        // The store has already rolled the note back to where it was; the
-        // catch exists so an offline drag cannot reject unhandled.
+      }).catch((error: unknown) => {
+        // The store has already rolled the note back to where it was. ARRIBADA
+        // FIX: this catch used to be empty — a note dropped while offline
+        // snapped back with no message, which reads as a drag that did not
+        // take, and the natural response is to drag it again.
+        setToast({
+          type: TOAST_TYPE.ERROR,
+          title: "Couldn't save where the note was put",
+          message: `${apiErrorMessage(error, "The server refused it.")} The note is back where it was.`,
+        });
       });
     },
     [updateStickyLayout, workspaceSlug]
@@ -329,7 +339,7 @@ export const StickiesFree = observer(function StickiesFree(props: Props) {
               // ARRIBADA: the note itself is interactive even when the canvas is click-through,
               // and floats a little translucent until hovered/focused/being dragged so it does
               // not fully hide the widget under it.
-              overlay && "pointer-events-auto opacity-80 transition-opacity hover:opacity-100 focus-within:opacity-100",
+              overlay && "pointer-events-auto opacity-80 transition-opacity focus-within:opacity-100 hover:opacity-100",
               overlay && isActive && "opacity-100",
               landedId === stickyId && "sticky-landed"
             )}

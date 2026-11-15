@@ -67,7 +67,12 @@ export const ListRowChecklist = observer(function ListRowChecklist(props: Props)
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't change that work item",
-        message: (error as { error?: string })?.error ?? "It was left as it was.",
+        // "No completed state in that project" is a plain Error, so it is in
+        // `.message`; a refused PATCH carries the server's `.error`.
+        message:
+          (error as { error?: string; message?: string })?.message ??
+          (error as { error?: string })?.error ??
+          "It was left as it was.",
       });
     } finally {
       setBusyLine(null);
@@ -99,7 +104,23 @@ export const ListRowChecklist = observer(function ListRowChecklist(props: Props)
         className="shadow-lg z-[15] max-h-72 w-80 overflow-y-auto rounded-lg border border-subtle bg-surface-1 p-2"
       >
         <p className="mb-1 px-1 text-10 tracking-wide text-tertiary uppercase">Checklist</p>
-        {!checklist.loaded && (
+        {checklist.failed && !checklist.loading && (
+          // Placeholders forever was what a failed read looked like here.
+          <p role="alert" className="flex flex-col items-start gap-1 px-1 text-11 text-danger-primary">
+            <span>Couldn&apos;t read this checklist. {checklist.failed}</span>
+            <button
+              type="button"
+              onClick={(event) => {
+                swallow(event);
+                checklist.retry();
+              }}
+              className="text-accent-primary hover:underline"
+            >
+              Try again
+            </button>
+          </p>
+        )}
+        {!checklist.loaded && !checklist.failed && (
           // One placeholder per known line: the count is already right, so the
           // dropdown opens at the height it will keep instead of growing.
           <ul className="flex flex-col gap-0.5" aria-hidden>

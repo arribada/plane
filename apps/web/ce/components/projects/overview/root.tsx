@@ -145,6 +145,10 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
     slug,
     pid
   );
+  // The clean endpoint is project ADMIN (`allow_permission` on the clean view),
+  // and the button was offered to every role — a member or a guest got a
+  // confirm dialog about erasing the project and then a 403.
+  const canClean = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT, slug, pid);
 
   const handleScheduleChange = useCallback(
     async (patch: { start_date?: string | null; target_date?: string | null }) => {
@@ -401,14 +405,16 @@ export const ProjectOverviewRoot = observer(function ProjectOverviewRoot() {
           AI schedule
         </button>
         {/* Setting a project up is cheap now, so starting over has to be too. */}
-        <button
-          type="button"
-          onClick={() => setCleanOpen(true)}
-          className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-13 font-medium text-secondary hover:bg-layer-2 hover:text-danger-primary"
-        >
-          <Eraser className="size-4" />
-          Clean project
-        </button>
+        {canClean && (
+          <button
+            type="button"
+            onClick={() => setCleanOpen(true)}
+            className="flex items-center gap-1.5 rounded border border-subtle px-3 py-1.5 text-13 font-medium text-secondary hover:bg-layer-2 hover:text-danger-primary"
+          >
+            <Eraser className="size-4" />
+            Clean project
+          </button>
+        )}
         {canOpenAiSettings && (
           <button
             type="button"

@@ -81,7 +81,16 @@ const Row = ({ left, right, muted }: { left: string; right: string; muted?: bool
   </View>
 );
 
-function ReportDocument({ overview, budget, expenses, requests, milestones, money, generatedOn }: TFunderReportInput) {
+/** Exported for its test; `downloadFunderReport` below is what the page calls. */
+export function ReportDocument({
+  overview,
+  budget,
+  expenses,
+  requests,
+  milestones,
+  money,
+  generatedOn,
+}: TFunderReportInput) {
   const span = budget?.span;
   const alloc = budget?.allocation;
   const period =
@@ -90,6 +99,12 @@ function ReportDocument({ overview, budget, expenses, requests, milestones, mone
       : "No project dates recorded";
 
   const currency = alloc?.currency ?? "EUR";
+  // The currency `committed` is actually in. Equal to the allocation's in every
+  // ordinary case; different exactly when the budget is held outside the
+  // EUR/GBP pair, where the server sums in a currency it can reach and names
+  // it. Formatting that total with the allocation's code stamped francs on a
+  // sterling figure — on the one page that leaves the building.
+  const committedCcy = alloc?.committed_currency ?? currency;
   // "≈" only when something really was converted. A grant report that marks an
   // exact figure as approximate is a report whose marks nobody reads.
   const mark = alloc?.converted ? "≈ " : "";
@@ -179,11 +194,18 @@ function ReportDocument({ overview, budget, expenses, requests, milestones, mone
                 and every budget defaults to euros, so this line read "€0" on
                 projects the screen reported as fully committed — and it was the
                 €0 that went to the funder. */}
-            <Row left="Committed" right={`${mark}${money(alloc.committed, currency)}`} />
+            <Row left="Committed" right={`${mark}${money(alloc.committed, committedCcy)}`} />
             <Row
               left="Remaining"
               right={alloc.remaining == null ? "—" : `${mark}${money(alloc.remaining, currency)}`}
             />
+            {alloc.basis_mismatch && (
+              <Text style={styles.caveat}>
+                The budget is held in {currency}, which cannot be converted to or from euros and sterling. The committed
+                total is therefore stated in {committedCcy}, and no remaining figure is given: the two cannot be
+                compared.
+              </Text>
+            )}
             {outstanding.length > 0 && (
               <Text style={styles.caveat}>
                 Includes {outstanding.length} approved {outstanding.length === 1 ? "purchase" : "purchases"} not yet

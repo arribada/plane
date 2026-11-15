@@ -4,6 +4,7 @@
  * See the LICENSE file for details.
  */
 
+import type { ReactElement } from "react";
 import { observer } from "mobx-react";
 import { AlignJustify, LayoutGrid, Move, Shapes } from "lucide-react";
 // plane imports
@@ -17,6 +18,28 @@ import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { useHome } from "@/hooks/store/use-home";
 // ARRIBADA: the straight ⇄ free dashboard switch, next to Manage widgets.
 import { homeLayout } from "@/plane-web/components/home/home-layout";
+import type { THomeMode } from "@/plane-web/components/home/home-layout";
+
+// ARRIBADA FIX: the button named the CURRENT mode ("Straight dashboard") and
+// pressing it switched to the next one, so it read as a label and acted as a
+// toggle. It now names the action, and the title says where you are and what
+// the press does.
+const NEXT_MODE: Record<THomeMode, THomeMode> = { straight: "semi", semi: "free", free: "straight" };
+const SWITCH_LABEL: Record<THomeMode, string> = {
+  straight: "Switch to straight layout",
+  semi: "Switch to semi-free layout",
+  free: "Switch to free layout",
+};
+const MODE_DESCRIPTION: Record<THomeMode, string> = {
+  straight: "a straight column",
+  semi: "a semi-free layout (snaps to a grid, never overlaps)",
+  free: "a free layout (place anything anywhere)",
+};
+const MODE_ICON: Record<THomeMode, ReactElement> = {
+  straight: <AlignJustify />,
+  semi: <LayoutGrid />,
+  free: <Move />,
+};
 
 export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHeader() {
   // plane hooks
@@ -42,30 +65,14 @@ export const WorkspaceDashboardHeader = observer(function WorkspaceDashboardHead
           <Button
             variant="secondary"
             size="lg"
-            onClick={() =>
-              homeLayout.setMode(
-                homeLayout.mode === "straight" ? "semi" : homeLayout.mode === "semi" ? "free" : "straight"
-              )
-            }
+            onClick={() => homeLayout.setMode(NEXT_MODE[homeLayout.mode])}
             className="my-auto mb-0"
-            prependIcon={
-              homeLayout.mode === "straight" ? (
-                <AlignJustify />
-              ) : homeLayout.mode === "semi" ? (
-                <LayoutGrid />
-              ) : (
-                <Move />
-              )
-            }
-            title="Switch dashboard mode: straight column → semi-free (snaps to a grid, never overlaps) → free (place anything anywhere). Your placements are kept."
+            // The icon shows where the press takes you, like the label.
+            prependIcon={MODE_ICON[NEXT_MODE[homeLayout.mode]]}
+            title={`The dashboard is ${MODE_DESCRIPTION[homeLayout.mode]}. Press to switch to ${MODE_DESCRIPTION[NEXT_MODE[homeLayout.mode]]}. Your placements are kept.`}
+            aria-label={SWITCH_LABEL[NEXT_MODE[homeLayout.mode]]}
           >
-            <div className="hidden sm:hidden md:block">
-              {homeLayout.mode === "straight"
-                ? "Straight dashboard"
-                : homeLayout.mode === "semi"
-                  ? "Semi-free dashboard"
-                  : "Free dashboard"}
-            </div>
+            <div className="hidden sm:hidden md:block">{SWITCH_LABEL[NEXT_MODE[homeLayout.mode]]}</div>
           </Button>
           <Button
             variant="secondary"

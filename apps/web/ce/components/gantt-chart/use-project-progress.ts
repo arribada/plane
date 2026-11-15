@@ -29,6 +29,18 @@ export const invalidateProjectProgress = (workspaceSlug: string, projectId: stri
   bumpProjectRevision(workspaceSlug, projectId);
 };
 
+/**
+ * The whole map, read synchronously — for the export, which builds its rows in
+ * a click handler and needs the same numbers the bars are drawing at that
+ * moment. Empty until the project has answered, and then exactly what every
+ * `useProjectProgress` on screen is returning, because it is the same entry.
+ */
+export const peekProjectProgress = (
+  workspaceSlug: string | undefined,
+  projectId: string | undefined
+): Readonly<Record<string, number>> =>
+  (workspaceSlug && projectId && cache.get(`${workspaceSlug}/${projectId}`)?.value) || EMPTY;
+
 /** 0–100 for one issue; 0 when the project has not answered yet. */
 export const useProjectProgress = (issueId: string): number => {
   const { workspaceSlug, projectId } = useParams();

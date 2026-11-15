@@ -22,10 +22,13 @@
 import { MemoryRouter } from "react-router";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TIssueChecklistItem } from "@/plane-web/services/arribada.service";
 import { IssueChecklistPanel } from "./panel";
 import type { TChecklistHandle } from "./use-checklist";
+
+const { setToast } = vi.hoisted(() => ({ setToast: vi.fn() }));
+vi.mock("@plane/propel/toast", () => ({ TOAST_TYPE: { ERROR: "error", SUCCESS: "success" }, setToast }));
 
 const line: TIssueChecklistItem = {
   id: "line-1",
@@ -40,20 +43,33 @@ const line: TIssueChecklistItem = {
 };
 
 const remove = vi.fn(() => Promise.resolve());
+const retry = vi.fn();
+const toggle = vi.fn(() => Promise.resolve());
 
 const handle: TChecklistHandle = {
   items: [line],
   loaded: true,
   loading: false,
+  failed: null,
+  retry,
   addByName: () => Promise.resolve(),
   addExisting: () => Promise.resolve(),
   remove,
-  toggle: () => Promise.resolve(),
+  toggle,
 };
+
+/** What the hook answers for the test at hand; `handle` unless a test says otherwise. */
+let current: TChecklistHandle = handle;
 
 // The real hook reaches for a MobX store and three services over HTTP; none of
 // that has anything to say about whether a button is on the screen.
-vi.mock("./use-checklist", () => ({ useIssueChecklist: () => handle }));
+vi.mock("./use-checklist", () => ({ useIssueChecklist: () => current }));
+
+beforeEach(() => {
+  current = handle;
+  vi.clearAllMocks();
+  toggle.mockResolvedValue(undefined);
+});
 
 const renderPanel = () =>
   render(
@@ -84,5 +100,56 @@ describe("IssueChecklistPanel", () => {
     // See the file header: a class-name assertion, allowed exactly here.
     expect(button.className).not.toMatch(/\bopacity-0\b/);
     expect(button.className).not.toMatch(/group-hover:opacity-/);
+  });
+});
+
+/**
+ * A read that failed is not an empty checklist.
+ *
+ * The cache used to hand the panel `items: []` after a failed read — exactly
+ * what "no checklist" looks like — and the panel said "Nothing on it yet" on
+ * the strength of a request that never answered. The first two tests fail
+ * against pre-fix HEAD; so does the third, where the one useful message a tick
+ * can fail with was being read from the wrong field and replaced by a generic one.
+ */
+describe("IssueChecklistPanel when the read failed", () => {
+  const NOTHING_YET = /Nothing on it yet/;
+
+  it("says the read failed rather than that the checklist is empty", () => {
+    current = { ...handle, items: [], loaded: false, failed: "The server did not answer." };
+    renderPanel();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("The server did not answer.");
+    expect(screen.queryByText(NOTHING_YET)).not.toBeInTheDocument();
+  });
+
+  it("offers to ask again", async () => {
+    const user = userEvent.setup();
+    current = { ...handle, items: [], loaded: false, failed: "The server did not answer." };
+    renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("still says the checklist is empty when that is what the server answered", () => {
+    current = { ...handle, items: [] };
+    renderPanel();
+
+    expect(screen.getByText(NOTHING_YET)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("passes on WHY a tick was refused — a plain Error's message, not a generic line", async () => {
+    const user = userEvent.setup();
+    toggle.mockRejectedValue(new Error("No completed state in that project"));
+    renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Complete Solder the antenna feed" }));
+
+    expect(setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", message: "No completed state in that project" })
+    );
   });
 });

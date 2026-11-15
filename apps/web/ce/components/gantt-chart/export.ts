@@ -161,6 +161,19 @@ export type TExportRow = {
 
 export type TExportEdge = { from: string; to: string; critical?: boolean };
 
+/**
+ * The dependency arrows, flagged the way the screen flags them.
+ *
+ * An arrow is on the critical path when BOTH its ends are — the rule
+ * `dependency-paths.tsx` draws by (`critical.has(from) && critical.has(to)`).
+ * The exporter used to be handed edges with no flag at all, so a chart whose
+ * chain was ringed red on screen exported every link grey.
+ */
+export const markCriticalEdges = (
+  edges: readonly { from: string; to: string }[],
+  critical: ReadonlySet<string>
+): TExportEdge[] => edges.map(({ from, to }) => ({ from, to, critical: critical.has(from) && critical.has(to) }));
+
 /** One row of the drawn legend. Same shape the on-screen legend takes, because
  *  the caller hands both the same list. */
 export type TExportLegendEntry = { label: string; color: string; count?: number };

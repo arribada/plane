@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  * See the LICENSE file for details.
  *
- * Four optional Home widgets, each showing something the product already knows
- * and shows nowhere anybody passes.
+ * Five Home widgets, each showing something the product already knows and shows
+ * nowhere anybody passes.
  *
  * They share one shell because the interesting part of each is three lines of
- * selection, not its chrome — and four hand-rolled cards would drift apart within
- * a month. All four are off until switched on in Manage widgets; nothing here
- * appears for somebody who did not ask for it.
+ * selection, not its chrome — and five hand-rolled cards would drift apart within
+ * a month. They ship ON: the backend seeds every widget enabled, so each is on
+ * everybody's Home until switched off in Manage widgets. (This comment used to
+ * claim the opposite, and so does the registry in
+ * core/components/home/home-dashboard-widgets.tsx.)
  *
  * EVERY EMPTY STATE HERE IS GOOD NEWS, which is exactly why a failed load may
  * never borrow one. All four fetches used to end `.catch(() => setRows([]))` and
@@ -236,7 +238,11 @@ export const ConflictsWidget = observer(function ConflictsWidget() {
     >
       {rows.map((person) => (
         <li key={person.user_id} className="flex items-baseline gap-2 text-12">
-          <a href={`/${workspaceSlug}/workload`} title={person.name} className="min-w-0 flex-1 truncate text-primary hover:underline">
+          <a
+            href={`/${workspaceSlug}/workload`}
+            title={person.name}
+            className="min-w-0 flex-1 truncate text-primary hover:underline"
+          >
             {person.name}
           </a>
           <span className="flex-shrink-0 text-11 font-medium text-danger-primary">

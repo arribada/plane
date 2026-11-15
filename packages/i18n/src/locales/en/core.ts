@@ -34,6 +34,11 @@ export default {
     workload: "Workload",
     github_triage: "GitHub triage",
     request_expense: "Request an expense",
+    // The two project-level entries (project-navigation.tsx) had no entry at
+    // all and lived on the nav item's `name` fallback — in English, whatever
+    // the reader's language.
+    finance: "Finance",
+    disciplines: "Disciplines",
   },
 
   auth: {

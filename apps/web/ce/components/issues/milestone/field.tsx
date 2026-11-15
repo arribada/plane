@@ -52,11 +52,24 @@ export const IssueMilestoneField = observer(function IssueMilestoneField(props: 
   // What was just chosen, until the shared cache has caught up. Invalidating it
   // refetches the whole project, and for those few hundred milliseconds the
   // select would otherwise snap back to the answer that was just replaced.
-  const [override, setOverride] = useState<TMilestoneKind | null | undefined>(undefined);
+  //
+  // Keyed on the work item it was chosen FOR. Both the peek and the page sidebar
+  // reuse this one instance when the reader moves to the next item, and an
+  // override that was never cleared carried "delivery" from item A onto item B's
+  // select — a different work item, shown with a choice nobody made for it.
+  const [override, setOverride] = useState<{ issueId: string; kind: TMilestoneKind | null } | null>(null);
 
   const entry = milestones[issueId];
   const stored = entry?.kind ?? null;
-  const current = override === undefined ? stored : override;
+  const pending = override && override.issueId === issueId ? override : null;
+  const current = pending ? pending.kind : stored;
+
+  // Once the cache agrees with the choice, the override has done its job. Left
+  // in place it would outlive the next change made from another surface — the
+  // timeline's diamond — and keep showing the older answer here.
+  useEffect(() => {
+    if (pending && pending.kind === stored) setOverride(null);
+  }, [pending, stored]);
 
   // The box holds what is being typed, so it is separate from the cache. Seeded
   // from `customLabel` and NOT from `label` — `label` is already resolved to the
@@ -72,7 +85,7 @@ export const IssueMilestoneField = observer(function IssueMilestoneField(props: 
   const commit = async (raw: string) => {
     const next = (raw || null) as TMilestoneKind | null;
     if (next === current) return;
-    setOverride(next);
+    setOverride({ issueId, kind: next });
     setBusy(true);
     try {
       await service.setProjectMilestone(workspaceSlug, projectId, issueId, next);
@@ -80,7 +93,8 @@ export const IssueMilestoneField = observer(function IssueMilestoneField(props: 
       // this the diamond does not appear until a reload.
       invalidateProjectMilestones(workspaceSlug, projectId);
     } catch (error) {
-      setOverride(undefined);
+      // Only this item's: the reader may already be on the next one.
+      setOverride((held) => (held?.issueId === issueId ? null : held));
       setToast({
         type: TOAST_TYPE.ERROR,
         title: "Couldn't change the milestone",

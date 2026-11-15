@@ -18,7 +18,7 @@ import { EUserProjectRoles } from "@plane/types";
 import { Avatar } from "@plane/ui";
 import { cn, getFileURL } from "@plane/utils";
 import { useMember } from "@/hooks/store/use-member";
-import { apiErrorStatus } from "@/plane-web/services/api-error";
+import { apiErrorMessage, apiErrorStatus } from "@/plane-web/services/api-error";
 import { invalidateProjectRoles } from "@/plane-web/components/projects/use-project-roles";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TTeamMember } from "@/plane-web/types/arribada";
@@ -139,6 +139,13 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
   // working pattern and holiday calendar. The server now removes exactly the ids
   // named here and asks the lead before it does.
   const [removedIds, setRemovedIds] = useState<string[]>([]);
+  // Whether THIS caller may change who leads: the server's own answer
+  // (`can_set_governance` on the schedule — the same predicate `_lead_guard`
+  // refuses on), read when the editor opens. Null until it answers, and a null
+  // draws the chip disabled: a control the server will refuse is not offered.
+  // The Lead chip used to be offered to everyone, and every 403 it produced was
+  // reported as a refused REMOVAL.
+  const [canSetLead, setCanSetLead] = useState<boolean | null>(null);
   // A refetch must not overwrite what someone has already typed.
   const touched = useRef(false);
   const keySeq = useRef(0);
@@ -171,6 +178,18 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
       setVocabLoading(true);
       setStaleRoster(false);
       setRemovedIds([]);
+      setCanSetLead(null);
+      service
+        .getSchedule(slug, projectId)
+        .then((s) => {
+          if (!cancelled) setCanSetLead(!!s?.can_set_governance);
+          return undefined;
+        })
+        // Unanswered reads as "no": the chip then says why it is disabled
+        // rather than letting a click find out.
+        .catch(() => {
+          if (!cancelled) setCanSetLead(false);
+        });
       service
         .getProjectTeam(slug, projectId)
         .then((r) => {
@@ -340,6 +359,15 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
         return row;
       });
 
+    // What this save asks for that only the lead may have. Worked out before
+    // the request so a 403 can be read against it: the server refuses removals,
+    // lead changes and (for a guest) the whole PUT with the same status, and
+    // the old handler called all three a refused removal.
+    const leadBefore = roster.find((m) => m.is_lead)?.id ?? null;
+    const leadAfter = draft.find((r) => r.is_lead);
+    const leadChanged = (leadAfter?.id ?? null) !== leadBefore || (!!leadAfter && !leadAfter.id);
+    const removing = removedIds.length > 0;
+
     setSaving(true);
     try {
       const r = await service.setProjectTeam(slug, projectId, payload, removedIds);
@@ -357,16 +385,41 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
     } catch (e) {
       // The editor stays open so nothing typed is lost with the error.
       //
-      // A 403 here means one specific thing: removals are the lead's, and this
-      // request asked for one. Saying "please try again" to that would send
-      // somebody round the same loop forever.
+      // A 403 means one of three things, and the payload says which: removals
+      // and a change of lead are the lead's (`_lead_guard`), and a guest may not
+      // write the roster at all (`allow_permission`). Saying "please try again"
+      // to any of them would send somebody round the same loop forever — and
+      // naming the wrong one sends them to undo a change they did not make.
       const forbidden = apiErrorStatus(e) === 403;
+      const refusal = !forbidden
+        ? null
+        : removing && leadChanged
+          ? {
+              title: "Only the project lead can take somebody off the roster or change who leads",
+              message:
+                "Everything else you changed is unsaved too — put the person and the lead back to save the rest.",
+            }
+          : removing
+            ? {
+                title: "Only the project lead can take somebody off the roster",
+                message: "Everything else you changed is unsaved too — put the person back to save the rest.",
+              }
+            : leadChanged
+              ? {
+                  title: "Only the project lead can change who leads the project",
+                  message: "Everything else you changed is unsaved too — put the lead back to save the rest.",
+                }
+              : {
+                  title: "You can't change this roster",
+                  message: apiErrorMessage(
+                    e,
+                    "Your role on this project does not allow editing the team. Nothing was saved."
+                  ),
+                };
       setToast({
         type: TOAST_TYPE.ERROR,
-        title: forbidden ? "Only the project lead can take somebody off the roster" : "Couldn't save the team",
-        message: forbidden
-          ? "Everything else you changed is unsaved too — put the person back to save the rest."
-          : "Please try again.",
+        title: refusal?.title ?? "Couldn't save the team",
+        message: refusal?.message ?? "Please try again.",
       });
     } finally {
       setSaving(false);
@@ -610,9 +663,23 @@ export const OverviewTeamBlock = observer(function OverviewTeamBlock({
                   <button
                     type="button"
                     onClick={() => toggleLead(row.key)}
+                    // Gated on the server's answer, not on a guess from the
+                    // workspace role: who leads is the lead's to change, and a
+                    // workspace admin is refused too.
+                    disabled={!canSetLead}
+                    aria-pressed={row.is_lead}
+                    title={
+                      canSetLead
+                        ? row.is_lead
+                          ? "Leads this project — click to clear"
+                          : "Make this person the lead"
+                        : canSetLead === null
+                          ? "Checking whether you may change who leads…"
+                          : "Only the project lead can change who leads the project"
+                    }
                     className={cn(
                       CHIP,
-                      "flex-shrink-0",
+                      "flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-60",
                       row.is_lead ? "border-accent-strong text-accent-primary" : "text-tertiary hover:bg-layer-2"
                     )}
                   >

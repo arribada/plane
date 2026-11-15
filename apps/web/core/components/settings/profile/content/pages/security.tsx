@@ -270,6 +270,23 @@ export const SecurityProfileSettings = observer(function SecurityProfileSettings
           </div>
         </div>
       </form>
+      {/* ARRIBADA FIX: the page listing this account's authorised AI connectors
+          and apps (/oauth/connections, with a Revoke button) was reachable from
+          nowhere in the product. A plain anchor on purpose: it is a
+          server-rendered, session-authenticated Django page at the domain root,
+          not a route of this app, so the router must not try to handle it. */}
+      <div className="mt-10 border-t border-subtle pt-6">
+        <h4 className="text-13 font-medium text-primary">Connected apps and AI connectors</h4>
+        <p className="mt-1 text-12 text-tertiary">
+          Applications and AI assistants you have authorised to act as you, and where to revoke them.
+        </p>
+        <a
+          href="/oauth/connections"
+          className="mt-2 inline-block text-13 text-accent-primary underline hover:no-underline"
+        >
+          Connected apps and AI connectors
+        </a>
+      </div>
     </div>
   );
 });

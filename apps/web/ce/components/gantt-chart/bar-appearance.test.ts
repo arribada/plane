@@ -79,26 +79,32 @@ describe("overdue", () => {
   });
 
   /**
-   * PINNED, NOT ENDORSED — and found by this file rather than by a report.
+   * The defect this file used to PIN rather than fix.
    *
-   * `midnight()` does `new Date("2026-09-15")`, which the spec parses as UTC
-   * midnight, and then `setHours(0,0,0,0)`, which moves it to local midnight of
-   * whatever LOCAL date that instant falls on. West of Greenwich that is the day
-   * BEFORE, so an item due today draws the red "past its due date" ring for
-   * every reader in the Americas — and only for them, which is why nobody sitting
-   * in Europe has ever seen it.
+   * `midnight()` did `new Date("2026-09-15")`, which the spec parses as UTC
+   * midnight, and then `setHours(0,0,0,0)`, a local getter: west of Greenwich
+   * that instant is the evening of the 14th, so an item due today drew the red
+   * "past its due date" ring for every reader in the Americas — and only for
+   * them, which is why nobody sitting in Europe ever saw it.
    *
-   * The suite runs under `America/Los_Angeles` and `Pacific/Auckland` precisely
-   * to catch this class, so the two zones are asserted apart rather than the
-   * difference being averaged away. Left as it is because changing when the
-   * overdue ring appears is a behaviour change nobody asked for in a pass about
-   * state colours; it is reported instead. The fix is to read a `YYYY-MM-DD` as
-   * a local calendar date rather than an instant.
+   * The suite runs under `America/Los_Angeles` by default and `Pacific/Auckland`
+   * on CI (vitest.config.ts) precisely to catch this class. The answer is now
+   * the same on both sides of Greenwich: a plan date is a calendar day, and it is
+   * compared with the reader's calendar day.
    */
-  it("is a day early west of Greenwich, and right east of it (a pre-existing defect)", () => {
-    const dueToday = barLook(issue({ target_date: "2026-09-15" }), FILL, "started", TODAY).overdue;
-    const westOfUtc = new Date(2026, 8, 15).getTimezoneOffset() > 0;
-    expect(dueToday).toBe(westOfUtc);
+  it("does not mark an item due TODAY overdue, on either side of Greenwich", () => {
+    expect(barLook(issue({ target_date: "2026-09-15" }), FILL, "started", TODAY).overdue).toBe(false);
+  });
+
+  it("marks an item due yesterday overdue, on either side of Greenwich", () => {
+    expect(barLook(issue({ target_date: "2026-09-14" }), FILL, "started", TODAY).overdue).toBe(true);
+  });
+
+  it("reads the due date as a calendar day even late in the reader's evening", () => {
+    // 23:30 local on the 15th is already the 16th in UTC. `toISOString` would
+    // call this overdue; the reader's calendar says it is still due today.
+    const lateEvening = new Date(2026, 8, 15, 23, 30);
+    expect(barLook(issue({ target_date: "2026-09-15" }), FILL, "started", lateEvening).overdue).toBe(false);
   });
 });
 

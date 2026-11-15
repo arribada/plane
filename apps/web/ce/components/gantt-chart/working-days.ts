@@ -96,6 +96,26 @@ export const toEpochDay = (iso: string | null | undefined): number | null => {
 
 export const fromEpochDay = (epochDay: number): string => new Date(epochDay * MS_PER_DAY).toISOString().slice(0, 10);
 
+/**
+ * `yyyy-mm-dd` as LOCAL midnight of that calendar day — the footing upstream's
+ * chart `Date`s stand on (`views/helpers.ts` builds them with `new Date(y, m, d)`),
+ * so a plan date parsed this way lands in the column the chart draws for it.
+ *
+ * NOT `new Date("2026-09-15")`, which the spec reads as UTC midnight: west of
+ * Greenwich that instant is the evening of the 14th, and every local getter on it
+ * — `getDate`, `setHours(0,0,0,0)`, a comparison with a local "today" — answers a
+ * day early. That is how the overdue ring lit up for every reader in the Americas
+ * on the day an item was due, and how a sprint band's dates read a day short.
+ *
+ * Null for anything `toEpochDay` refuses, so a typo cannot roll into next month.
+ */
+export const localDateOf = (iso: string | null | undefined): Date | null => {
+  const day = toEpochDay(iso);
+  if (day === null) return null;
+  const utc = new Date(day * MS_PER_DAY);
+  return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+};
+
 /** A day nobody works: Saturday, Sunday, or a day the workspace has closed. */
 export const isNonWorking = (epochDay: number, isHoliday?: (iso: string) => boolean): boolean => {
   const weekday = weekdayOf(epochDay);

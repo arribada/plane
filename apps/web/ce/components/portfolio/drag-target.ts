@@ -16,6 +16,7 @@
  * rows may move, which may not and why, and how a mixed set is split. jsdom has
  * no drag physics, so the gesture cannot be tested — this can.
  */
+import { OFFLINE_MESSAGE, isApiFailure } from "@/plane-web/services/api-error";
 
 export type TPortfolioRowKind = "folder" | "project" | "item" | "unknown";
 
@@ -28,6 +29,18 @@ export type TPortfolioDragContext = {
   projectOf: (id: string) => string | undefined;
   /** That project's plan is frozen — `ProjectSchedule.timeline_locked`. */
   isProjectLocked: (projectId: string) => boolean;
+  /**
+   * Whether THIS user may change that project's plan — the server's own answer
+   * (`can_edit_plan` on the portfolio row, the same predicate as the 403).
+   * Optional so a caller built against the older payload keeps working; absent
+   * reads as allowed, exactly as `?? true` does on the schedule.
+   */
+  canEditPlan?: (projectId: string) => boolean;
+  /** `allow_edit_others` for that project. Absent reads as allowed. */
+  allowEditOthers?: (projectId: string) => boolean;
+  /** Whether the current user is among an item row's assignees. Only consulted
+   *  when `allowEditOthers` says no; absent reads as "not mine". */
+  isAssignedToMe?: (itemId: string) => boolean;
 };
 
 export type TPortfolioRefusalReason =
@@ -39,6 +52,13 @@ export type TPortfolioRefusalReason =
    *  is the entire point: two timelines that disagree about whether a plan is
    *  frozen teach people to distrust the lock. */
   | "locked"
+  /** That project's plan is the lead's to change, and this is not the lead. The
+   *  server would answer 403; refusing here is what stops a bar being drawn
+   *  draggable for somebody it will then snap back on. */
+  | "lead-only"
+  /** With `allow_edit_others` off, an item moves only under its own assignees'
+   *  hands. Project rows are not assigned to anybody and are not subject to it. */
+  | "not-yours"
   /** An item row whose owning project could not be determined, so there is no
    *  project-scoped endpoint to send it to. */
   | "no-project";
@@ -68,6 +88,12 @@ export const portfolioRowRefusal = (id: string, context: TPortfolioDragContext):
   const projectId = context.projectOf(id);
   if (!projectId) return kind === "item" ? "no-project" : "unknown-row";
   if (context.isProjectLocked(projectId)) return "locked";
+  // The same three gates the per-project timeline's `isAllowed` / `canEditBlock`
+  // apply, in the same order. This used to stop at the lock, so a lead-only plan
+  // and a not-yours item were drawn draggable here and refused by the server.
+  if (!(context.canEditPlan?.(projectId) ?? true)) return "lead-only";
+  if (kind === "item" && !(context.allowEditOthers?.(projectId) ?? true) && !(context.isAssignedToMe?.(id) ?? false))
+    return "not-yours";
   return null;
 };
 
@@ -118,9 +144,48 @@ export const routePortfolioDrag = (
 export const describeRefusal = (refused: readonly TPortfolioRefusal[]): string | null => {
   if (refused.some((r) => r.reason === "locked"))
     return "That project's plan is locked. Unlock it on the project's own timeline to move these dates.";
+  if (refused.some((r) => r.reason === "lead-only"))
+    return "Only that project's lead (or a workspace admin) can change its plan.";
+  if (refused.some((r) => r.reason === "not-yours"))
+    return "That project only lets a work item's own assignees move it, and this one is not yours.";
   if (refused.some((r) => r.reason === "no-project"))
     return "That work item is not attached to a project on this board, so its dates could not be written.";
   if (refused.some((r) => r.reason === "unknown-row"))
     return "That row is no longer on this board. Reload and try again.";
   return null;
+};
+
+/** The server's own sentence, in the order DRF and plan_guard spell it. */
+const sentenceIn = (body: Record<string, unknown> | null): string | undefined => {
+  if (!body) return undefined;
+  for (const key of ["detail", "error", "message"]) {
+    const candidate = body[key];
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+  }
+  return undefined;
+};
+
+/**
+ * What to say when the server refused a drag the board had allowed.
+ *
+ * The toast used to be "The dates were put back as they were." whatever the
+ * reason — so a 403 from a lead-only plan read as a flaky network. Two shapes
+ * arrive: `ArribadaService` (the project window) throws a normalised
+ * `TApiFailure` with `status` and `offline`; upstream's `IssueService` (the
+ * item dates) throws `error.response.data` alone, a body with no status. Both
+ * carry the server's sentence when it sent one, and that sentence — `plan_guard`
+ * says who may change the plan and what is still open — is the thing to show.
+ */
+export const describeDragFailure = (raw: unknown): string => {
+  const PUT_BACK = "The dates were put back as they were.";
+  if (isApiFailure(raw)) {
+    if (raw.offline) return `${OFFLINE_MESSAGE} ${PUT_BACK}`;
+    const said = sentenceIn(raw);
+    if (said) return `${said} ${PUT_BACK}`;
+    if (raw.status === 401 || raw.status === 403) return `That plan is not yours to change. ${PUT_BACK}`;
+    return PUT_BACK;
+  }
+  const body = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  const said = sentenceIn(body);
+  return said ? `${said} ${PUT_BACK}` : PUT_BACK;
 };

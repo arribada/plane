@@ -162,6 +162,47 @@ describe("pushDependents", () => {
     expect(outcome.refused).toEqual([{ id: "b", reason: "not-editable" }]);
   });
 
+  it("refuses a dependent that is already finished, and names it", () => {
+    // Done and cancelled dates are a record of what happened. A slip upstream
+    // does not move the past, and a push that rewrote them would falsify the
+    // record to keep a link tidy.
+    const outcome = pushDependents({
+      originId: "a",
+      before: span("2026-08-10", "2026-08-10"),
+      after: span("2026-08-11", "2026-08-11"),
+      edges: [FS("a", "b"), FS("a", "c")],
+      spans: {
+        a: span("2026-08-11", "2026-08-11"),
+        b: span("2026-08-12", "2026-08-12"),
+        c: span("2026-08-12", "2026-08-12"),
+      },
+      finished: new Set(["b"]),
+    });
+    expect(outcome.refused).toEqual([{ id: "b", reason: "finished" }]);
+    // Its sibling, still open, moves as before — the refusal is per item.
+    expect(outcome.moves).toEqual([{ id: "c", start_date: "2026-08-13", target_date: "2026-08-13" }]);
+    expect(describePush(outcome)).toContain("1 already finished were left alone");
+  });
+
+  it("still moves a finished item's own successors — the chain stops AT it, not after it", () => {
+    // A done task between two open ones: its dates stay, but the open work
+    // downstream of it still slips by the delta the chain carried in.
+    const outcome = pushDependents({
+      originId: "a",
+      before: span("2026-08-10", "2026-08-10"),
+      after: span("2026-08-11", "2026-08-11"),
+      edges: [FS("a", "b"), FS("b", "c")],
+      spans: {
+        a: span("2026-08-11", "2026-08-11"),
+        b: span("2026-08-12", "2026-08-12"),
+        c: span("2026-08-13", "2026-08-13"),
+      },
+      finished: new Set(["b"]),
+    });
+    expect(outcome.refused).toEqual([{ id: "b", reason: "finished" }]);
+    expect(outcome.moves).toEqual([{ id: "c", start_date: "2026-08-14", target_date: "2026-08-14" }]);
+  });
+
   it("refuses a dependent in another project", () => {
     // The write endpoint is scoped to one project, so this push stops at the
     // boundary rather than pretending to have moved something it cannot reach.

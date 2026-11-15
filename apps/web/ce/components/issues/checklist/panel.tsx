@@ -69,7 +69,12 @@ export const IssueChecklistPanel = observer(function IssueChecklistPanel(props: 
         title: "Couldn't change that work item",
         // Ticking writes a state, so the failure is usually that the member's
         // project has no completed state — worth saying rather than "failed".
-        message: (error as { error?: string; message?: string })?.error ?? "It was left as it was.",
+        // That one is a plain Error from `setChecklistItemDone`, so it is in
+        // `.message`; a refused PATCH carries the server's `.error`.
+        message:
+          (error as { error?: string; message?: string })?.message ??
+          (error as { error?: string })?.error ??
+          "It was left as it was.",
       });
     } finally {
       setBusyLine(null);
@@ -142,7 +147,16 @@ export const IssueChecklistPanel = observer(function IssueChecklistPanel(props: 
         </form>
       )}
 
-      {!checklist.loaded && checklist.loading ? (
+      {/* A read that failed may never borrow "Nothing on it yet": that sentence
+          is a statement about the checklist, and this panel knows nothing. */}
+      {checklist.failed && !checklist.loading ? (
+        <p role="alert" className="flex flex-col items-start gap-1 text-11 text-danger-primary">
+          <span>Couldn&apos;t read this checklist. {checklist.failed}</span>
+          <button type="button" onClick={checklist.retry} className="text-accent-primary hover:underline">
+            Try again
+          </button>
+        </p>
+      ) : !checklist.loaded && checklist.loading ? (
         <div className="h-8 animate-pulse rounded bg-layer-1" />
       ) : total === 0 ? (
         <p className="text-11 text-tertiary">

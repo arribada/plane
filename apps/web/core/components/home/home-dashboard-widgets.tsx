@@ -77,7 +77,8 @@ export const HOME_WIDGETS_LIST: {
     title: "home.quick_tutorial.title",
   },
   // Arribada's own. Each shows something the product already computes and shows
-  // nowhere anybody walks past, and each is off until somebody switches it on.
+  // nowhere anybody walks past. They ship ON: the backend seeds every widget key
+  // enabled (`plane/app/views/workspace/home.py`), and Manage widgets turns one off.
   arribada_deliverables: {
     component: DeliverablesWidget,
     fullWidth: false,

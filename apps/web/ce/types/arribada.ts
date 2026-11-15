@@ -27,6 +27,13 @@ export type TPortfolioProject = {
    *  Optional: a backend that has not been redeployed yet must read as unlocked
    *  rather than as forbidden. */
   timeline_locked?: boolean;
+  /** Whether THIS user may change that project's plan — the server's own answer,
+   *  the same predicate the schedule's `can_edit_plan` and the 403 use. Optional
+   *  for the same reason as `timeline_locked`: read it with `?? true`. */
+  can_edit_plan?: boolean;
+  /** `ProjectSchedule.allow_edit_others`: off means only an item's own assignees
+   *  (and the lead) may move it. Optional; read with `?? true`. */
+  allow_edit_others?: boolean;
 };
 
 // A person assigned to a work item, shown as an avatar on the timeline.

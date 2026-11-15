@@ -24,6 +24,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import { cn } from "@plane/utils";
 import { useAppRouter } from "@/hooks/use-app-router";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 
 const service = new ArribadaService();
@@ -97,26 +98,35 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
   const [projects, setProjects] = useState<TProjectOption[]>([]);
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // Why the queue could not be read. It used to fall to `setItems([])`, and the
+  // empty state then said everything in the inbox belonged to a project — on
+  // the strength of a request that never answered. Same shape as the triage
+  // page's own failure.
+  const [failure, setFailure] = useState<string | null>(null);
+  const [token, setToken] = useState(0);
 
   useEffect(() => {
     if (!isDigest || !workspaceSlug) return;
     let live = true;
     setItems(null);
+    setFailure(null);
     const load = async () => {
       try {
         const data = await service.getGithubUnclassified(workspaceSlug);
         if (!live) return;
         setItems(data.items);
         setProjects(data.projects);
-      } catch {
-        if (live) setItems([]);
+      } catch (error) {
+        if (!live) return;
+        setItems([]);
+        setFailure(apiErrorMessage(error, "The queue could not be read."));
       }
     };
     void load();
     return () => {
       live = false;
     };
-  }, [isDigest, workspaceSlug]);
+  }, [isDigest, workspaceSlug, token]);
 
   const chosen = Object.entries(choice).filter(([, target]) => target);
 
@@ -194,7 +204,18 @@ export const ArribadaNotificationDetail = observer(function ArribadaNotification
       {isDigest && (
         <section className="mt-5">
           <h2 className="mb-2 text-13 font-medium text-primary">File them into a project</h2>
-          {items === null ? (
+          {failure ? (
+            <p role="alert" className="flex flex-col items-start gap-1 text-13 text-danger-primary">
+              <span>Couldn&apos;t read the queue. {failure}</span>
+              <button
+                type="button"
+                onClick={() => setToken((n) => n + 1)}
+                className="text-12 text-accent-primary hover:underline"
+              >
+                Try again
+              </button>
+            </p>
+          ) : items === null ? (
             <p className="text-13 text-tertiary">Loading…</p>
           ) : items.length === 0 ? (
             <p className="text-13 text-tertiary">

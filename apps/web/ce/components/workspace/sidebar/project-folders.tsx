@@ -118,6 +118,10 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
   const { getProjectById, joinedProjectIds } = useProject();
   const service = useMemo(() => new ArribadaService(), []);
   const [folders, setFolders] = useState<TFolder[]>([]);
+  // Why the folders could not be read. The catch used to `setFolders([])`,
+  // which drew "New project folder" — the empty state — for a sidebar whose
+  // folders a 500 had simply hidden.
+  const [failure, setFailure] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -140,8 +144,13 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
     if (!ws) return;
     service
       .getFolders(ws)
-      .then((f) => setFolders(f || []))
-      .catch(() => setFolders([]));
+      .then((f) => {
+        setFolders(f || []);
+        setFailure(null);
+        return undefined;
+      })
+      // Whatever was on screen stays; what is recorded is that the read failed.
+      .catch((error: unknown) => setFailure(apiErrorMessage(error, "The server did not answer.")));
   };
 
   useEffect(() => {
@@ -356,7 +365,10 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
               {totalProjects(f)}
             </span>
           </button>
-          <div className="relative flex flex-shrink-0 items-center opacity-0 group-hover:opacity-100">
+          {/* Revealed on hover for a mouse, but ALSO while any of them has focus
+              and always on a coarse pointer: there is no hover on a touch screen,
+              and these are the only way a folder is renamed, filled or deleted. */}
+          <div className="relative flex flex-shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
             <button
               type="button"
               onClick={() => ws && router.push(`/${ws}/portfolio?folder=${f.id}`)}
@@ -474,7 +486,8 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
                   type="button"
                   onClick={() => assign(pid, null)}
                   title="Remove from folder"
-                  className="text-placeholder opacity-0 group-hover/item:opacity-100 hover:text-danger-primary"
+                  // Same rule as the folder actions above: hover, focus, or a coarse pointer.
+                  className="text-placeholder opacity-0 group-hover/item:opacity-100 hover:text-danger-primary focus-visible:opacity-100 pointer-coarse:opacity-100"
                 >
                   <X className="size-3" />
                 </button>
@@ -487,21 +500,35 @@ export const SidebarProjectFolders = observer(function SidebarProjectFolders() {
     );
   };
 
+  // Said in place of the empty state, never as it: "New project folder" is a
+  // statement that there are none, and a failed read cannot make it.
+  const failureLine = failure && (
+    <p role="alert" className="flex flex-col items-start gap-0.5 px-2 py-1 text-11 text-danger-primary">
+      <span>Couldn&apos;t read the project folders. {failure}</span>
+      <button type="button" onClick={refetch} className="text-accent-primary hover:underline">
+        Try again
+      </button>
+    </p>
+  );
+
   if (folders.length === 0) {
     return (
-      <button
-        type="button"
-        onClick={() => void createFolder(null)}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-11 text-placeholder hover:bg-layer-transparent-hover hover:text-secondary"
-      >
-        <FolderPlus className="size-3.5" />
-        New project folder
-      </button>
+      failureLine || (
+        <button
+          type="button"
+          onClick={() => void createFolder(null)}
+          className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-11 text-placeholder hover:bg-layer-transparent-hover hover:text-secondary"
+        >
+          <FolderPlus className="size-3.5" />
+          New project folder
+        </button>
+      )
     );
   }
 
   return (
     <div className="flex flex-col">
+      {failureLine}
       {/* The header is the top level. A folder dropped here comes back out of its
           nesting — and so does a PROJECT, which the header used to refuse: it
           tested the folder transient alone, so the only way to unfile a project

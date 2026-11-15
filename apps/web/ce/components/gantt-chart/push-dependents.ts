@@ -57,6 +57,9 @@ export type TSpan = { start_date?: string | null; target_date?: string | null };
 export type TPushRefusalReason =
   /** The mover may not edit this item — `allow_edit_others` is off and it is not theirs. */
   | "not-editable"
+  /** Already finished or cancelled. Its dates are a record of what happened,
+   *  not a plan, and a slip upstream does not move the past. */
+  | "finished"
   /** No bar: an item with only one date, or neither, has nothing to translate. */
   | "undated"
   /** Its dates are outside any horizon a plan can mean — see MAX_WORKING_STEPS. */
@@ -78,6 +81,10 @@ export type TPushInput = {
   /** Ids the mover is not allowed to write. A cascade must not become a way
    *  around a per-item permission. */
   notEditable?: ReadonlySet<string>;
+  /** Ids in a `completed` or `cancelled` state. A chain that runs through
+   *  finished work stops moving at it: those dates say when it was done, and a
+   *  push that rewrote them would falsify the record to keep a link tidy. */
+  finished?: ReadonlySet<string>;
   /** Ids belonging to a project other than the one being written. */
   otherProject?: ReadonlySet<string>;
   /** ISO date an item may not start before, because it is waiting on a delivery
@@ -125,7 +132,7 @@ const spanDays = (span: TSpan | undefined): { start: number; target: number } | 
  * items move" a question a test can ask without a mouse.
  */
 export const pushDependents = (input: TPushInput): TPushOutcome => {
-  const { originId, edges, spans, notEditable, otherProject, floors, isHoliday } = input;
+  const { originId, edges, spans, notEditable, finished, otherProject, floors, isHoliday } = input;
 
   const before = spanDays(input.before);
   const after = spanDays(input.after);
@@ -209,6 +216,10 @@ export const pushDependents = (input: TPushInput): TPushOutcome => {
       refused.push({ id, reason: "not-editable" });
       continue;
     }
+    if (finished?.has(id)) {
+      refused.push({ id, reason: "finished" });
+      continue;
+    }
     const current = spanDays(spans[id]);
     if (!current) {
       refused.push({ id, reason: "undated" });
@@ -255,6 +266,8 @@ export const describePush = (outcome: TPushOutcome): string => {
   if (outcome.held.length > 0) parts.push(`${outcome.held.length} held at an expected delivery`);
   const notEditable = outcome.refused.filter((r) => r.reason === "not-editable").length;
   if (notEditable > 0) parts.push(`${notEditable} you may not edit were left alone`);
+  const finished = outcome.refused.filter((r) => r.reason === "finished").length;
+  if (finished > 0) parts.push(`${finished} already finished were left alone`);
   const elsewhere = outcome.refused.filter((r) => r.reason === "other-project").length;
   if (elsewhere > 0) parts.push(`${elsewhere} in another project were left alone`);
   const undated = outcome.refused.filter((r) => r.reason === "undated").length;

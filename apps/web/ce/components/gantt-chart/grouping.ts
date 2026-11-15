@@ -16,6 +16,7 @@
  * list, so grouping is done here, on what is loaded, rather than by refetching.
  */
 import type { TIssue } from "@plane/types";
+import { localDateOf } from "./working-days";
 
 export type TGanttGroupBy = "none" | "module" | "label" | "assignee" | "state" | "priority" | "cycle";
 
@@ -102,11 +103,14 @@ export type TGanttGroup = {
 
 const DAY_MS = 86_400_000;
 
-const parseDate = (value: string | null | undefined): Date | null => {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
+/**
+ * A band's dates are LOCAL midnights, like the chart's own. This used to be
+ * `new Date(value)` — UTC midnight — and the header reads them back with local
+ * getters and positions the brace with `getPositionFromDate`, which compares
+ * against local `Date`s: west of Greenwich the band started and ended a day
+ * early. See `localDateOf`.
+ */
+const parseDate = (value: string | null | undefined): Date | null => localDateOf(value);
 
 /** The lowest-named of the values an id list resolves to — the tie-break that keeps
  *  a multi-valued issue on the same row between renders. */

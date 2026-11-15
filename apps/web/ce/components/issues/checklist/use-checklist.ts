@@ -20,6 +20,7 @@ import type { IState } from "@plane/types";
 import { useIssuesStore } from "@/hooks/use-issue-layout-store";
 import { IssueService } from "@/services/issue";
 import { ProjectStateService } from "@/services/project";
+import { apiErrorMessage } from "@/plane-web/services/api-error";
 import { ArribadaService } from "@/plane-web/services/arribada.service";
 import type { TIssueChecklistItem, TIssueChecklistSummary } from "@/plane-web/services/arribada.service";
 
@@ -27,8 +28,14 @@ const arribada = new ArribadaService();
 const issueService = new IssueService();
 const stateService = new ProjectStateService();
 
-type TEntry = { items: TIssueChecklistItem[] | null; loading: boolean };
-type TSummaryEntry = { counts: Record<string, TIssueChecklistSummary> | null; loading: boolean };
+/**
+ * `items` stays null when the read failed, and `failed` says why. It used to be
+ * set to `[]` instead — which is also what "no checklist" looks like, and which
+ * the loader took as "already fetched": one 500 at open was "Nothing on it yet"
+ * for the rest of the session, with nothing to retry it.
+ */
+type TEntry = { items: TIssueChecklistItem[] | null; loading: boolean; failed: string | null };
+type TSummaryEntry = { counts: Record<string, TIssueChecklistSummary> | null; loading: boolean; failed: boolean };
 
 const entries = new Map<string, TEntry>();
 const summaries = new Map<string, TSummaryEntry>();
@@ -50,17 +57,22 @@ const load = async (workspaceSlug: string, projectId: string, issueId: string, f
   const key = keyOf(projectId, issueId);
   const entry = entries.get(key);
   if (entry?.loading) return;
+  // A failed entry has no items, so it is never short-circuited here: the next
+  // reader to open the list asks again, and `retry` asks on demand.
   if (entry?.items && !force) return;
-  entries.set(key, { items: entry?.items ?? null, loading: true });
+  entries.set(key, { items: entry?.items ?? null, loading: true, failed: null });
   emit(key);
   try {
     const items = await arribada.getIssueChecklist(workspaceSlug, projectId, issueId);
-    entries.set(key, { items, loading: false });
-  } catch {
-    // A checklist that would not load is shown as no checklist. It decorates
-    // something that still has to render, and an error banner would say nothing
-    // the reader can act on.
-    entries.set(key, { items: [], loading: false });
+    entries.set(key, { items, loading: false, failed: null });
+  } catch (error) {
+    // Whatever was on screen before stays; what is recorded is that the read
+    // failed, never that the checklist is empty.
+    entries.set(key, {
+      items: entry?.items ?? null,
+      loading: false,
+      failed: apiErrorMessage(error, "The server did not answer."),
+    });
   }
   emit(key);
 };
@@ -71,15 +83,16 @@ const loadSummary = async (workspaceSlug: string, projectId: string, force = fal
   const entry = summaries.get(projectId);
   if (entry?.loading) return;
   if (entry?.counts && !force) return;
-  summaries.set(projectId, { counts: entry?.counts ?? null, loading: true });
+  summaries.set(projectId, { counts: entry?.counts ?? null, loading: true, failed: false });
   emit(key);
   try {
     const counts = await arribada.getChecklistSummary(workspaceSlug, projectId);
-    summaries.set(projectId, { counts, loading: false });
+    summaries.set(projectId, { counts, loading: false, failed: false });
   } catch {
-    // Same reasoning as a checklist that would not load: no badges beats an
-    // error on a row the reader came here to read.
-    summaries.set(projectId, { counts: {}, loading: false });
+    // No badges on a row the reader came here to read — but recorded as a
+    // failure, not as "no checklists": `{}` was taken as fetched and never asked
+    // again, so the badges stayed off for the session.
+    summaries.set(projectId, { counts: entry?.counts ?? null, loading: false, failed: true });
   }
   emit(key);
 };
@@ -150,7 +163,7 @@ export const setChecklistItemDone = async (
   if (entry?.items && index !== -1) {
     const items = [...entry.items];
     items[index] = { ...items[index], done, state_id: target.id };
-    entries.set(key, { loading: entry.loading, items });
+    entries.set(key, { ...entry, items });
     emit(key);
   }
   invalidateSummary(workspaceSlug, ownerProjectId);
@@ -178,6 +191,12 @@ export type TChecklistHandle = {
    *  asked yet" — the list row must stay silent in the second case. */
   loaded: boolean;
   loading: boolean;
+  /** Why the last read failed, when it did. A caller showing `items` as "nothing
+   *  on it yet" must check this first: an empty list after a failure is not a
+   *  statement about the checklist. */
+  failed: string | null;
+  /** Ask again — for the failure line, so the answer to an outage is not a reload. */
+  retry: () => void;
   addByName: (name: string) => Promise<void>;
   addExisting: (memberIssueId: string) => Promise<void>;
   remove: (lineId: string) => Promise<void>;
@@ -313,7 +332,7 @@ export const useIssueChecklist = (
       const cacheKey = keyOf(projectId, issueId);
       const current = entries.get(cacheKey);
       if (current?.items) {
-        entries.set(cacheKey, { loading: current.loading, items: current.items.filter((row) => row.id !== lineId) });
+        entries.set(cacheKey, { ...current, items: current.items.filter((row) => row.id !== lineId) });
         emit(cacheKey);
       }
       invalidateSummary(workspaceSlug, projectId);
@@ -329,10 +348,19 @@ export const useIssueChecklist = (
     [workspaceSlug, projectId, issueId, write]
   );
 
+  const retry = useCallback(() => {
+    if (!workspaceSlug || !projectId || !issueId) return;
+    void load(workspaceSlug, projectId, issueId, true);
+    // The badges came from the same outage as often as not.
+    if (summaries.get(projectId)?.failed) void loadSummary(workspaceSlug, projectId, true);
+  }, [workspaceSlug, projectId, issueId]);
+
   return {
     items: entry?.items ?? [],
     loaded: !!entry?.items,
     loading: !!entry?.loading,
+    failed: entry?.failed ?? null,
+    retry,
     addByName,
     addExisting,
     remove,

@@ -13,6 +13,7 @@ import {
   addWorkingDays,
   fromEpochDay,
   isNonWorking,
+  localDateOf,
   localEpochDay,
   localWeekday,
   toEpochDay,
@@ -51,6 +52,29 @@ describe("toEpochDay", () => {
     // the day for anybody west of Greenwich and would shade the wrong column.
     expect(isNonWorking(SAT)).toBe(true);
     expect(isNonWorking(MON)).toBe(false);
+  });
+});
+
+describe("localDateOf", () => {
+  // The suite runs under America/Los_Angeles by default and Pacific/Auckland on
+  // CI (vitest.config.ts), so these are asserted against the LOCAL getters: a
+  // `new Date("2026-09-15")` would answer 14 here and 15 there.
+  it("reads a plan date as local midnight of that calendar day, whatever the zone", () => {
+    const date = localDateOf("2026-09-15") as Date;
+    expect(date.getFullYear()).toBe(2026);
+    expect(date.getMonth()).toBe(8);
+    expect(date.getDate()).toBe(15);
+    expect(date.getHours()).toBe(0);
+  });
+
+  it("agrees with the chart's own local Dates", () => {
+    expect((localDateOf("2026-03-02") as Date).getTime()).toBe(new Date(2026, 2, 2).getTime());
+  });
+
+  it("refuses what toEpochDay refuses", () => {
+    expect(localDateOf("2026-02-31")).toBeNull();
+    expect(localDateOf("")).toBeNull();
+    expect(localDateOf(undefined)).toBeNull();
   });
 });
 

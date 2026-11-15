@@ -53,6 +53,16 @@ const CURRENCIES = ["EUR", "GBP", "USD"];
 const INPUT_CLASS =
   "w-full rounded border border-subtle bg-layer-1 px-2 py-1.5 text-13 text-primary outline-none focus:border-accent-primary";
 
+/**
+ * Today as the server's YYYY-MM-DD, on the reader's own calendar.
+ *
+ * Not `toISOString().slice(0, 10)`: that is the UTC day, and a receipt recorded
+ * at 7pm in California would be dated tomorrow — the spend curve then puts the
+ * money in a month it was not spent in.
+ */
+export const localIsoDay = (now: Date = new Date()): string =>
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
 type Props = {
   isOpen: boolean;
   onClose: () => void;
@@ -110,6 +120,10 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
   const [partNumber, setPartNumber] = useState("");
   const [leadTime, setLeadTime] = useState("");
   const [spent, setSpent] = useState(false);
+  // The day the money went (or is planned to go). No form ever set it, so every
+  // line was "undated" and the spend curve and the monthly rhythm left out all of
+  // the non-labour spend — the Finance chart's "Spent" line sat at zero.
+  const [incurredOn, setIncurredOn] = useState("");
   // The work item this money is for, and whether it IS that item's whole cost.
   const [issue, setIssue] = useState<ISearchIssueResponse | null>(null);
   const [issueQuery, setIssueQuery] = useState("");
@@ -154,6 +168,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
       setLeadTime(expense.lead_time_days != null ? String(expense.lead_time_days) : "");
       // planned === budgeted; the toggle is "already spent", so it is the inverse.
       setSpent(!expense.planned);
+      setIncurredOn(expense.incurred_on ?? "");
       setReplacesLabour(!!expense.replaces_labour);
       // A partial stand-in for the search result: enough for the chip to name the
       // linked item. The project identifier is this project's, since the line
@@ -180,6 +195,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
       setPartNumber("");
       setLeadTime("");
       setSpent(false);
+      setIncurredOn("");
       setReplacesLabour(false);
       setIssue(null);
     }
@@ -282,13 +298,19 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
       lead_time_days: parsedLeadTime,
       replaces_labour: !!issue && replacesLabour,
     };
+    // The date goes with the "spent" flag, on both routes that write a line. A
+    // line marked spent with no date defaults to today — the money has gone, and
+    // a dated guess at today beats an undated fact the curve cannot place. A
+    // budgeted line with no date stays null: nobody has said when.
+    const incurred_on = incurredOn.trim() || (spent ? localIsoDay() : null);
     try {
       if (isEdit && expense) {
-        // PATCH only the fields the form owns; notes and incurred_on are absent
-        // from the payload, so the server keeps them rather than blanking them.
+        // PATCH only the fields the form owns; notes are absent from the
+        // payload, so the server keeps them rather than blanking them.
         await service.updateExpense(workspaceSlug, projectId, expense.id, {
           ...common,
           planned: !spent,
+          incurred_on,
         });
         setToast({
           type: TOAST_TYPE.SUCCESS,
@@ -300,6 +322,7 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
           ...common,
           // Unticked is a budget line; ticked is money that has gone.
           planned: !spent,
+          incurred_on,
         });
         setToast({
           type: TOAST_TYPE.SUCCESS,
@@ -492,7 +515,13 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
                     <input
                       type="checkbox"
                       checked={spent}
-                      onChange={(e) => setSpent(e.target.checked)}
+                      onChange={(e) => {
+                        setSpent(e.target.checked);
+                        // Ticking "spent" on an undated line dates it today, in
+                        // the box, so the default is seen and can be corrected
+                        // before it is saved rather than discovered on a chart.
+                        if (e.target.checked && !incurredOn.trim()) setIncurredOn(localIsoDay());
+                      }}
                       className="mt-0.5 size-3.5 shrink-0 text-accent-primary accent-current"
                     />
                     <span className="text-12 text-secondary">
@@ -504,6 +533,29 @@ export const ExpenseModal = observer(function ExpenseModal(props: Props) {
                   </label>
                 )}
               </div>
+
+              {/* The date the spend curve and the monthly rhythm place this line
+                  on. Not a request field: a request is dated by the decision
+                  that approves it. Without a date here the line is "undated" and
+                  counted in neither — which, with no form ever setting it, was
+                  every non-labour line in the instance. */}
+              {!isRequest && (
+                <label className="flex flex-col gap-1 sm:w-1/2 sm:pr-1.5">
+                  <span className="text-12 text-tertiary">Incurred on</span>
+                  <input
+                    type="date"
+                    value={incurredOn}
+                    onChange={(e) => setIncurredOn(e.target.value)}
+                    aria-label="Incurred on"
+                    className={INPUT_CLASS}
+                  />
+                  <span className="text-11 text-tertiary">
+                    {spent
+                      ? "When the money went. Defaults to today if left empty."
+                      : "When the money is expected to go. Leave empty if nobody knows yet."}
+                  </span>
+                </label>
+              )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex flex-col gap-1">

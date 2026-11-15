@@ -88,6 +88,11 @@ jobs:
           set -e
           N=$(pnpm --filter web exec vitest list 2>/dev/null | grep -c " > " || true)
           echo "collected $N web tests"
+          # 875 is MEASURED on 2026-11-15 with this exact command on the committed
+          # tree after the full-fork review of that day (24 new or extended test
+          # files: gantt gating, portfolio refusals, expense dating, failed-read
+          # states), 875 passed under both zones below.
+          #
           # 741 is MEASURED on 2026-10-19 (+2 in gesture-wiring.test.ts: the
           # dependency dot that covered the resize grip), same command, both zones.
           #
@@ -128,8 +133,8 @@ jobs:
           #
           # If a fourth pass lands on top of this one, MEASURE AGAIN rather than
           # adding the numbers up.
-          if [ "$N" -lt 741 ]; then
-            echo "::error::only $N web tests collected, expected at least 741 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
+          if [ "$N" -lt 875 ]; then
+            echo "::error::only $N web tests collected, expected at least 875 — did a test file land outside the include glob in apps/web/vitest.config.ts?"
             exit 1
           fi
           for ZONE in America/Los_Angeles Pacific/Auckland; do
@@ -267,6 +272,11 @@ jobs:
               # `|| true`: grep -c exits 1 on a count of zero, and under `set -e`
               # that kills the script before the message below ever prints —
               # turning the one failure this guard exists for into a bare exit 1.
+              # 979 is MEASURED on 2026-11-15 with this exact command, on a local
+              # throwaway Postgres (python:3.12-slim, no Redis) after the full-fork
+              # review of that day: 979 collected, 979 passed. 746 + the 233 tests
+              # that review added agrees, which checks the measurement.
+              #
               # 746 is MEASURED on 2026-11-03: the same suite with the wiki-secret
               # throttle exemption (2 more tests), throwaway Postgres, no Redis:
               # 746 collected, 746 passed.
@@ -310,8 +320,8 @@ jobs:
               # of the files can reproduce this number.
               N=$(python -m pytest plane/arribada/ --collect-only -q -o addopts= 2>/dev/null | grep -c "::" || true)
               echo "collected $N arribada tests"
-              if [ "$N" -lt 746 ]; then
-                echo "::error::only $N arribada tests collected, expected at least 746 — did a test file stop matching pytest.ini python_files (test_*.py)?"
+              if [ "$N" -lt 979 ]; then
+                echo "::error::only $N arribada tests collected, expected at least 979 — did a test file stop matching pytest.ini python_files (test_*.py)?"
                 exit 1
               fi
               python -m pytest plane/arribada/

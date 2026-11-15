@@ -23,6 +23,7 @@ Numbers, so you can tell at a glance when this file has rotted again:
 | Python files in the app                | 73                                                       |
 | `arribada-*` celery beat entries       | 5                                                        |
 | `@shared_task` functions               | 5                                                        |
+| Backend tests (`test_*.py`)            | 979 on 2026-11-15 (746 before the review of that day)    |
 | Web diff vs upstream                   | 292 files, ~33k insertions (147 in `ce/`, 87 in `core/`) |
 
 Regenerate any of these rather than trusting them:
@@ -62,13 +63,18 @@ Two sub-traps:
 Declaring a nav item and rendering one are different acts, and the second list is easy to
 miss because the first one makes the feature reachable from _somewhere_.
 
-**Project section** (e.g. Finance):
+**Project section** (e.g. Finance) — two live places, measured 2026-11-15:
 
-1. `packages/constants/src/project.ts` — the `EProjectFeatureKey` member
-2. `apps/web/ce/components/projects/navigation/helper.tsx` — the breadcrumb feature dropdown
-3. `apps/web/core/components/workspace/sidebar/project-navigation.tsx` — the sidebar's own
-   separate `baseNavigation` list
-4. `apps/web/app/routes/core.ts` — the route, nested in the project layout
+1. `apps/web/core/components/workspace/sidebar/project-navigation.tsx` — the sidebar's own
+   `baseNavigation` list (give the item an explicit `sortOrder`; Overview 0, Disciplines 1.5,
+   Finance 7 today) **and** a `t()` key in `packages/i18n/src/locales/{en,fr}` (`sidebar.finance`,
+   `sidebar.disciplines` were missing until 2026-11-15; the `name` fallback hid it)
+2. `apps/web/app/routes/core.ts` — the route, nested in the project layout
+
+`packages/constants/src/project.ts` (`EProjectFeatureKey`) and
+`apps/web/ce/components/projects/navigation/helper.tsx` (the breadcrumb feature dropdown) have
+**zero live importers** — Disciplines was added without an enum member and nothing noticed. They
+are test-only; do not count them as a place a nav item must be declared.
 
 **Workspace section** (e.g. GitHub triage, Portfolio, Workload):
 
@@ -77,8 +83,8 @@ miss because the first one makes the feature reachable from _somewhere_.
 3. `apps/web/core/components/workspace/sidebar/sidebar-item.tsx` — the `staticItems` allow-list
 4. `apps/web/core/components/workspace/sidebar/sidebar-menu-items.tsx` — the renderer
 
-Also give the item an explicit `sortOrder`; a tie leaves the order depending on array
-position rather than intent. (`4d98a1da71`, `2cbd04390f`)
+There is no `sortOrder` on `IWorkspaceSidebarNavigationItem`: workspace items draw in the order
+of the PINNED array (Projects, Portfolio, GitHub triage, Workload). (`4d98a1da71`, `2cbd04390f`)
 
 ### `@/plane-web/*` resolves to `apps/web/ce/*`
 
@@ -110,6 +116,14 @@ Companion: Celery autodiscovery only scans `<app>/tasks.py`, and this app has a 
 task, so **every task module must be imported by name in `ArribadaConfig.ready()`**
 (`apps.py`). `scope_snapshot_task` was missed and the snapshot table stayed empty for
 weeks while beat fired daily. (`28e614c990`)
+
+The same rule bit upstream: `plane.bgtasks.logger_task.process_logs` is posted by the
+`APITokenLogMiddleware` on every `X-Api-Key` request, and only the web process imported that
+module. The worker answered "Received unregistered task" 2,516 times in three days (measured
+2026-11-15) and its 30 MB log rotation kept under two days of history. It is now listed in
+`CELERY_IMPORTS` (`settings/common.py`, `ARRIBADA FIX`); the rows land in `APIActivityLog`,
+which upstream's `delete_api_logs` prunes. Note upstream stores the request headers, API key
+included, in that table — the same plaintext exposure as `db.APIToken` itself.
 
 `test_beat_schedule.py` guards both. Do not delete it.
 
@@ -273,6 +287,20 @@ discipline), `IssueFixedCost` (an item a supplier delivers: priced, not costed a
 queue. Read/write rules: see the money trap above. There is no funder-report _route_ — the
 funder report is a payload shape assembled from the milestones and budget endpoints.
 
+Rules decided on 2026-11-15, each after a defect: approving a purchase request dates the
+expense line it creates (`incurred_on` = the decision day unless the caller names one; the
+expense modal now has an "Incurred on" field — before it no line ever carried a date, so the
+spend curve and the rhythm drew zero spend); a rates `PUT` carrying `hourly_rate: 0` for a role
+**deletes** that rate (there was no other way to remove one); deleting an `ordered` or
+`received` request **keeps** its expense line (the money was spent) while deleting a merely
+`approved` one still removes it; the spend-rhythm `rate` is the mean of the last three months
+with spend **up to today** (future planned labour stays on the chart but no longer drives
+`exhausted_on`); and "the project has a lead" — the condition that keeps a workspace admin out
+of the budget — means a lead who can act: an active member of the project, or an admin. A
+roster lead with no Plane account, or a `project_lead` who has left, leaves the project
+leaderless for that purpose (MARLIN and COMM were in exactly that state, and nobody could
+approve a purchase there).
+
 **Milestones & evidence.** `IssueMilestone` marks an item as a deliverable and carries the
 funder-facing label; `IssueArtifact` records where the proof lives. A milestone used to be
 inferred from a zero-day duration, which was wrong in both directions.
@@ -287,6 +315,14 @@ appliable later.
 workspace/repo/number, with a `dismissed` flag). The old "GitHub Inbox" (GHIN) project is
 **retired** — `retire_github_inbox.py` moved untouched mirrored issues into `GithubIssue`
 and archived rather than deleted anything a human had touched. (`e15bc97d`, `9adb1a52`)
+
+Two routing rules since 2026-11-15: a repo claimed only by archived or soft-deleted projects is
+**not fetched** (`_repos_to_sync` is built from the live claims, so a retired project's issues
+stop filling the triage queue and the morning digest); and when a repo's single owner changes,
+an auto-filed item **stays in its project** and the run reports it under `relocation_refused`
+(the toast names it) — moving it carried the old project's `sequence_id` into the new one and
+produced two items answering to the same reference. Label hints (`github_enrich.py`) match whole
+tokens, not substrings (`workflow` is no longer `low`).
 
 **Published timelines.** `ProjectPublicTimeline` — a read-only, no-login schedule link.
 `public/timeline/<anchor>/` deliberately carries no slug and no project id: the anchor is
@@ -353,6 +389,17 @@ it is how it rots. The handful of tools with no endpoint behind them (`get_work_
    behind `_lead_guard`, and a PATCH carrying both kinds is refused whole. The schedule GET
    reports the answer as `can_set_external_edits`, next to `can_set_governance`.
 
+   Which of those four the SERVER enforces, as of 2026-11-15: `lead_only_edits` and
+   `allow_edit_others` (a plan write is refused unless the caller is assigned to every item it
+   touches, or is the lead or an admin) — both through one decision function,
+   `plan_write_refusal` in `plan_guard.py`, used by the middleware on `/api/` **and**, since
+   the middleware sees an API-key caller as anonymous, by a hook in `plane/api/views/base.py`
+   (`ARRIBADA FIX`) on `/api/v1/`. `GUARDED` also names `IssueViewSet` PUT and POST (a create
+   counts as a plan write only when it carries a plan VALUE: the create modal posts every field
+   as null). `timeline_locked` and `allow_add_items` remain UI controls for a person (every
+   gesture honours them since `.151`: drag-to-nest, dependency linking, undo and the portfolio
+   drag used not to) and are enforced only for agents, in `mcp_tools.py`.
+
 A tool the token can never call is not advertised in `tools/list`. That is politeness to
 the model, not a control: calling it by name anyway is refused by the grant.
 
@@ -375,6 +422,10 @@ With the grant, `_plan_write_guard` in `mcp_tools.py` asks, in order:
    name: the predicates the gantt's own routes decide on, so an agent is refused exactly
    where its user would be refused and admitted exactly where they would be admitted (the
    lead, or a workspace admin).
+4. **`allow_edit_others`** (`_own_items_guard`, since `.151`): with the switch off, the
+   token's user must be assigned to the item being updated — or to the parent a new item is
+   filed under — unless they are the lead or an admin. The same `_all_assigned` predicate
+   `plan_guard.py` uses for a person.
 
 Every plan argument is **resolved before anything is written**: a bad sprint name or a start
 after the (final) target refuses the whole call, so a state change in the same call does
@@ -501,7 +552,8 @@ cut anybody's integration by presenting a token it had seen.
 
 `test_mcp_oauth.py` walks the whole chain — register, authorize, consent, exchange, then
 call the MCP server with what came out — because every piece can be individually right and
-the chain still not work. Forty tests.
+the chain still not work. Fifty tests (the refresh rotation is atomic since `.151`: a mint
+that fails leaves the old refresh token usable).
 
 ---
 
